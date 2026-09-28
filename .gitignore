@@ -9,3 +9,11 @@ build/
 
 # 第三方依赖，本地按 README 克隆
 third_party/FreeRTOS-Kernel/
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
