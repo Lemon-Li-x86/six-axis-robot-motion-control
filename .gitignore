@@ -6,3 +6,6 @@
 
 # 构建目录
 build/
+
+# 第三方依赖，本地按 README 克隆
+third_party/FreeRTOS-Kernel/

@@ -3,11 +3,11 @@
 
     "tasks": [
         {
-            // 编译 Cortex-M4 程序
+            // ==================================================
+            // 1. 裸机 Cortex-M4 Hello：编译
+            // ==================================================
             "label": "Build Cortex-M4",
             "type": "shell",
-
-            // ARM 交叉编译器
             "command": "arm-none-eabi-gcc",
 
             "args": [
@@ -25,20 +25,19 @@
                 "hello.elf"
             ],
 
-            // 编译命令在 hello 文件夹里执行
             "options": {
                 "cwd": "${workspaceFolder}/firmware/hello"
             },
 
-            // 识别 GCC 编译报错
             "problemMatcher": "$gcc"
         },
 
         {
-            // 编译完成后，在 QEMU 中运行
+            // ==================================================
+            // 2. 裸机 Cortex-M4 Hello：运行
+            // ==================================================
             "label": "Run Cortex-M4",
             "type": "shell",
-
             "command": "qemu-system-arm",
 
             "args": [
@@ -59,8 +58,112 @@
                 "cwd": "${workspaceFolder}/firmware/hello"
             },
 
-            // 先执行 Build Cortex-M4
             "dependsOn": "Build Cortex-M4"
+        },
+
+        {
+            // ==================================================
+            // 3. FreeRTOS Demo：编译
+            // ==================================================
+            "label": "Build FreeRTOS Demo",
+            "type": "shell",
+            "command": "arm-none-eabi-gcc",
+
+            "args": [
+                // CPU
+                "-mcpu=cortex-m4",
+                "-mthumb",
+
+                // 裸机环境
+                "-ffreestanding",
+                "-fno-builtin",
+                "-nostdlib",
+
+                // --------------------------------------------------
+                // 头文件路径
+                // --------------------------------------------------
+
+                // FreeRTOSConfig.h
+                "-I",
+                "${workspaceFolder}/firmware/freertos_demo",
+
+                // FreeRTOS 公共头文件
+                "-I",
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/include",
+
+                // Cortex-M 移植层头文件
+                "-I",
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/portable/GCC/ARM_CM3",
+
+                // --------------------------------------------------
+                // 我们自己的代码
+                // --------------------------------------------------
+
+                "startup.s",
+                "main.c",
+                "memory.c",
+
+                // --------------------------------------------------
+                // FreeRTOS Kernel
+                // --------------------------------------------------
+
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/tasks.c",
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/list.c",
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/queue.c",
+
+                // Cortex-M 移植层
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/portable/GCC/ARM_CM3/port.c",
+
+                // 动态内存管理
+                "${workspaceFolder}/third_party/FreeRTOS-Kernel/portable/MemMang/heap_4.c",
+
+                // --------------------------------------------------
+                // 链接
+                // --------------------------------------------------
+
+                "-T",
+                "linker.ld",
+
+                "-lgcc",
+
+                "-o",
+                "freertos_demo.elf"
+            ],
+
+            "options": {
+                "cwd": "${workspaceFolder}/firmware/freertos_demo"
+            },
+
+            "problemMatcher": "$gcc"
+        },
+
+        {
+            // ==================================================
+            // 4. FreeRTOS Demo：运行
+            // ==================================================
+            "label": "Run FreeRTOS Demo",
+            "type": "shell",
+            "command": "qemu-system-arm",
+
+            "args": [
+                "-M",
+                "mps2-an386",
+
+                "-kernel",
+                "freertos_demo.elf",
+
+                "-serial",
+                "stdio",
+
+                "-monitor",
+                "none"
+            ],
+
+            "options": {
+                "cwd": "${workspaceFolder}/firmware/freertos_demo"
+            },
+
+            "dependsOn": "Build FreeRTOS Demo"
         }
     ]
 }
