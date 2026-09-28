@@ -15,3 +15,5 @@
 - [ ] 搭建 PyBullet / UR5 仿真环境
 - [ ] 设计基础 UART 二进制通信协议
 - [ ] 完成第一周工作记录
+
+已完成 ARM GNU Toolchain 与 QEMU 安装配置，并确认 QEMU 支持 Cortex-M4 MPS2-AN386 仿真平台。
