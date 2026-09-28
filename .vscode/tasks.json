@@ -1,0 +1,66 @@
+{
+    "version": "2.0.0",
+
+    "tasks": [
+        {
+            // 编译 Cortex-M4 程序
+            "label": "Build Cortex-M4",
+            "type": "shell",
+
+            // ARM 交叉编译器
+            "command": "arm-none-eabi-gcc",
+
+            "args": [
+                "-mcpu=cortex-m4",
+                "-mthumb",
+                "-nostdlib",
+
+                "-T",
+                "linker.ld",
+
+                "startup.s",
+                "main.c",
+
+                "-o",
+                "hello.elf"
+            ],
+
+            // 编译命令在 hello 文件夹里执行
+            "options": {
+                "cwd": "${workspaceFolder}/firmware/hello"
+            },
+
+            // 识别 GCC 编译报错
+            "problemMatcher": "$gcc"
+        },
+
+        {
+            // 编译完成后，在 QEMU 中运行
+            "label": "Run Cortex-M4",
+            "type": "shell",
+
+            "command": "qemu-system-arm",
+
+            "args": [
+                "-M",
+                "mps2-an386",
+
+                "-kernel",
+                "hello.elf",
+
+                "-serial",
+                "stdio",
+
+                "-monitor",
+                "none"
+            ],
+
+            "options": {
+                "cwd": "${workspaceFolder}/firmware/hello"
+            },
+
+            // 先执行 Build Cortex-M4
+            "dependsOn": "Build Cortex-M4"
+        }
+    ]
+}

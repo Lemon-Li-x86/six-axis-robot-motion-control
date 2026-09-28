@@ -1,6 +1,8 @@
+# 编译产物
 *.elf
 *.o
 *.bin
 *.hex
 
+# 构建目录
 build/
