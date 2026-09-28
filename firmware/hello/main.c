@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #define UART0_BASE 0x40004000UL
-#define UART0_DATA (*(volatile uint32_t *)(UART0_BASE + 0x000UL))
+#define UART0_DATA (*(volatile uint32_t *)(UART0_BASE + 0x000UL))    //“这个内存地址对应 UART 硬件寄存器。
 #define UART0_STATE (*(volatile uint32_t *)(UART0_BASE + 0x004UL))
 
 static void uart_putc(char c)
