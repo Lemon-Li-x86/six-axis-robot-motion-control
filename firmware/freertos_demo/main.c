@@ -3,10 +3,11 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "protocol.h"
+
 
 /* =========================================================
  * UART0 寄存器
- * 与之前裸机 hello 工程使用的是同一个 UART。
  * ========================================================= */
 
 #define UART0_BASE 0x40004000UL
@@ -23,126 +24,268 @@
 #define UART0_BAUDDIV \
     (*(volatile uint32_t *)(UART0_BASE + 0x010UL))
 
-#define UART_TX_FULL (1U << 0)
+
+/* STATE bit0：TX FIFO 满 */
+#define UART_TX_FULL   (1U << 0)
+
+/* STATE bit1：RX FIFO 有数据 */
+#define UART_RX_FULL   (1U << 1)
 
 
 /* =========================================================
- * UART 基础函数
+ * UART 初始化
  * ========================================================= */
 
-/* 初始化 UART0 */
 static void uart_init(void)
 {
-    /* 设置波特率分频值 */
     UART0_BAUDDIV = 16U;
 
-    /* CTRL bit0 = 1：开启发送功能 */
-    UART0_CTRL = 1U;
+    /*
+     * CTRL bit0 = TX enable
+     * CTRL bit1 = RX enable
+     */
+    UART0_CTRL = 3U;
 }
 
 
-/* 发送单个字符 */
-static void uart_putc(char c)
+/* =========================================================
+ * UART 发送
+ * ========================================================= */
+
+static void uart_write_byte(uint8_t data)
 {
-    /* 等待 UART 发送缓冲区有空位 */
     while (UART0_STATE & UART_TX_FULL)
     {
     }
 
-    UART0_DATA = (uint32_t)c;
+    UART0_DATA = (uint32_t)data;
 }
 
 
-/* 发送字符串 */
-static void uart_puts(const char *s)
+static void uart_write(
+    const uint8_t *data,
+    uint32_t length
+)
 {
-    while (*s)
+    uint32_t i;
+
+    for (i = 0U; i < length; i++)
     {
-        uart_putc(*s++);
+        uart_write_byte(data[i]);
     }
 }
 
 
 /* =========================================================
- * FreeRTOS Task A
+ * UART 非阻塞接收
+ *
+ * 有数据：返回 1
+ * 无数据：返回 0
  * ========================================================= */
 
-static void task_a(void *parameters)
+static uint8_t uart_read_byte(
+    uint8_t *data
+)
 {
-    /* 当前 demo 不需要任务参数 */
+    if ((UART0_STATE & UART_RX_FULL) == 0U)
+    {
+        return 0U;
+    }
+
+    *data =
+        (uint8_t)(UART0_DATA & 0xFFU);
+
+    return 1U;
+}
+
+
+/* =========================================================
+ * Task 1：
+ * Cortex-M4 -> Python
+ *
+ * 周期发送六轴目标角
+ * ========================================================= */
+
+static void task_protocol_tx(void *parameters)
+{
+    uint8_t frame[PROTOCOL_FRAME_LEN];
+
+    /*
+     * 第一轴目标 = 60°
+     *
+     * 协议单位 0.01°
+     *
+     * 6000 -> 60.00°
+     */
+    const int16_t joint_targets[PROTOCOL_JOINT_COUNT] =
+    {
+        6000,
+        0,
+        0,
+        0,
+        0,
+        0
+    };
+
+
     (void)parameters;
+
 
     for (;;)
     {
-        uart_puts("Task A running\r\n");
+        protocol_build_joint_target_frame(
+            joint_targets,
+            frame
+        );
+
+        uart_write(
+            frame,
+            PROTOCOL_FRAME_LEN
+        );
+
+        /* 每秒发一次 */
+        vTaskDelay(
+            pdMS_TO_TICKS(1000)
+        );
+    }
+}
+
+
+/* =========================================================
+ * Task 2：
+ * Python -> Cortex-M4
+ *
+ * 接收 JOINT_STATE
+ * ========================================================= */
+
+static void task_protocol_rx(void *parameters)
+{
+    uint8_t frame[PROTOCOL_FRAME_LEN];
+
+    uint32_t frame_index = 0U;
+
+    int16_t joint_states[
+        PROTOCOL_JOINT_COUNT
+    ];
+
+    uint8_t ack_frame[
+        PROTOCOL_FRAME_LEN
+    ];
+
+
+    (void)parameters;
+
+
+    for (;;)
+    {
+        uint8_t byte;
+
+
+        /* -------------------------------------------------
+         * 尝试从 UART 读取一个字节
+         * ------------------------------------------------- */
+
+        if (uart_read_byte(&byte))
+        {
+            /*
+             * 极简帧同步：
+             *
+             * index 0 必须为 AA
+             * index 1 必须为 55
+             */
+
+            if (frame_index == 0U)
+            {
+                if (byte != PROTOCOL_HEADER_0)
+                {
+                    continue;
+                }
+            }
+
+
+            if (frame_index == 1U)
+            {
+                if (byte != PROTOCOL_HEADER_1)
+                {
+                    frame_index = 0U;
+                    continue;
+                }
+            }
+
+
+            frame[frame_index] = byte;
+
+            frame_index++;
+
+
+            /* ---------------------------------------------
+             * 收满 17 字节
+             * --------------------------------------------- */
+
+            if (frame_index >= PROTOCOL_FRAME_LEN)
+            {
+                frame_index = 0U;
+
+
+                /* -----------------------------------------
+                 * 验证并解析 JOINT_STATE
+                 * ----------------------------------------- */
+
+                if (
+                    protocol_parse_joint_state_frame(
+                        frame,
+                        joint_states
+                    )
+                )
+                {
+                    /*
+                     * 收到合法状态后，
+                     * 立即把相同的六轴状态
+                     * 用 0x82 ACK 发回 Python。
+                     *
+                     * 这样我们能验证 MCU
+                     * 确实完成了解析。
+                     */
+                    protocol_build_joint_state_ack_frame(
+                        joint_states,
+                        ack_frame
+                    );
+
+
+                    uart_write(
+                        ack_frame,
+                        PROTOCOL_FRAME_LEN
+                    );
+                }
+            }
+        }
+
 
         /*
-         * 当前 Tick Rate = 1000 Hz，
-         * pdMS_TO_TICKS(1000) 表示延时约 1000 ms。
+         * 不一直占用 CPU。
          *
-         * vTaskDelay() 会让当前任务进入 Blocked 状态，
-         * FreeRTOS 可以在此期间运行其他任务。
+         * 每 1 ms 检查一次 UART。
          */
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(
+            pdMS_TO_TICKS(1)
+        );
     }
 }
 
 
 /* =========================================================
- * FreeRTOS Task B
- * ========================================================= */
-
-static void task_b(void *parameters)
-{
-    (void)parameters;
-
-    for (;;)
-    {
-        uart_puts("Task B running\r\n");
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
-
-/* =========================================================
- * 程序入口
+ * main
  * ========================================================= */
 
 int main(void)
 {
-    /* 初始化 UART，供两个任务输出调试信息 */
     uart_init();
 
-    uart_puts("Starting FreeRTOS...\r\n");
 
-
-    /*
-     * 创建 Task A。
-     *
-     * 参数依次表示：
-     *
-     * task_a
-     *     任务执行函数
-     *
-     * "TaskA"
-     *     调试时显示的任务名称
-     *
-     * configMINIMAL_STACK_SIZE
-     *     给任务分配的栈大小
-     *
-     * NULL
-     *     不向任务传递参数
-     *
-     * 1
-     *     任务优先级
-     *
-     * NULL
-     *     当前不保存 Task Handle
-     */
+    /* Cortex-M4 -> Python */
     xTaskCreate(
-        task_a,
-        "TaskA",
+        task_protocol_tx,
+        "ProtocolTX",
         configMINIMAL_STACK_SIZE,
         NULL,
         1,
@@ -150,10 +293,10 @@ int main(void)
     );
 
 
-    /* 创建 Task B */
+    /* Python -> Cortex-M4 */
     xTaskCreate(
-        task_b,
-        "TaskB",
+        task_protocol_rx,
+        "ProtocolRX",
         configMINIMAL_STACK_SIZE,
         NULL,
         1,
@@ -161,22 +304,8 @@ int main(void)
     );
 
 
-    /*
-     * 启动 FreeRTOS 调度器。
-     *
-     * 正常情况下，一旦启动成功，
-     * 程序就不会再回到 main()。
-     */
     vTaskStartScheduler();
 
-
-    /*
-     * 如果代码执行到这里，
-     * 一般说明调度器没有成功启动。
-     *
-     * 最常见原因之一是创建 Idle Task 时内存不足。
-     */
-    uart_puts("ERROR: Scheduler failed!\r\n");
 
     while (1)
     {

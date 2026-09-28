@@ -102,6 +102,7 @@
                 "startup.s",
                 "main.c",
                 "memory.c",
+                "protocol.c",
 
                 // --------------------------------------------------
                 // FreeRTOS Kernel
@@ -164,6 +165,37 @@
             },
 
             "dependsOn": "Build FreeRTOS Demo"
+        },
+
+        {
+        // ==================================================
+        // 5. FreeRTOS UART TCP 通信测试
+        // ==================================================
+        "label": "Run FreeRTOS UART TCP",
+
+        "type": "shell",
+
+        "command": "qemu-system-arm",
+
+        "args": [
+            "-M",
+            "mps2-an386",
+
+            "-kernel",
+            "freertos_demo.elf",
+
+            "-serial",
+            "tcp:127.0.0.1:5555,server=on,wait=off",
+
+            "-monitor",
+            "none"
+        ],
+
+        "options": {
+            "cwd": "${workspaceFolder}/firmware/freertos_demo"
+        },
+
+        "dependsOn": "Build FreeRTOS Demo"
         }
     ]
 }
