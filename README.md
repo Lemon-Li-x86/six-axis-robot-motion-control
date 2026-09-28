@@ -10,7 +10,7 @@
 
 - [x] 理解项目总体架构
 - [x] 了解 Cortex-M4 基础
-- [ ] 搭建 Cortex-M4 / QEMU 开发环境
+- [x] 搭建 Cortex-M4 / QEMU 开发环境
 - [ ] 搭建 FreeRTOS 基础工程
 - [ ] 搭建 PyBullet / UR5 仿真环境
 - [ ] 设计基础 UART 二进制通信协议
