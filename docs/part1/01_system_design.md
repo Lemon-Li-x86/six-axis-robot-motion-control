@@ -52,32 +52,39 @@ flowchart LR
 
 当前第1阶段已经建立以下最小闭环：
 
-```text
-Cortex-M4 / FreeRTOS
-        │
-        │ 目标关节角
-        ▼
-UART 二进制协议
-        │
-        ▼
-QEMU UART
-        │
-        │ TCP Serial Backend
-        ▼
-Python
-        │
-        ▼
-PyBullet / UR5
-        │
-        │ 实际关节状态
-        ▼
-Python
-        │
-        ▼
-QEMU UART
-        │
-        ▼
-Cortex-M4 / FreeRTOS
+```mermaid
+flowchart LR
+    subgraph Embedded["嵌入式控制端"]
+        MCU["Cortex-M4 / FreeRTOS"]
+        PROTO["UART 二进制协议"]
+    end
+
+    subgraph Link["通信链路"]
+        QEMU["QEMU UART"]
+        TCP["TCP Serial Backend"]
+    end
+
+    subgraph Host["主机仿真端"]
+        PY["Python 通信桥"]
+        SIM["PyBullet / UR5"]
+    end
+
+    MCU -- "目标关节角\n0x01 SET_JOINT_TARGETS" --> PROTO
+    PROTO --> QEMU
+    QEMU --> TCP
+    TCP --> PY
+    PY --> SIM
+
+    SIM -- "实际关节状态\n0x81 JOINT_STATE" --> PY
+    PY --> TCP
+    TCP --> QEMU
+    QEMU --> PROTO
+    PROTO --> MCU
+
+    MCU -- "状态接收确认\n0x82 JOINT_STATE_ACK" --> PROTO
+    PROTO --> QEMU
+    QEMU --> TCP
+    TCP --> PY
 ```
 
 其中 TCP 仅作为 QEMU UART 在主机侧的后端传输方式，不改变嵌入式端的 UART 通信模型。
