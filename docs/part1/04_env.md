@@ -2,42 +2,53 @@
 
 ## 1. 验证目的
 
-本报告用于记录六轴工业机器人嵌入式运动控制项目第1阶段的开发环境搭建过程，并验证 Cortex-M4 嵌入式控制端、Python 通信桥和 PyBullet / UR5 仿真端之间的数据链路。
+本报告用于验证六轴工业机器人嵌入式运动控制项目第1阶段所搭建的开发环境与通信链路。
 
-本阶段主要验证以下内容：
+本阶段验证对象包括：
 
-- ARM Cortex-M4 交叉编译环境能够正常工作；
-- QEMU 能够运行 Cortex-M4 固件；
-- FreeRTOS 能够完成基础任务调度；
-- CMake 能够完成嵌入式工程构建；
-- PyBullet 能够加载并控制 UR5 六轴机器人模型；
-- Cortex-M4 能够通过 UART 二进制协议向 Python 下发控制指令；
-- Python 能够将 UR5 实际关节状态反馈至 Cortex-M4；
-- Cortex-M4 能够正确解析状态数据并返回确认信息；
-- 整个控制与反馈链路能够形成双向闭环。
+- ARM Cortex-M4 交叉编译环境；
+- QEMU Cortex-M4 仿真环境；
+- FreeRTOS 基础运行环境；
+- CMake 嵌入式构建系统；
+- PyBullet / UR5 机器人仿真环境；
+- Cortex-M4 与 Python 之间的 UART 二进制通信；
+- Python 与 PyBullet 之间的机器人控制接口；
+- 机器人状态由 PyBullet 返回 Cortex-M4 的反馈链路；
+- Cortex-M4 对状态数据的解析与确认。
+
+验证目标是建立一条完整的：
+
+```text
+控制指令下发
+→ 机器人执行
+→ 状态反馈
+→ MCU解析确认
+```
+
+双向数据链路，为后续外设驱动、运动学、轨迹规划和闭环控制算法开发提供基础验证平台。
 
 ---
 
-## 2. 开发与仿真环境
+## 2. 开发环境
 
-第1阶段使用的主要开发环境如下。
+第1阶段采用的主要开发与仿真环境如下。
 
-| 类别 | 工具 / 平台 |
+| 类别 | 配置 |
 |---|---|
-| 主机操作系统 | Windows |
+| 主机系统 | Windows |
 | MCU 架构 | ARM Cortex-M4 |
 | 交叉编译器 | ARM GNU Toolchain / `arm-none-eabi-gcc` |
-| MCU 仿真器 | QEMU |
-| QEMU Machine | `mps2-an386` |
+| MCU 仿真平台 | QEMU `mps2-an386` |
 | 实时操作系统 | FreeRTOS |
 | 构建系统 | CMake + Ninja |
-| IDE | Visual Studio Code |
-| Python | Python 3.11 |
-| 机器人仿真 | PyBullet |
+| 开发环境 | Visual Studio Code |
+| Python 环境 | Python 3.11 |
+| 机器人仿真平台 | PyBullet |
 | 机器人模型 | UR5 |
-| 通信方式 | QEMU UART + TCP Serial Backend |
+| 固件通信接口 | UART |
+| QEMU 主机侧串口后端 | TCP `127.0.0.1:5555` |
 
-整体环境关系如下：
+整体开发环境关系如下：
 
 ```mermaid
 flowchart LR
@@ -47,7 +58,6 @@ flowchart LR
 
     B --> E["QEMU mps2-an386"]
     E --> F["UART"]
-
     F --> G["TCP Serial Backend"]
     G --> H["Python 通信桥"]
     H --> I["PyBullet"]
@@ -56,124 +66,149 @@ flowchart LR
 
 ---
 
-## 3. Cortex-M4 开发环境搭建
+## 3. Cortex-M4 与 QEMU 环境验证
 
-### 3.1 ARM GNU Toolchain
+### 3.1 交叉编译验证
 
-安装 ARM GNU Toolchain 后，使用：
+嵌入式程序使用：
 
-```powershell
-arm-none-eabi-gcc --version
+```text
+arm-none-eabi-gcc
 ```
 
-确认交叉编译器可以正常调用。
+进行 ARM Cortex-M4 交叉编译。
 
-当前工程采用：
+主要目标架构参数为：
 
 ```text
 -mcpu=cortex-m4
 -mthumb
 ```
 
-生成 ARM Cortex-M4 Thumb 指令集固件。
+项目首先建立 Cortex-M4 裸机最小程序，用于验证：
 
-首先通过裸机 `hello` 工程完成工具链基础验证，随后将 FreeRTOS、UART 和通信协议集成至正式基础工程。
+- 编译器可正常生成 ARM ELF；
+- 启动文件能够正确进入 `main()`；
+- 链接脚本能够正确组织代码与数据段；
+- QEMU 能够加载编译生成的固件；
+- UART 输出能够正常工作。
+
+完成基础验证后，在该工程基础上集成 FreeRTOS。
 
 ---
 
-### 3.2 QEMU Cortex-M4 仿真
+### 3.2 QEMU 仿真平台
 
-本项目选择 QEMU：
+本阶段采用：
 
 ```text
-mps2-an386
+QEMU machine: mps2-an386
 ```
 
-作为 Cortex-M4 仿真平台。
+用于模拟 ARM Cortex-M4 运行环境。
 
-通过：
+固件以：
 
-```powershell
-qemu-system-arm -M mps2-an386
+```text
+freertos_demo.elf
 ```
 
-运行编译生成的 Cortex-M4 ELF 固件。
+形式加载至 QEMU。
 
-早期验证中首先通过 UART 标准输出确认：
+QEMU 提供 UART 外设模型，使 Cortex-M4 固件可以按照实际嵌入式程序的方式访问 UART 寄存器。
 
-- Cortex-M4 固件可以被加载；
-- 启动文件可以正确进入 `main()`；
-- UART 寄存器访问正常；
-- QEMU 能够输出 Cortex-M4 程序信息。
-
-在此基础上进一步加入 FreeRTOS 和双向 UART 通信。
+因此 Python 并不直接访问 Cortex-M4 程序内部变量，而是通过 QEMU 暴露出的 UART 通信链路与固件交互。
 
 ---
 
-## 4. FreeRTOS 基础环境验证
+## 4. FreeRTOS 运行验证
 
-工程集成 FreeRTOS Kernel 后，完成以下基础配置：
+FreeRTOS 集成后，系统采用抢占式任务调度。
+
+当前主要配置为：
 
 ```text
 CPU Clock：25 MHz
 Tick Rate：1000 Hz
-Preemption：Enabled
+Tick Period：1 ms
 Heap：heap_4
 ```
 
-通过建立多个基础任务，并使用：
+基础阶段首先通过多个测试任务验证：
 
-```c
+```text
+任务创建
+任务切换
 vTaskDelay()
 ```
 
-主动阻塞任务，验证 FreeRTOS 调度器能够在多个 Task 之间进行调度。
+能够正常运行。
 
-随后基础任务逐步替换为实际通信任务：
+随后测试任务替换为两个实际通信任务：
 
 ```text
 ProtocolTX
 ProtocolRX
 ```
 
-其中：
+其职责分别为：
 
-- `ProtocolTX` 周期发送六轴目标关节角；
-- `ProtocolRX` 周期检查 UART 数据并解析状态帧。
+| 任务 | 功能 |
+|---|---|
+| `ProtocolTX` | 周期发送机器人目标关节角 |
+| `ProtocolRX` | 接收并解析机器人状态数据 |
 
-FreeRTOS 基础工程能够正常进入：
+任务关系如下：
 
-```c
-vTaskStartScheduler();
+```mermaid
+flowchart TD
+    A["FreeRTOS Scheduler"]
+
+    A --> B["ProtocolTX"]
+    A --> C["ProtocolRX"]
+
+    B --> D["构造目标角数据帧"]
+    D --> E["UART TX"]
+
+    F["UART RX"] --> C
+    C --> G["协议解析"]
+    G --> H["返回 ACK"]
 ```
 
-并持续执行两个通信任务。
+其中：
+
+```text
+ProtocolTX：1000 ms 周期
+ProtocolRX：1 ms 周期检查
+```
+
+验证结果表明 FreeRTOS 能够同时维持周期发送和接收处理任务。
 
 ---
 
-## 5. CMake 构建环境验证
+## 5. CMake 构建验证
 
-为了避免完全依赖手工编译命令，第1阶段建立 CMake 交叉编译工程。
+项目建立统一 CMake 交叉编译系统。
 
-ARM 工具链文件位于：
+ARM Toolchain 文件位于：
 
 ```text
 cmake/arm-none-eabi-gcc.cmake
 ```
 
-CMake 配置命令：
+工程配置命令为：
 
 ```powershell
 cmake -S . -B build/cmake-arm -G Ninja --toolchain cmake/arm-none-eabi-gcc.cmake
 ```
 
-工程构建命令：
+构建命令：
 
 ```powershell
 cmake --build build/cmake-arm
 ```
 
-构建过程能够完成：
+CMake 构建过程中包含：
 
 ```text
 startup.s
@@ -182,50 +217,48 @@ board.c
 protocol.c
 memory.c
 FreeRTOS Kernel
-ARM Cortex-M Port
-heap_4
+Cortex-M Port
+heap_4.c
 ```
 
-等源文件的交叉编译及链接，并生成可供 QEMU 加载的：
+最终生成 Cortex-M4 可执行文件：
 
 ```text
 freertos_demo.elf
 ```
 
-### 图 1 CMake 构建成功
+构建完成后，该 ELF 文件能够继续在 QEMU 中正常运行。
 
-> 待补截图：重新执行 `cmake --build build/cmake-arm` 后截取成功终端。
+---
 
-```markdown
-![CMake 构建成功](./images/fig01_cmake_build.png)
+## 6. PyBullet / UR5 仿真环境验证
+
+### 6.1 仿真环境组成
+
+机器人仿真端采用 PyBullet。
+
+仿真场景包括：
+
+```text
+地面 Plane
+UR5 六轴机器人
+基础环境物体
 ```
 
----
+UR5 采用 URDF 描述机器人结构，并加载对应：
 
-## 6. PyBullet / UR5 仿真环境搭建
+```text
+Visual Mesh
+Collision Mesh
+```
 
-### 6.1 PyBullet 环境
-
-Python 端采用 Python 3.11 和 PyBullet 建立机器人仿真环境。
-
-完成以下基础验证：
-
-- PyBullet GUI 启动；
-- 地面模型加载；
-- UR5 URDF 模型加载；
-- Visual Mesh 加载；
-- Collision Mesh 加载；
-- 六个运动关节识别；
-- 关节位置控制；
-- 机器人状态读取。
+完成机器人外观及碰撞模型构建。
 
 ---
 
-### 6.2 UR5 模型
+### 6.2 六轴关节识别
 
-仿真端使用 UR5 六轴工业机器人模型。
-
-主要运动关节为：
+当前控制的六个 UR5 运动关节分别为：
 
 ```text
 shoulder_pan_joint
@@ -236,167 +269,233 @@ wrist_2_joint
 wrist_3_joint
 ```
 
-模型成功加载后，可以使用 PyBullet：
+Python 启动后读取机器人 Joint 信息，并建立：
+
+```text
+joint name → joint index
+```
+
+映射。
+
+该映射用于后续六轴控制与状态采集。
+
+---
+
+### 6.3 基础运动控制
+
+机器人关节控制采用 PyBullet：
 
 ```python
 p.setJointMotorControlArray(...)
 ```
 
-控制六个关节运动。
+使用：
 
-同时使用：
+```text
+POSITION_CONTROL
+```
+
+模式控制六轴目标位置。
+
+同时通过：
 
 ```python
 p.getJointState(...)
 ```
 
-获取机器人实际关节状态。
+读取当前关节实际位置。
 
----
+此外基础仿真工程已经实现：
 
-### 6.3 基础场景验证
-
-仿真基础工程进一步实现：
-
-- 地面模型；
-- UR5 六轴机器人；
-- 基础环境物体；
+- 单关节控制演示；
+- 环境物体加载；
 - 多视角切换。
 
-### 图 2 PyBullet 基础仿真环境
-
-> 待补截图：运行 `scene_demo.py`，截取 UR5、地面、Box 和 Camera View 控件。
-
-```markdown
-![PyBullet 基础仿真环境](./images/fig02_pybullet_scene.png)
-```
-
 ---
 
-## 7. UART 通信链路搭建
+## 7. 通信链路结构
 
-### 7.1 通信链路
-
-为了连接 QEMU 中的虚拟 Cortex-M4 和主机上的 Python 程序，将 QEMU UART 后端映射为本地 TCP Server：
-
-```text
-127.0.0.1:5555
-```
-
-通信结构如下：
+嵌入式端和机器人仿真端之间的完整通信路径如下：
 
 ```mermaid
 flowchart LR
     A["Cortex-M4 / FreeRTOS"]
-    B["QEMU UART"]
-    C["TCP 127.0.0.1:5555"]
-    D["Python Socket"]
-    E["PyBullet / UR5"]
+    B["UART"]
+    C["QEMU"]
+    D["TCP Serial Backend<br/>127.0.0.1:5555"]
+    E["Python Socket"]
+    F["PyBullet / UR5"]
 
     A --> B
     B --> C
     C --> D
     D --> E
+    E --> F
 
+    F --> E
     E --> D
     D --> C
     C --> B
     B --> A
 ```
 
-需要注意，TCP 仅作为 QEMU UART 在主机端的 Serial Backend。
+需要特别说明：
 
-对于 Cortex-M4 固件而言，数据仍然通过 UART 寄存器进行发送和接收。
+```text
+TCP 并不是嵌入式通信协议本身。
+```
+
+在 Cortex-M4 一侧仍然按照 UART 外设进行发送和接收。
+
+TCP 仅作为：
+
+```text
+QEMU UART → 主机 Python
+```
+
+之间的数据承载方式。
 
 ---
 
-## 8. 二进制协议验证
+## 8. 二进制通信协议
 
-通信帧采用以下基本结构：
+当前通信帧格式为：
 
 ```text
 AA 55 | Command | Length | Payload | Checksum
 ```
 
-当前六轴关节数据 Payload：
+其字段定义如下：
 
-```text
-6 × int16
-```
+| 字段 | 长度 |
+|---|---:|
+| Header | 2 Byte |
+| Command | 1 Byte |
+| Length | 1 Byte |
+| Payload | 12 Byte |
+| Checksum | 1 Byte |
 
-每个关节角单位：
-
-```text
-0.01°
-```
-
-单帧长度：
+完整帧长度：
 
 ```text
 17 Byte
 ```
 
-第1阶段主要使用三个命令：
-
-| Command | 方向 | 功能 |
-|---|---|---|
-| `0x01` | Cortex-M4 → Python | 下发六轴目标角 |
-| `0x81` | Python → Cortex-M4 | 上报六轴实际状态 |
-| `0x82` | Cortex-M4 → Python | 状态接收确认 |
-
-Checksum 按以下方式计算：
+Payload 包含六轴关节数据：
 
 ```text
-(Command + Length + Payload 所有字节之和) & 0xFF
+6 × signed int16
+```
+
+关节角单位定义为：
+
+```text
+0.01°
+```
+
+例如：
+
+```text
+60.00° = 6000
+10.00° = 1000
+-20.00° = -2000
+```
+
+多字节数据采用：
+
+```text
+Little Endian
 ```
 
 ---
 
-## 9. 单向控制链路验证
+## 9. 通信指令定义
 
-首先只验证：
+当前阶段使用三个 Command：
 
-```text
-Cortex-M4
-    ↓
-Python
-```
+| Command | 名称 | 方向 | 功能 |
+|---|---|---|---|
+| `0x01` | `SET_JOINT_TARGETS` | MCU → Python | 六轴目标关节角 |
+| `0x81` | `JOINT_STATE` | Python → MCU | 六轴实际关节状态 |
+| `0x82` | `JOINT_STATE_ACK` | MCU → Python | MCU状态接收确认 |
 
-Cortex-M4 周期发送第一轴：
-
-```text
-10.00°
-```
-
-其协议整数表示：
+Checksum 计算范围为：
 
 ```text
-1000 = 0x03E8
+Command + Length + Payload
 ```
 
-Python 成功接收到：
+计算方法：
 
 ```text
-RX: aa 55 01 0c e8 03 00 00 ... f8
-收到目标角: [10.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+Checksum =
+    (参与校验的所有字节之和) & 0xFF
 ```
-
-说明：
-
-- UART TX 正常；
-- QEMU TCP Serial Backend 正常；
-- Python Socket 接收正常；
-- 帧头识别正常；
-- Little Endian 解码正常；
-- Checksum 校验正常。
 
 ---
 
-## 10. 双向通信闭环验证
+## 10. MCU → Python 通信验证
 
-在单向通信成功后，将 Python 通信模块与 PyBullet UR5 仿真整合。
+首先验证 Cortex-M4 到 Python 的单向通信。
 
-测试目标角设置为：
+测试数据：
+
+```text
+Joint 1 = 10.00°
+Joint 2~6 = 0°
+```
+
+协议中：
+
+```text
+10.00° = 1000
+```
+
+对应十六进制：
+
+```text
+0x03E8
+```
+
+Little Endian 字节排列：
+
+```text
+E8 03
+```
+
+实际 Python 端接收到：
+
+```text
+RX:
+aa 55 01 0c e8 03 00 00 ... f8
+```
+
+解析结果：
+
+```text
+收到目标角:
+[10.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+```
+
+由此验证以下模块工作正常：
+
+```text
+MCU协议打包
+UART发送
+QEMU串口后端
+TCP传输
+Python帧同步
+Little Endian解析
+Checksum校验
+```
+
+---
+
+## 11. 完整机器人控制验证
+
+在单向通信验证通过后，将 UART 通信模块与 PyBullet 仿真控制模块组合。
+
+测试目标改为：
 
 ```text
 Joint 1 = 60.00°
@@ -407,26 +506,6 @@ Joint 5 = 0.00°
 Joint 6 = 0.00°
 ```
 
-完整测试链路为：
-
-```mermaid
-flowchart LR
-    A["Cortex-M4<br/>ProtocolTX"]
-    B["Python 通信桥"]
-    C["PyBullet UR5"]
-    D["Cortex-M4<br/>ProtocolRX"]
-
-    A -->|"0x01<br/>目标关节角"| B
-    B -->|"位置控制"| C
-    C -->|"实际关节状态"| B
-    B -->|"0x81"| D
-    D -->|"0x82 ACK"| B
-```
-
----
-
-### 10.1 Cortex-M4 → Python
-
 Python 接收到：
 
 ```text
@@ -434,347 +513,332 @@ RX 0x01 目标角:
 [60.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 ```
 
-说明 Cortex-M4 成功构造并发送目标关节数据帧。
+Python 将目标角转换为 rad 后传递给 PyBullet。
+
+UR5 第一轴能够按照控制指令运动至约：
+
+```text
+60°
+```
+
+说明：
+
+```text
+Cortex-M4
+→ UART
+→ Python
+→ PyBullet
+→ UR5
+```
+
+控制链路工作正常。
 
 ---
 
-### 10.2 Python → PyBullet
+## 12. Python → MCU 状态反馈验证
 
-Python 将角度由 degree 转换为 rad 后，通过：
+机器人运动过程中，Python 周期读取六个实际关节位置。
 
-```python
-p.setJointMotorControlArray(...)
-```
-
-控制 UR5。
-
-仿真中第一轴能够运动至目标位置附近。
-
-### 图 3 UR5 第一轴 60° 控制结果
-
-> 待补截图：启动完整通信链路后截取 UR5 已旋转状态。
-
-```markdown
-![UR5 60度控制验证](./images/fig03_ur5_60deg.png)
-```
-
----
-
-### 10.3 PyBullet → Cortex-M4
-
-Python 每约：
+状态采样周期：
 
 ```text
 0.2 s
 ```
 
-读取一次实际六轴关节状态。
+即约：
 
-测试过程中得到实际状态，例如：
+```text
+5 Hz
+```
+
+典型状态数据为：
 
 ```text
 TX 0x81 实际角度:
 [60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
 ```
 
-Python 将数据打包为：
+Python 将六轴状态打包为：
 
 ```text
 0x81 JOINT_STATE
 ```
 
-并通过同一 UART 通信链路返回 Cortex-M4。
+并通过：
+
+```text
+Python Socket
+→ TCP
+→ QEMU UART
+→ Cortex-M4
+```
+
+发送至 MCU。
 
 ---
 
-### 10.4 Cortex-M4 状态解析
+## 13. MCU 状态解析与 ACK 验证
 
-Cortex-M4 接收到完整状态帧后依次检查：
+Cortex-M4 接收到状态数据后执行以下检查：
 
 ```text
-Header
-Command
-Length
-Checksum
+帧头检查
+    ↓
+Command检查
+    ↓
+Payload Length检查
+    ↓
+Checksum检查
+    ↓
+六轴状态解析
 ```
 
-验证通过后解析六轴 `int16` 数据。
-
-为了确认 MCU 确实完成了解析，而不仅仅是 Python 单方面发送成功，MCU 随后返回：
+数据验证正确后，MCU 使用：
 
 ```text
 0x82 JOINT_STATE_ACK
 ```
 
-Python 收到：
+将解析出的六轴状态重新发送至 Python。
+
+Python 实际收到：
 
 ```text
 RX 0x82 MCU 已确认状态:
 [60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
 ```
 
-反馈值与 Python 发出的状态值一致。
+ACK 中的数据与 Python 原始发送状态一致。
 
-因此可以确认：
+因此不仅能够证明：
 
 ```text
-Python → Cortex-M4
+Python成功发送状态
 ```
 
-方向的数据传输和协议解析也正常工作。
+还能够进一步证明：
 
----
-
-### 图 4 双向通信终端日志
-
-> 待补截图：截取同时包含 `RX 0x01`、`TX 0x81` 和 `RX 0x82` 的终端窗口。
-
-```markdown
-![UART 双向通信验证](./images/fig04_uart_closed_loop.png)
+```text
+Cortex-M4已经实际接收、校验并解析状态数据
 ```
 
 ---
 
-## 11. 闭环验证结果
+## 14. 双向闭环验证
 
-最终完成的通信路径为：
+最终完整数据路径如下：
 
-```text
-Cortex-M4 / FreeRTOS
-        ↓
-0x01 SET_JOINT_TARGETS
-        ↓
-QEMU UART
-        ↓
-TCP Serial Backend
-        ↓
-Python
-        ↓
-PyBullet / UR5
-        ↓
-实际关节状态
-        ↓
-Python
-        ↓
-0x81 JOINT_STATE
-        ↓
-QEMU UART
-        ↓
-Cortex-M4 / FreeRTOS
-        ↓
-0x82 JOINT_STATE_ACK
-        ↓
-Python
+```mermaid
+flowchart LR
+    A["Cortex-M4<br/>ProtocolTX"]
+    B["QEMU UART"]
+    C["Python"]
+    D["PyBullet / UR5"]
+    E["Cortex-M4<br/>ProtocolRX"]
+
+    A -->|"0x01 目标关节角"| B
+    B --> C
+    C -->|"Position Control"| D
+
+    D -->|"实际关节状态"| C
+    C -->|"0x81 JOINT_STATE"| B
+    B --> E
+
+    E -->|"0x82 ACK"| B
+    B --> C
 ```
 
-测试结果如下：
+验证过程中能够同时观察到：
 
-| 测试项目 | 结果 |
+```text
+RX 0x01 目标角:
+[60.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+TX 0x81 实际角度:
+[60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
+
+RX 0x82 MCU 已确认状态:
+[60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
+```
+
+由此确认：
+
+```text
+控制命令下发
+机器人执行
+状态采集
+状态上传
+MCU协议解析
+MCU确认返回
+```
+
+全部能够正常完成。
+
+---
+
+## 15. 回归验证
+
+在完成通信链路后，工程进一步加入：
+
+```text
+CMake构建系统
+Board Clock初始化
+GPIO初始化模板
+```
+
+完成上述修改后，再次运行完整系统进行回归验证。
+
+验证结果：
+
+- Cortex-M4 固件正常启动；
+- FreeRTOS 两个通信任务正常运行；
+- Python能够继续接收 `0x01`；
+- UR5仍能够执行 60° 目标；
+- Python能够继续发送 `0x81`；
+- MCU能够继续返回 `0x82`。
+
+说明后续工程结构调整没有破坏已经建立的通信与仿真链路。
+
+---
+
+## 16. 测试结果汇总
+
+| 测试项目 | 测试结果 |
 |---|---|
 | ARM Cortex-M4 交叉编译 | 通过 |
-| QEMU 固件运行 | 通过 |
+| Cortex-M4 裸机启动 | 通过 |
+| QEMU `mps2-an386` 固件运行 | 通过 |
+| UART 基础发送 | 通过 |
+| FreeRTOS 任务创建 | 通过 |
 | FreeRTOS 任务调度 | 通过 |
-| CMake 构建 | 通过 |
+| `vTaskDelay()` 延时 | 通过 |
+| CMake Configure | 通过 |
+| CMake Build | 通过 |
 | PyBullet GUI | 通过 |
-| UR5 模型加载 | 通过 |
-| UR5 关节控制 | 通过 |
-| MCU → Python 通信 | 通过 |
-| Python → MCU 通信 | 通过 |
-| Checksum 校验 | 通过 |
-| MCU 状态解析 | 通过 |
-| ACK 返回 | 通过 |
-| UR5 控制与状态反馈闭环 | 通过 |
+| UR5 URDF 加载 | 通过 |
+| Visual Mesh 加载 | 通过 |
+| Collision Mesh 加载 | 通过 |
+| 单关节控制 | 通过 |
+| 环境物体加载 | 通过 |
+| 仿真视角切换 | 通过 |
+| MCU → Python 数据传输 | 通过 |
+| Python协议解析 | 通过 |
+| Checksum校验 | 通过 |
+| Python → MCU 数据传输 | 通过 |
+| MCU状态解析 | 通过 |
+| MCU ACK返回 | 通过 |
+| UR5 60° 控制测试 | 通过 |
+| 双向控制与状态反馈链路 | 通过 |
+| BSP加入后的系统回归测试 | 通过 |
 
 ---
 
-## 12. 环境搭建过程中遇到的问题
+## 17. 当前验证边界
 
-### 12.1 中文路径导致 PyBullet 模型加载异常
+本阶段主要目标是建立最小可运行开发与仿真链路，因此当前系统仍存在以下边界。
 
-初始项目路径包含中文字符。
+### 17.1 UART接收方式
 
-PyBullet 底层 Native 模块在访问：
-
-```text
-plane.urdf
-```
-
-等资源时出现路径解析异常。
-
-处理方式：
-
-将工程迁移至纯 ASCII 路径：
+当前 Cortex-M4 采用：
 
 ```text
-D:\1_ToGo\Robo\code\six-axis-robot-motion-control
+1 ms周期轮询
 ```
 
-迁移后 PyBullet 能够正常加载资源。
+读取 UART。
 
----
+后续阶段计划进一步实现 UART 中断和接收缓存。
 
-### 12.2 UR5 URDF 与 Mesh 文件不匹配
+### 17.2 协议解析
 
-初始获取的 UR5 URDF 中 Visual Mesh 引用了：
-
-```text
-.dae
-```
-
-模型，但对应目录中实际文件类型不匹配。
-
-处理方式：
-
-保留 UR5 URDF，并补充 ROS-Industrial UR5 模型中的：
-
-```text
-visual/*.dae
-collision/*.stl
-```
-
-资源。
-
-完成后 UR5 能够正确显示 Visual Mesh 和 Collision Mesh。
-
----
-
-### 12.3 PyBullet 安装问题
-
-当前 Python 环境无法直接获得匹配的预编译 PyBullet Wheel。
-
-处理方式：
-
-安装 Microsoft C++ Build Tools 后，在本地完成 PyBullet Native Extension 构建。
-
-随后 PyBullet GUI 能够正常启动。
-
----
-
-### 12.4 VS Code 未识别新安装的 CMake
-
-安装 CMake 后，外部终端可以正确调用：
-
-```powershell
-cmake --version
-```
-
-但已经打开的 VS Code 未继承更新后的 PATH。
-
-处理方式：
-
-关闭 VS Code，并从已经更新环境变量的终端重新启动。
-
-随后 VS Code 可以正常调用 CMake。
-
----
-
-### 12.5 CMake Toolchain 参数解析问题
-
-最初使用：
-
-```text
--DCMAKE_TOOLCHAIN_FILE=...
-```
-
-时出现 Toolchain 文件路径解析异常。
-
-最终改用：
-
-```powershell
---toolchain cmake/arm-none-eabi-gcc.cmake
-```
-
-完成交叉编译配置。
-
----
-
-## 13. 回归验证
-
-在后续增加：
-
-```text
-CMake
-Board Clock
-GPIO 初始化模板
-UART RX
-UART TX
-双向协议
-```
-
-后，再次运行完整机器人控制链路。
-
-测试结果仍能够正常观察到：
-
-```text
-RX 0x01
-TX 0x81
-RX 0x82
-```
-
-同时 UR5 第一轴能够继续响应 `60°` 目标角。
-
-说明新加入的工程模块没有破坏已经建立的 Cortex-M4 → Python → PyBullet 双向通信链路。
-
----
-
-## 14. 当前限制
-
-当前第1阶段主要目标为建立最小可运行系统，因此仍存在以下限制。
-
-UART 接收当前采用：
-
-```text
-1 ms轮询
-```
-
-而不是中断方式。
-
-当前协议解析主要针对固定：
+当前主要处理固定：
 
 ```text
 17 Byte
 ```
 
-关节数据帧。
+六轴关节数据帧。
 
-当前 Checksum 为简单8位累加校验，后续可升级为 CRC。
+后续需要建立更完整的字节流状态机和消息分发机制。
 
-当前关节数据采用：
+### 17.3 数据校验
+
+当前采用简单8位累加 Checksum。
+
+后续可根据通信可靠性要求升级为 CRC。
+
+### 17.4 关节数据范围
+
+当前协议采用：
 
 ```text
-int16 × 0.01°
+signed int16 × 0.01°
 ```
 
-可表示范围约为：
+表示范围约为：
 
 ```text
 -327.68° ~ +327.67°
 ```
 
-对于部分机器人关节范围需要在后续协议设计中重新评估。
+后续需要根据实际机器人关节范围重新确认数据位宽或分辨率设计。
 
-此外，当前 PyBullet 使用自身 `POSITION_CONTROL` 完成基础运动验证，正式 PID 控制算法尚未在 Cortex-M4 端实现。
+### 17.5 控制算法
+
+当前机器人执行部分采用 PyBullet 内置：
+
+```text
+POSITION_CONTROL
+```
+
+验证通信和基础运动。
+
+本阶段尚未实现：
+
+```text
+正运动学
+逆运动学
+轨迹规划
+Cortex-M4 PID位置闭环
+```
+
+上述模块将在后续阶段逐步实现。
 
 ---
 
-## 15. 验证结论
+## 18. 验证结论
 
-第1阶段已经成功建立 Cortex-M4 嵌入式控制端、FreeRTOS、QEMU、Python 和 PyBullet / UR5 之间的完整开发与仿真验证环境。
+第1阶段已经完成六轴工业机器人嵌入式运动控制项目所需的基础开发和仿真环境搭建。
 
-测试结果证明：
-
-```text
-Cortex-M4 → Python → PyBullet / UR5
-```
-
-控制指令链路能够正常工作，同时：
+当前已经建立：
 
 ```text
-PyBullet / UR5 → Python → Cortex-M4
+ARM Cortex-M4
++ FreeRTOS
++ QEMU
++ CMake
++ UART二进制协议
++ Python通信桥
++ PyBullet
++ UR5
 ```
 
-状态反馈链路也能够正常工作。
+组成的完整基础验证平台。
 
-Cortex-M4 在收到状态信息后能够完成协议解析、Checksum 校验并返回 ACK，因此当前系统已经形成可验证的双向通信闭环。
+测试结果表明，Cortex-M4 能够通过 UART 向 Python 下发机器人目标关节角，Python 能够控制 PyBullet 中的 UR5 完成相应运动。
 
-该环境可以作为后续 UART / Timer / GPIO 驱动标准化、协议解析、电机驱动抽象、运动学求解、轨迹规划以及 PID 闭环控制开发的基础验证平台。
+同时，Python 能够读取机器人实际关节状态并返回 Cortex-M4，Cortex-M4 能够完成状态数据校验和解析，并通过 ACK 将处理结果返回 Python。
+
+因此，第1阶段已经完成：
+
+```text
+控制指令下发
+→ 仿真机器人执行
+→ 实际状态反馈
+→ MCU数据解析
+→ 接收确认
+```
+
+的双向通信闭环验证。
+
+当前开发环境和基础通信链路可作为后续外设驱动标准化、电机控制抽象、运动学求解、轨迹规划及 PID 闭环控制开发的基础平台。
