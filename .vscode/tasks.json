@@ -101,8 +101,9 @@
 
                 "startup.s",
                 "main.c",
-                "memory.c",
+                "board.c",
                 "protocol.c",
+                "memory.c",
 
                 // --------------------------------------------------
                 // FreeRTOS Kernel

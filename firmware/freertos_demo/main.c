@@ -5,6 +5,7 @@
 
 #include "protocol.h"
 
+#include "board.h"
 
 /* =========================================================
  * UART0 寄存器
@@ -273,16 +274,21 @@ static void task_protocol_rx(void *parameters)
 }
 
 
-/* =========================================================
- * main
- * ========================================================= */
-
 int main(void)
 {
+    /*
+     * Board Support Package 初始化
+     */
+    board_clock_init();
+
+    board_gpio_init();
+
+    /*
+     * UART 初始化
+     */
     uart_init();
 
 
-    /* Cortex-M4 -> Python */
     xTaskCreate(
         task_protocol_tx,
         "ProtocolTX",
@@ -293,7 +299,6 @@ int main(void)
     );
 
 
-    /* Python -> Cortex-M4 */
     xTaskCreate(
         task_protocol_rx,
         "ProtocolRX",

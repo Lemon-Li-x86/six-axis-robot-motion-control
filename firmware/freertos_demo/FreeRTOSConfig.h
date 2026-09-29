@@ -1,10 +1,9 @@
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
-/* Cortex-M4 / QEMU MPS2-AN386 当前按 25 MHz 配置。
- * FreeRTOS 官方 MPS2 QEMU demo 也使用该频率。
- */
-#define configCPU_CLOCK_HZ                 ( ( unsigned long ) 25000000 )
+#include "board.h"
+
+#define configCPU_CLOCK_HZ ( ( unsigned long ) BOARD_SYSCLK_HZ )
 
 /* 系统每秒产生 1000 个 RTOS Tick，也就是 1 ms 一个 Tick。 */
 #define configTICK_RATE_HZ                 ( ( TickType_t ) 1000 )
