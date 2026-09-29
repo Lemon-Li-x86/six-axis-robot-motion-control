@@ -24,67 +24,40 @@
 
 ```mermaid
 flowchart LR
-    MCU[Cortex-M4]
-    RTOS[FreeRTOS]
-    APP[应用层]
-    ALG[算法层]
-    DRV[驱动 / BSP层]
-    PROTO[通信协议层]
+    A["Cortex-M4 / FreeRTOS\n控制任务"] -->|"目标关节角\n0x01"| B["UART 二进制协议"]
+    B --> C["QEMU UART"]
+    C --> D["TCP Serial Backend"]
+    D --> E["Python 通信桥"]
+    E --> F["PyBullet / UR5\n机器人仿真执行"]
 
-    TCP[QEMU UART Backend<br/>TCP 127.0.0.1:5555]
+    F -->|"实际关节状态\n0x81"| E
+    E --> D
+    D --> C
+    C --> B
+    B --> G["Cortex-M4 / FreeRTOS\n状态解析"]
 
-    HOST[Python通信桥]
-    SIM[PyBullet]
-    UR5[UR5机器人模型]
-
-    MCU --> RTOS
-    RTOS --> APP
-
-    APP <--> ALG
-    APP <--> PROTO
-    PROTO <--> DRV
-
-    DRV <--> TCP
-    TCP <--> HOST
-    HOST <--> SIM
-    SIM <--> UR5
+    G -->|"ACK\n0x82"| B
+    G -. "形成控制-反馈闭环" .-> A
 ```
 
 当前第1阶段已经建立以下最小闭环：
 
 ```mermaid
 flowchart LR
-    subgraph Embedded["嵌入式控制端"]
-        MCU["Cortex-M4 / FreeRTOS"]
-        PROTO["UART 二进制协议"]
-    end
+    A["Cortex-M4 / FreeRTOS\n控制任务"] -->|"目标关节角\n0x01"| B["UART 二进制协议"]
+    B --> C["QEMU UART"]
+    C --> D["TCP Serial Backend"]
+    D --> E["Python 通信桥"]
+    E --> F["PyBullet / UR5\n机器人仿真执行"]
 
-    subgraph Link["通信链路"]
-        QEMU["QEMU UART"]
-        TCP["TCP Serial Backend"]
-    end
+    F -->|"实际关节状态\n0x81"| E
+    E --> D
+    D --> C
+    C --> B
+    B --> G["Cortex-M4 / FreeRTOS\n状态解析"]
 
-    subgraph Host["主机仿真端"]
-        PY["Python 通信桥"]
-        SIM["PyBullet / UR5"]
-    end
-
-    MCU -- "目标关节角\n0x01 SET_JOINT_TARGETS" --> PROTO
-    PROTO --> QEMU
-    QEMU --> TCP
-    TCP --> PY
-    PY --> SIM
-
-    SIM -- "实际关节状态\n0x81 JOINT_STATE" --> PY
-    PY --> TCP
-    TCP --> QEMU
-    QEMU --> PROTO
-    PROTO --> MCU
-
-    MCU -- "状态接收确认\n0x82 JOINT_STATE_ACK" --> PROTO
-    PROTO --> QEMU
-    QEMU --> TCP
-    TCP --> PY
+    G -->|"ACK\n0x82"| B
+    G -. "形成控制-反馈闭环" .-> A
 ```
 
 其中 TCP 仅作为 QEMU UART 在主机侧的后端传输方式，不改变嵌入式端的 UART 通信模型。
@@ -552,224 +525,3 @@ PyBullet
 4. 应用层负责模块组织和任务调度；
 5. 仿真端作为机器人本体和传感反馈的替代环境；
 6. 模块之间通过明确接口传递数据，避免跨层直接访问。
-
----
-
-## 8. 工程目录规划
-
-当前工程按功能划分：
-
-```text
-six-axis-robot-motion-control/
-├── CMakeLists.txt
-├── README.md
-│
-├── cmake/
-│   └── arm-none-eabi-gcc.cmake
-│
-├── firmware/
-│   ├── hello/
-│   └── freertos_demo/
-│       ├── startup.s
-│       ├── linker.ld
-│       ├── main.c
-│       ├── board.c
-│       ├── board.h
-│       ├── protocol.c
-│       ├── protocol.h
-│       ├── memory.c
-│       ├── FreeRTOSConfig.h
-│       └── CMakeLists.txt
-│
-├── simulation/
-│   ├── pybullet_ur5/
-│   │   ├── models/
-│   │   └── src/
-│   │
-│   └── uart_bridge/
-│       ├── uart_receiver.py
-│       └── ur5_uart_bridge.py
-│
-├── third_party/
-│   └── FreeRTOS-Kernel/
-│
-├── docs/
-│
-├── .vscode/
-│   └── tasks.json
-│
-└── .gitignore
-```
-
-其中第三方 FreeRTOS Kernel 不直接提交至主仓库，通过独立依赖方式获取。
-
----
-
-## 9. 第1阶段验证结果
-
-当前系统已经完成以下验证：
-
-### 9.1 Cortex-M4 / FreeRTOS
-
-已验证：
-
-- Cortex-M4 裸机程序运行；
-- UART字符输出；
-- FreeRTOS任务创建；
-- FreeRTOS任务调度；
-- `vTaskDelay()` 延时；
-- 双任务并发运行；
-- CMake交叉编译；
-- Board初始化模板加入后主链回归正常。
-
-### 9.2 PyBullet / UR5
-
-已验证：
-
-- PyBullet GUI运行；
-- UR5 URDF加载；
-- Visual / Collision Mesh加载；
-- 六轴关节识别；
-- 单关节位置控制；
-- 环境物体添加；
-- 多视角切换。
-
-### 9.3 双向通信闭环
-
-测试目标：
-
-```text
-Joint 1 = 60°
-Joint 2~6 = 0°
-```
-
-实际链路：
-
-```text
-Cortex-M4
-    ↓ 0x01
-Python
-    ↓
-PyBullet UR5
-    ↓ 0x81
-Cortex-M4
-    ↓ 0x82
-Python
-```
-
-测试中 UR5 第一轴成功运动至约 `60°`。
-
-Python 能够读取实际六轴状态并上传，例如：
-
-```text
-TX 0x81 实际角度:
-[60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
-```
-
-Cortex-M4 成功完成状态帧解析并返回：
-
-```text
-RX 0x82 MCU 已确认状态:
-[60.0, -3.46, -0.02, -0.07, 0.69, -2.96]
-```
-
-证明双向数据链路、数据校验、关节控制和状态反馈均已连通。
-
----
-
-## 10. 当前边界与后续扩展
-
-第1阶段仅建立基础工程框架和最小可运行闭环，目前仍存在以下设计边界：
-
-### 10.1 UART仍采用轮询方式
-
-当前 UART RX 采用周期轮询。
-
-第2阶段计划升级为：
-
-```text
-UART中断
-    ↓
-接收缓存
-    ↓
-协议状态机
-    ↓
-应用层
-```
-
----
-
-### 10.2 当前协议为固定长度帧
-
-当前仅针对六轴关节数据使用固定 17 Byte 帧。
-
-第2阶段将根据：
-
-- 运动指令；
-- 参数配置；
-- 状态查询；
-
-进一步扩展可变长度数据帧和完整协议解析模块。
-
----
-
-### 10.3 Checksum强度有限
-
-当前采用8位字节和校验，适合第1阶段连通性验证。
-
-后续可升级为 CRC16，提高异常数据检测能力。
-
----
-
-### 10.4 关节角数据范围
-
-当前使用：
-
-```text
-int16 × 0.01°
-```
-
-理论表示范围约：
-
-```text
--327.68° ~ +327.67°
-```
-
-部分机器人关节模型允许超过该范围，因此后续协议设计阶段需要重新评估数据位宽或角度分辨率。
-
----
-
-### 10.5 运动控制算法尚未实现
-
-当前使用 PyBullet 内置位置控制完成链路验证。
-
-正式的：
-
-- 正逆运动学；
-- 轨迹规划；
-- PID闭环控制；
-
-将在后续阶段由 Cortex-M4 端自行实现。
-
----
-
-## 11. 第1阶段方案结论
-
-第1阶段已建立六轴工业机器人嵌入式运动控制系统的基础技术架构。
-
-当前系统已经具备：
-
-```text
-Cortex-M4
-+ FreeRTOS
-+ CMake
-+ QEMU UART
-+ 二进制通信协议
-+ Python通信桥
-+ PyBullet
-+ UR5
-```
-
-组成的可运行基础闭环。
-
-系统各软件层边界已经确定，嵌入式端与机器人仿真端能够完成控制指令下发、关节状态反馈和通信确认，为下一阶段外设驱动标准化、协议解析模块完善和电机驱动抽象层开发提供基础。
