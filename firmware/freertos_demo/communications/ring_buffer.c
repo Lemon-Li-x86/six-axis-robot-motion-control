@@ -2,14 +2,20 @@
  * 文件：ring_buffer.c
  *
  * 用途：
- * 实现一个固定长度的字节环形缓冲区。
+ * 实现单生产者、单消费者环形缓冲区。
  *
- * 环形缓冲区使用 head 和 tail
- * 分别记录写入位置和读取位置。
+ * 当前主要用于：
  *
- * 当索引到达数组末尾以后，
- * 会重新回到数组起点，
- * 从而循环利用整块存储空间。
+ * UART RX ISR
+ *      ↓
+ * Ring Buffer
+ *      ↓
+ * ProtocolRX Task
+ *
+ * Producer 只修改 head。
+ * Consumer 只修改 tail。
+ *
+ * 因此不再使用共享 count 变量。
  */
 
 #include "ring_buffer.h"
@@ -26,8 +32,6 @@ void ring_buffer_init(
     ring_buffer->head = 0U;
 
     ring_buffer->tail = 0U;
-
-    ring_buffer->count = 0U;
 }
 
 
@@ -40,13 +44,30 @@ uint8_t ring_buffer_write(
     uint8_t data
 )
 {
+    uint32_t current_head;
+
+    uint32_t next_head;
+
+
+    current_head =
+        ring_buffer->head;
+
+
+    next_head =
+        (
+            current_head + 1U
+        )
+        % RING_BUFFER_CAPACITY;
+
+
     /*
-     * 缓冲区已满时不能继续写入，
-     * 防止覆盖尚未处理的数据。
+     * 如果下一个 head
+     * 已经追上 tail，
+     * 表示缓冲区已满。
      */
     if (
-        ring_buffer->count >=
-        RING_BUFFER_CAPACITY
+        next_head
+        == ring_buffer->tail
     )
     {
         return 0U;
@@ -54,27 +75,22 @@ uint8_t ring_buffer_write(
 
 
     /*
-     * 在当前 head 位置写入数据。
+     * 写入当前 head 位置。
      */
     ring_buffer->buffer[
-        ring_buffer->head
+        current_head
     ] = data;
 
 
     /*
-     * head 前进一个位置。
+     * 最后更新 head。
      *
-     * 到达数组末尾以后，
-     * 通过取模重新回到 0。
+     * 对 Consumer 来说，
+     * head 更新以后才代表
+     * 新数据已经可读。
      */
     ring_buffer->head =
-        (
-            ring_buffer->head + 1U
-        )
-        % RING_BUFFER_CAPACITY;
-
-
-    ring_buffer->count++;
+        next_head;
 
 
     return 1U;
@@ -90,35 +106,43 @@ uint8_t ring_buffer_read(
     uint8_t *data
 )
 {
+    uint32_t current_tail;
+
+
+    current_tail =
+        ring_buffer->tail;
+
+
     /*
-     * 缓冲区为空，没有数据可读。
+     * head == tail：
+     * 缓冲区为空。
      */
-    if (ring_buffer->count == 0U)
+    if (
+        current_tail
+        == ring_buffer->head
+    )
     {
         return 0U;
     }
 
 
     /*
-     * 从当前 tail 位置读取数据。
+     * 读取当前 tail。
      */
     *data =
         ring_buffer->buffer[
-            ring_buffer->tail
+            current_tail
         ];
 
 
     /*
-     * tail 前进一个位置。
+     * Consumer 更新 tail。
      */
     ring_buffer->tail =
         (
-            ring_buffer->tail + 1U
+            current_tail + 1U
         )
         % RING_BUFFER_CAPACITY;
-
-
-    ring_buffer->count--;
 
 
     return 1U;
@@ -133,7 +157,10 @@ uint8_t ring_buffer_is_empty(
     const ring_buffer_t *ring_buffer
 )
 {
-    if (ring_buffer->count == 0U)
+    if (
+        ring_buffer->head
+        == ring_buffer->tail
+    )
     {
         return 1U;
     }
@@ -151,9 +178,19 @@ uint8_t ring_buffer_is_full(
     const ring_buffer_t *ring_buffer
 )
 {
+    uint32_t next_head;
+
+
+    next_head =
+        (
+            ring_buffer->head + 1U
+        )
+        % RING_BUFFER_CAPACITY;
+
+
     if (
-        ring_buffer->count >=
-        RING_BUFFER_CAPACITY
+        next_head
+        == ring_buffer->tail
     )
     {
         return 1U;

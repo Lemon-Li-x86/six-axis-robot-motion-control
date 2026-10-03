@@ -2,10 +2,18 @@
  * 文件：ring_buffer.h
  *
  * 用途：
- * 定义通用环形缓冲区的数据结构和操作接口。
+ * 定义单生产者、单消费者字节环形缓冲区。
  *
- * 当前主要用于缓存 UART 接收到的字节，
- * 将 UART 数据接收与协议解析过程解耦。
+ * 当前使用方式：
+ *
+ * Producer：
+ * UART RX ISR
+ *
+ * Consumer：
+ * ProtocolRX Task
+ *
+ * 通过分别维护 head 和 tail，
+ * 避免 ISR 和 Task 同时修改同一个 count 变量。
  */
 
 #ifndef RING_BUFFER_H
@@ -15,38 +23,60 @@
 
 
 /* =========================================================
- * 环形缓冲区容量
+ * Ring Buffer 容量
  * ========================================================= */
 
+/*
+ * 数组物理容量为 128 Byte。
+ *
+ * 为了通过 head == tail 表示空，
+ * 会保留一个位置不用。
+ *
+ * 因此实际最大可保存：
+ *
+ * 127 Byte。
+ */
 #define RING_BUFFER_CAPACITY 128U
 
 
 /* =========================================================
- * 环形缓冲区结构
+ * Ring Buffer 数据结构
  * ========================================================= */
 
 typedef struct
 {
-    uint8_t buffer[RING_BUFFER_CAPACITY];
+    /*
+     * 实际数据存储区。
+     */
+    volatile uint8_t buffer[
+        RING_BUFFER_CAPACITY
+    ];
 
-    /* 下一个写入位置 */
-    uint32_t head;
 
-    /* 下一个读取位置 */
-    uint32_t tail;
+    /*
+     * 下一个写入位置。
+     *
+     * 只由 Producer 修改。
+     */
+    volatile uint32_t head;
 
-    /* 当前已经保存的数据数量 */
-    uint32_t count;
+
+    /*
+     * 下一个读取位置。
+     *
+     * 只由 Consumer 修改。
+     */
+    volatile uint32_t tail;
 
 } ring_buffer_t;
 
 
 /* =========================================================
- * 对外接口
+ * 接口
  * ========================================================= */
 
 /**
- * @brief 初始化环形缓冲区。
+ * @brief 初始化 Ring Buffer。
  */
 void ring_buffer_init(
     ring_buffer_t *ring_buffer
@@ -54,9 +84,9 @@ void ring_buffer_init(
 
 
 /**
- * @brief 向环形缓冲区写入一个字节。
+ * @brief 写入一个字节。
  *
- * @return 1：写入成功。
+ * @return 1：成功。
  *         0：缓冲区已满。
  */
 uint8_t ring_buffer_write(
@@ -66,9 +96,9 @@ uint8_t ring_buffer_write(
 
 
 /**
- * @brief 从环形缓冲区读取一个字节。
+ * @brief 读取一个字节。
  *
- * @return 1：读取成功。
+ * @return 1：成功。
  *         0：缓冲区为空。
  */
 uint8_t ring_buffer_read(
@@ -78,10 +108,7 @@ uint8_t ring_buffer_read(
 
 
 /**
- * @brief 判断环形缓冲区是否为空。
- *
- * @return 1：为空。
- *         0：存在数据。
+ * @brief 判断 Ring Buffer 是否为空。
  */
 uint8_t ring_buffer_is_empty(
     const ring_buffer_t *ring_buffer
@@ -89,10 +116,7 @@ uint8_t ring_buffer_is_empty(
 
 
 /**
- * @brief 判断环形缓冲区是否已满。
- *
- * @return 1：已满。
- *         0：仍有空间。
+ * @brief 判断 Ring Buffer 是否已满。
  */
 uint8_t ring_buffer_is_full(
     const ring_buffer_t *ring_buffer

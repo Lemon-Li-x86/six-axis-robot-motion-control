@@ -20,6 +20,8 @@
 /* C 程序入口 */
 .extern main
 
+/* UART0 RX 中断处理函数 */
+.extern UART0_RX_IRQHandler
 
 /* ---------------------------------------------------------
  * FreeRTOS Cortex-M 移植层提供的异常处理函数
@@ -63,6 +65,57 @@
 /* FreeRTOS：系统 Tick */
 .word xPortSysTickHandler        /* 15 SysTick */
 
+/* =========================================================
+ * Cortex-M4 外部中断
+ *
+ * Vector 16 开始对应 External IRQ 0。
+ * ========================================================= */
+
+/* IRQ 0：UART0 RX */
+.word UART0_RX_IRQHandler
+
+/* IRQ 1：UART0 TX */
+.word Default_Handler
+
+/* IRQ 2：UART1 RX */
+.word Default_Handler
+
+/* IRQ 3：UART1 TX */
+.word Default_Handler
+
+/* IRQ 4：UART2 RX */
+.word Default_Handler
+
+/* IRQ 5：UART2 TX */
+.word Default_Handler
+
+/* IRQ 6~31：当前均未使用 */
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
+.word Default_Handler
 
 /* =========================================================
  * Reset Handler

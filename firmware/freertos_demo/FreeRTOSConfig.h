@@ -1,53 +1,111 @@
+/*
+ * 文件：FreeRTOSConfig.h
+ *
+ * 用途：
+ * 配置当前 Cortex-M4 / FreeRTOS 固件所使用的
+ * 调度、内存、Tick、中断和任务通知参数。
+ */
+
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
 #include "board.h"
 
-#define configCPU_CLOCK_HZ ( ( unsigned long ) BOARD_SYSCLK_HZ )
 
-/* 系统每秒产生 1000 个 RTOS Tick，也就是 1 ms 一个 Tick。 */
-#define configTICK_RATE_HZ                 ( ( TickType_t ) 1000 )
+/* =========================================================
+ * CPU 与系统 Tick
+ * ========================================================= */
+
+#define configCPU_CLOCK_HZ \
+    ((unsigned long)BOARD_SYSCLK_HZ)
+
+/*
+ * 系统每秒产生 1000 个 RTOS Tick，
+ * 即 1 ms 一个 Tick。
+ */
+#define configTICK_RATE_HZ \
+    ((TickType_t)1000)
+
+
+/* =========================================================
+ * 调度配置
+ * ========================================================= */
 
 /* 使用抢占式调度。 */
-#define configUSE_PREEMPTION               1
+#define configUSE_PREEMPTION 1
 
-/* 任务最大优先级数量。 */
-#define configMAX_PRIORITIES               5
+/* 最大任务优先级数量。 */
+#define configMAX_PRIORITIES 5
 
-/* Idle Task 的最小栈大小。 */
-#define configMINIMAL_STACK_SIZE           128
+/* Idle Task 最小栈大小。 */
+#define configMINIMAL_STACK_SIZE 128
 
-/* FreeRTOS 动态内存池大小。 */
-#define configTOTAL_HEAP_SIZE              ( 32 * 1024 )
-
-/* 任务名称最大长度。 */
-#define configMAX_TASK_NAME_LEN            16
+/* Idle Task 可以主动让出 CPU。 */
+#define configIDLE_SHOULD_YIELD 1
 
 /* 当前使用 32 位 Tick。 */
-#define configUSE_16_BIT_TICKS             0
+#define configUSE_16_BIT_TICKS 0
 
-/* Idle Task 可以让出 CPU。 */
-#define configIDLE_SHOULD_YIELD            1
 
-/* 当前 demo 暂时不用软件 Timer。 */
-#define configUSE_TIMERS                   0
+/* =========================================================
+ * 内存配置
+ * ========================================================= */
 
-/* 当前 demo 不需要 idle hook / tick hook。 */
-#define configUSE_IDLE_HOOK                0
-#define configUSE_TICK_HOOK                0
+#define configTOTAL_HEAP_SIZE \
+    (32 * 1024)
 
-/* 支持动态创建任务。 */
-#define configSUPPORT_DYNAMIC_ALLOCATION   1
-#define configSUPPORT_STATIC_ALLOCATION    0
+#define configSUPPORT_DYNAMIC_ALLOCATION 1
+#define configSUPPORT_STATIC_ALLOCATION 0
 
-/* 我们后面任务中要用 vTaskDelay()。 */
-#define INCLUDE_vTaskDelay                 1
 
-/* Cortex-M 中断优先级配置。 */
-#define configKERNEL_INTERRUPT_PRIORITY        255
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY  4
+/* =========================================================
+ * Task 配置
+ * ========================================================= */
 
-/* 使用 Cortex-M 优化的任务选择实现。 */
+#define configMAX_TASK_NAME_LEN 16
+
+/*
+ * 开启 Direct-to-Task Notification。
+ *
+ * UART RX ISR 将通过 Task Notification
+ * 唤醒 ProtocolRX Task。
+ */
+#define configUSE_TASK_NOTIFICATIONS 1
+
+
+/* =========================================================
+ * Timer / Hook
+ * ========================================================= */
+
+#define configUSE_TIMERS 0
+
+#define configUSE_IDLE_HOOK 0
+#define configUSE_TICK_HOOK 0
+
+
+/* =========================================================
+ * FreeRTOS API
+ * ========================================================= */
+
+#define INCLUDE_vTaskDelay 1
+
+
+/* =========================================================
+ * Cortex-M 中断优先级
+ * ========================================================= */
+
+#define configKERNEL_INTERRUPT_PRIORITY \
+    255
+
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY \
+    4
+
+
+/* =========================================================
+ * Cortex-M 优化
+ * ========================================================= */
+
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 1
+
 
 #endif

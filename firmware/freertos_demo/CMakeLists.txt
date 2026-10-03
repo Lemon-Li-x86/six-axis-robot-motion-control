@@ -52,8 +52,8 @@ add_executable(
     # Communication 层
     # ------------------------------------------------------
 
-    communication/protocol.c
-    communication/ring_buffer.c
+    communications/protocol.c
+    communications/ring_buffer.c
 
 
     # ------------------------------------------------------
@@ -99,7 +99,7 @@ target_include_directories(
 
 
     # Communication 层头文件
-    ${CMAKE_CURRENT_SOURCE_DIR}/communication
+    ${CMAKE_CURRENT_SOURCE_DIR}/communications
 
 
     # FreeRTOS 公共头文件
