@@ -1,8 +1,23 @@
 # ==========================================================
-# FreeRTOS Cortex-M4 Demo
+# 文件：firmware/freertos_demo/CMakeLists.txt
+#
+# 用途：
+# 配置 Cortex-M4 / FreeRTOS 固件工程。
+#
+# 主要负责：
+# 1. 指定项目源文件；
+# 2. 指定 FreeRTOS Kernel 源文件；
+# 3. 设置各模块头文件搜索路径；
+# 4. 配置 Cortex-M4 编译参数；
+# 5. 配置链接脚本；
+# 6. 生成 freertos_demo.elf。
 # ==========================================================
 
+
+# ==========================================================
 # FreeRTOS Kernel 路径
+# ==========================================================
+
 set(
     FREERTOS_DIR
     "${CMAKE_SOURCE_DIR}/third_party/FreeRTOS-Kernel"
@@ -16,28 +31,57 @@ set(
 add_executable(
     freertos_demo
 
-    # 自己的代码
+    # ------------------------------------------------------
+    # 系统入口 / 板级代码
+    # ------------------------------------------------------
+
     startup.s
     main.c
     board.c
-    protocol.c
     memory.c
 
+
+    # ------------------------------------------------------
+    # Driver 层
+    # ------------------------------------------------------
+
+    drivers/uart_driver.c
+
+
+    # ------------------------------------------------------
+    # Communication 层
+    # ------------------------------------------------------
+
+    communication/protocol.c
+    communication/ring_buffer.c
+
+
+    # ------------------------------------------------------
     # FreeRTOS Kernel
+    # ------------------------------------------------------
+
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/list.c
     ${FREERTOS_DIR}/queue.c
 
-    # Cortex-M port
+
+    # ------------------------------------------------------
+    # Cortex-M FreeRTOS Port
+    # ------------------------------------------------------
+
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3/port.c
 
-    # 动态内存管理
+
+    # ------------------------------------------------------
+    # FreeRTOS 动态内存管理
+    # ------------------------------------------------------
+
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
 )
 
 
 # ==========================================================
-# 头文件路径
+# 头文件搜索路径
 # ==========================================================
 
 target_include_directories(
@@ -45,13 +89,24 @@ target_include_directories(
 
     PRIVATE
 
-    # FreeRTOSConfig.h
+    # 当前目录：
+    # board.h / FreeRTOSConfig.h
     ${CMAKE_CURRENT_SOURCE_DIR}
+
+
+    # Driver 层头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+
+
+    # Communication 层头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/communication
+
 
     # FreeRTOS 公共头文件
     ${FREERTOS_DIR}/include
 
-    # Cortex-M port 头文件
+
+    # FreeRTOS Cortex-M Port
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
 )
 
@@ -87,12 +142,14 @@ target_link_options(
 
     -nostdlib
 
-    # 使用自己的 linker script
     "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
 )
 
 
-# GCC 自己需要的底层运算库
+# ==========================================================
+# GCC 底层运行库
+# ==========================================================
+
 target_link_libraries(
     freertos_demo
 
@@ -103,7 +160,7 @@ target_link_libraries(
 
 
 # ==========================================================
-# 输出文件扩展名
+# 输出文件
 # ==========================================================
 
 set_target_properties(

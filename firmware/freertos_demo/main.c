@@ -23,6 +23,7 @@
 #include "board.h"
 #include "uart_driver.h"
 #include "protocol.h"
+#include "ring_buffer.h"
 
 
 /* =========================================================
@@ -101,40 +102,26 @@ static void task_protocol_tx(
  * Task 2：
  * Python -> Cortex-M4
  *
- * 接收 Python 发来的字节流，
- * 交给协议状态机处理。
+ * UART 收到的数据先进入 Ring Buffer，
+ * 再由协议状态机逐字节处理。
  * ========================================================= */
 
 static void task_protocol_rx(
     void *parameters
 )
 {
-    /*
-     * 协议解析器。
-     *
-     * 用于保存当前字节流
-     * 已经解析到哪个状态。
-     */
     protocol_parser_t parser;
 
-
-    /*
-     * 保存解析完成的一整帧数据。
-     */
     protocol_frame_t received_frame;
 
+    ring_buffer_t rx_buffer;
 
-    /*
-     * 保存解析得到的六轴实际角度。
-     */
+
     int16_t joint_states[
         PROTOCOL_JOINT_COUNT
     ];
 
 
-    /*
-     * MCU 返回给 Python 的 ACK 帧。
-     */
     uint8_t ack_frame[
         PROTOCOL_JOINT_FRAME_LEN
     ];
@@ -151,30 +138,64 @@ static void task_protocol_rx(
     );
 
 
+    /*
+     * 初始化 UART 接收环形缓冲区。
+     */
+    ring_buffer_init(
+        &rx_buffer
+    );
+
+
     for (;;)
     {
         uint8_t byte;
 
 
-        /*
-         * 当前仍然采用 1 ms 轮询方式，
-         * 尝试从 UART 获取一个字节。
-         *
-         * UART interrupt 和 Ring Buffer
-         * 将在后续阶段加入。
-         */
-        if (
+        /* -------------------------------------------------
+         * 第一阶段：
+         * 尽可能读取 UART 当前已有的数据，
+         * 并写入 Ring Buffer。
+         * ------------------------------------------------- */
+
+        while (
             uart_driver_read_byte(
                 &byte
             )
         )
         {
             /*
-             * 将当前字节交给协议状态机。
+             * 当前缓冲区满时，
+             * 暂时直接停止继续写入。
              *
-             * 返回 1：
-             * 已经得到一帧完整且
-             * Checksum 正确的数据。
+             * 后续会增加正式的错误处理机制。
+             */
+            if (
+                !ring_buffer_write(
+                    &rx_buffer,
+                    byte
+                )
+            )
+            {
+                break;
+            }
+        }
+
+
+        /* -------------------------------------------------
+         * 第二阶段：
+         * 从 Ring Buffer 读取所有已有数据，
+         * 依次交给协议状态机。
+         * ------------------------------------------------- */
+
+        while (
+            ring_buffer_read(
+                &rx_buffer,
+                &byte
+            )
+        )
+        {
+            /*
+             * 将字节交给协议解析器。
              */
             if (
                 protocol_parser_process_byte(
@@ -196,8 +217,7 @@ static void task_protocol_rx(
                 )
                 {
                     /*
-                     * 收到合法的六轴状态后，
-                     * 构造 0x82 ACK。
+                     * 构造并发送 ACK。
                      */
                     protocol_build_joint_state_ack_frame(
                         joint_states,
@@ -205,9 +225,6 @@ static void task_protocol_rx(
                     );
 
 
-                    /*
-                     * 将 ACK 发回 Python。
-                     */
                     uart_driver_write(
                         ack_frame,
                         PROTOCOL_JOINT_FRAME_LEN
@@ -218,18 +235,16 @@ static void task_protocol_rx(
 
 
         /*
-         * 当前暂时保持原有
-         * 1 ms UART 轮询方式。
+         * 当前仍然保持 1 ms 周期轮询。
          *
-         * 本次修改只重构协议解析，
-         * 不同时修改 UART 接收机制。
+         * 下一阶段将把 UART 接收
+         * 改为中断方式。
          */
         vTaskDelay(
             pdMS_TO_TICKS(1)
         );
     }
 }
-
 
 /* =========================================================
  * 固件入口
