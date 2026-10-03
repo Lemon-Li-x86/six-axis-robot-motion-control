@@ -11,19 +11,11 @@
  *
  * 负数：
  * 错误。
- *
- * 后续 Driver、Communication、Algorithm、
- * Control 等模块可以统一使用 robot_status_t，
- * 避免每个模块自行定义不同的错误表示方式。
  */
 
 #ifndef ERROR_CODE_H
 #define ERROR_CODE_H
 
-
-/* =========================================================
- * 通用状态码
- * ========================================================= */
 
 typedef enum
 {
@@ -76,9 +68,36 @@ typedef enum
 
 
     /*
-     * 未分类的内部错误。
+     * 未分类内部错误。
      */
-    ROBOT_STATUS_ERROR_INTERNAL = -8
+    ROBOT_STATUS_ERROR_INTERNAL = -8,
+
+
+    /*
+     * 输入数据超过允许范围。
+     */
+    ROBOT_STATUS_ERROR_OUT_OF_RANGE = -9,
+
+
+    /*
+     * 当前目标不存在可行解。
+     *
+     * 主要用于逆运动学。
+     */
+    ROBOT_STATUS_ERROR_NO_SOLUTION = -10,
+
+
+    /*
+     * 检测到运动学奇异状态。
+     */
+    ROBOT_STATUS_ERROR_SINGULAR = -11,
+
+
+    /*
+     * 接口已经定义，
+     * 但算法实现尚未完成。
+     */
+    ROBOT_STATUS_ERROR_NOT_IMPLEMENTED = -12
 
 } robot_status_t;
 

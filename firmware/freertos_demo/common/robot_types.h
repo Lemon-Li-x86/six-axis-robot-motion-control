@@ -7,15 +7,14 @@
  * 本文件统一：
  *
  * 1. 关节数量；
- * 2. 关节角数据格式；
- * 3. 关节角单位与精度；
- * 4. 关节速度数据格式；
- * 5. 笛卡尔位姿数据格式；
- * 6. 位姿单位。
+ * 2. 关节角数据格式、单位与精度；
+ * 3. 关节速度数据格式；
+ * 4. 笛卡尔位姿数据格式；
+ * 5. 坐标系与姿态角约定；
+ * 6. 4 × 4 齐次变换矩阵格式。
  *
  * Driver、Communication、Algorithm、Control 等模块
- * 应优先使用这里定义的公共类型，
- * 避免各模块自行定义不同的数据表示。
+ * 应优先使用这里定义的公共类型。
  */
 
 #ifndef ROBOT_TYPES_H
@@ -28,21 +27,16 @@
  * 六轴机器人基本配置
  * ========================================================= */
 
-/*
- * 当前机器人自由度：
- *
- * 6 DOF
- */
 #define ROBOT_JOINT_COUNT 6U
 
 
 /* =========================================================
- * 通用浮点数类型
+ * 通用计算标量
  * ========================================================= */
 
 /*
- * 后续运动学、轨迹规划和 PID
- * 统一使用单精度浮点数作为计算标量。
+ * 运动学、轨迹规划和 PID 内部计算
+ * 统一使用单精度浮点数。
  */
 typedef float robot_real_t;
 
@@ -52,7 +46,7 @@ typedef float robot_real_t;
  * ========================================================= */
 
 /*
- * 当前关节角使用有符号 16 bit 定点表示：
+ * 外部关节角统一采用 int16_t 定点表示：
  *
  * 1 unit = 0.01 degree
  *
@@ -64,14 +58,6 @@ typedef float robot_real_t;
 typedef int16_t robot_joint_angle_t;
 
 
-/*
- * 六轴关节角集合。
- *
- * value[0] -> Joint 1
- * value[1] -> Joint 2
- * ...
- * value[5] -> Joint 6
- */
 typedef struct
 {
     robot_joint_angle_t value[
@@ -82,18 +68,19 @@ typedef struct
 
 
 /*
- * 原始关节角到 degree 的换算系数。
+ * 原始关节角转 degree：
+ *
+ * degree =
+ * raw × ROBOT_JOINT_ANGLE_UNIT_DEG
  */
 #define ROBOT_JOINT_ANGLE_UNIT_DEG 0.01F
 
 
 /* =========================================================
- * 关节速度数据
+ * 关节速度
  * ========================================================= */
 
 /*
- * 关节速度使用单精度浮点数表示。
- *
  * 单位：
  *
  * degree / second
@@ -101,9 +88,6 @@ typedef struct
 typedef robot_real_t robot_joint_velocity_t;
 
 
-/*
- * 六轴关节速度集合。
- */
 typedef struct
 {
     robot_joint_velocity_t value[
@@ -118,27 +102,45 @@ typedef struct
  * ========================================================= */
 
 /*
- * 笛卡尔位姿表示。
+ * robot_pose_t 坐标约定：
  *
- * 位置：
+ * Position：
  *
  * x_mm
  * y_mm
  * z_mm
  *
  * 单位：
+ *
  * mm
  *
- * 姿态：
+ * Orientation：
  *
- * rx_deg
- * ry_deg
- * rz_deg
+ * rx_deg = Roll  about X
+ * ry_deg = Pitch about Y
+ * rz_deg = Yaw   about Z
  *
  * 单位：
+ *
  * degree
  *
- * 具体坐标系定义将在 Kinematics API 中明确。
+ * 姿态组合约定：
+ *
+ * R =
+ * Rz(rz)
+ * ×
+ * Ry(ry)
+ * ×
+ * Rx(rx)
+ *
+ * 即常用 Roll-Pitch-Yaw 表示。
+ *
+ * 位姿默认描述：
+ *
+ * Tool Frame
+ * 相对于
+ * Robot Base Frame
+ * 的位置和姿态。
  */
 typedef struct
 {
@@ -156,6 +158,49 @@ typedef struct
     robot_real_t rz_deg;
 
 } robot_pose_t;
+
+
+/* =========================================================
+ * 齐次变换矩阵
+ * ========================================================= */
+
+/*
+ * 4 × 4 Homogeneous Transform。
+ *
+ * 使用 Row-Major 存储：
+ *
+ * matrix[row][column]
+ *
+ * 形式：
+ *
+ * [ R00 R01 R02 Tx ]
+ * [ R10 R11 R12 Ty ]
+ * [ R20 R21 R22 Tz ]
+ * [  0   0   0   1 ]
+ *
+ * 其中：
+ *
+ * R：
+ * 3 × 3 Rotation Matrix
+ *
+ * T：
+ * Translation，单位 mm
+ *
+ * 当前默认含义：
+ *
+ * Base Frame
+ * ->
+ * Tool Frame
+ *
+ * 即：
+ *
+ * T_base_tool
+ */
+typedef struct
+{
+    robot_real_t matrix[4][4];
+
+} robot_transform_t;
 
 
 #endif

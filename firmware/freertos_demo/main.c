@@ -30,6 +30,7 @@
 #include "protocol.h"
 #include "robot_types.h"
 #include "error_code.h"
+#include "task_config.h"
 
 
 /* =========================================================
@@ -133,7 +134,9 @@ static void task_protocol_tx(
          * 向 PyBullet 发送一次目标位置。
          */
         vTaskDelay(
-            pdMS_TO_TICKS(1000)
+            pdMS_TO_TICKS(
+                TASK_PERIOD_PROTOCOL_TX_MS
+            )
         );
     }
 }
@@ -459,23 +462,23 @@ int main(void)
 
 
     xTaskCreate(
-        task_protocol_tx,
-        "ProtocolTX",
-        configMINIMAL_STACK_SIZE,
-        NULL,
-        1,
-        NULL
-    );
+    task_protocol_tx,
+    "ProtocolTX",
+    TASK_STACK_DEPTH_PROTOCOL_TX,
+    NULL,
+    TASK_PRIORITY_PROTOCOL_TX,
+    NULL
+);
 
 
-    xTaskCreate(
-        task_protocol_rx,
-        "ProtocolRX",
-        configMINIMAL_STACK_SIZE,
-        NULL,
-        1,
-        &protocol_rx_task_handle
-    );
+xTaskCreate(
+    task_protocol_rx,
+    "ProtocolRX",
+    TASK_STACK_DEPTH_PROTOCOL_RX,
+    NULL,
+    TASK_PRIORITY_PROTOCOL_RX,
+    &protocol_rx_task_handle
+);
 
 
     uart_driver_set_rx_event_callback(

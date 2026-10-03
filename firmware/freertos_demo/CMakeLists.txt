@@ -56,6 +56,12 @@ add_executable(
     communications/protocol.c
     communications/ring_buffer.c
 
+    # ------------------------------------------------------
+    # Algorithm 层
+    # ------------------------------------------------------
+
+    algorithms/kinematics.c
+
 
     # ------------------------------------------------------
     # FreeRTOS Kernel
@@ -104,6 +110,12 @@ target_include_directories(
     ${FREERTOS_DIR}/include
 
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
+
+    # Algorithm 层头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
+
+    # Application 层头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/application
 )
 
 
