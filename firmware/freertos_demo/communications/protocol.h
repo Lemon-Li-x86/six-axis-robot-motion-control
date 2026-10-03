@@ -4,6 +4,9 @@
  * 用途：
  * 定义 UART 通信协议的数据格式、协议帧结构、
  * 字节流解析状态机以及对外接口。
+ *
+ * Robot 核心数据类型由 robot_types.h 统一定义。
+ * 通用返回状态由 error_code.h 统一定义。
  */
 
 #ifndef PROTOCOL_H
@@ -11,18 +14,20 @@
 
 #include <stdint.h>
 
+#include "robot_types.h"
+#include "error_code.h"
+
 
 /* =========================================================
  * 协议基本定义
  * ========================================================= */
 
-/* 两个固定帧头字节 */
 #define PROTOCOL_HEADER_0 0xAAU
 #define PROTOCOL_HEADER_1 0x55U
 
 
 /* =========================================================
- * Command 定义
+ * Command
  * ========================================================= */
 
 /* Cortex-M4 -> Python：设置六轴目标角 */
@@ -31,62 +36,90 @@
 /* Python -> Cortex-M4：发送六轴实际状态 */
 #define CMD_JOINT_STATE 0x81U
 
-/* Cortex-M4 -> Python：确认已经收到状态 */
+/* Cortex-M4 -> Python：确认状态接收完成 */
 #define CMD_JOINT_STATE_ACK 0x82U
+
+/* Python -> Cortex-M4：请求诊断信息 */
+#define CMD_GET_DIAGNOSTICS 0x83U
+
+/* Cortex-M4 -> Python：返回诊断信息 */
+#define CMD_DIAGNOSTICS_RESPONSE 0x84U
 
 
 /* =========================================================
- * 数据长度定义
+ * Joint Protocol
  * ========================================================= */
 
-/* 六轴机器人共有 6 个关节 */
-#define PROTOCOL_JOINT_COUNT 6U
+/*
+ * 每个 Joint：
+ *
+ * robot_joint_angle_t
+ * =
+ * int16_t
+ * =
+ * 2 Byte
+ */
+#define PROTOCOL_JOINT_PAYLOAD_LEN \
+    (ROBOT_JOINT_COUNT * 2U)
+
 
 /*
- * 每个关节角使用 int16_t：
+ * Header:
+ * 2 Byte
  *
- * 6 × 2 Byte = 12 Byte
+ * Command:
+ * 1 Byte
+ *
+ * Length:
+ * 1 Byte
+ *
+ * Payload:
+ * 12 Byte
+ *
+ * Checksum:
+ * 1 Byte
  */
-#define PROTOCOL_JOINT_PAYLOAD_LEN 12U
+#define PROTOCOL_JOINT_FRAME_LEN \
+    (2U + 1U + 1U + PROTOCOL_JOINT_PAYLOAD_LEN + 1U)
+
 
 /*
- * 当前六轴关节帧长度：
+ * 为旧代码提供兼容名称。
  *
- * 2 Byte Header
- * 1 Byte Command
- * 1 Byte Length
- * 12 Byte Payload
- * 1 Byte Checksum
- *
- * 总计 17 Byte
+ * 真正的机器人 Joint Count
+ * 已统一定义在 robot_types.h。
  */
-#define PROTOCOL_JOINT_FRAME_LEN 17U
+#define PROTOCOL_JOINT_COUNT \
+    ROBOT_JOINT_COUNT
+
+
+/* =========================================================
+ * Diagnostics Protocol
+ * ========================================================= */
 
 /*
- * 通用协议允许的最大 Payload 长度。
+ * 当前 Diagnostics Payload：
  *
- * 当前六轴数据只需要 12 Byte，
- * 这里预留 64 Byte，
- * 为以后增加其他 Command 留出空间。
+ * uint32_t uart_rx_drop_count
  */
+#define PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN 4U
+
+
+#define PROTOCOL_DIAGNOSTICS_FRAME_LEN \
+    (2U + 1U + 1U + PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN + 1U)
+
+
+/* =========================================================
+ * 通用协议配置
+ * ========================================================= */
+
 #define PROTOCOL_MAX_PAYLOAD_LEN 64U
 
 
 /* =========================================================
- * 通用协议帧结构
+ * 通用协议帧
  * ========================================================= */
 
-/*
- * 一帧经过协议状态机完整解析以后，
- * 保存为该结构体。
- *
- * 帧头和 Checksum 不需要继续交给应用层，
- * 因此这里只保存：
- *
- * Command
- * Length
- * Payload
- */
 typedef struct
 {
     uint8_t command;
@@ -101,19 +134,9 @@ typedef struct
 
 
 /* =========================================================
- * 协议解析状态
+ * Parser State
  * ========================================================= */
 
-/*
- * 状态机依次经历：
- *
- * 等 AA
- * -> 等 55
- * -> Command
- * -> Length
- * -> Payload
- * -> Checksum
- */
 typedef enum
 {
     PROTOCOL_STATE_WAIT_HEADER_0 = 0,
@@ -132,20 +155,9 @@ typedef enum
 
 
 /* =========================================================
- * 协议解析器
+ * Parser
  * ========================================================= */
 
-/*
- * 保存当前字节流解析进行到哪里。
- *
- * 因为 UART 每次只收到一个 byte，
- * 所以解析器必须记住：
- *
- * 当前状态
- * 当前帧内容
- * Payload 已收到多少字节
- * 当前 Checksum
- */
 typedef struct
 {
     protocol_parser_state_t state;
@@ -160,13 +172,14 @@ typedef struct
 
 
 /* =========================================================
- * 字节流解析接口
+ * Parser API
  * ========================================================= */
 
 /**
  * @brief 初始化协议解析器。
  *
- * @param parser 协议解析器。
+ * @param parser
+ * Parser 对象。
  */
 void protocol_parser_init(
     protocol_parser_t *parser
@@ -174,16 +187,23 @@ void protocol_parser_init(
 
 
 /**
- * @brief 向协议状态机输入一个字节。
+ * @brief 向协议状态机输入一个 Byte。
  *
- * UART 每收到一个字节，就调用一次该函数。
+ * @param parser
+ * Parser 对象。
  *
- * @param parser 当前协议解析器。
- * @param byte 当前收到的字节。
- * @param output_frame 用于保存解析完成的协议帧。
+ * @param byte
+ * 当前输入字节。
  *
- * @return 1：已经得到一帧完整且 Checksum 正确的数据。
- *         0：当前还没有得到完整协议帧。
+ * @param output_frame
+ * 完整帧输出位置。
+ *
+ * @return
+ * 1：
+ * 得到完整且 Checksum 正确的协议帧。
+ *
+ * 0：
+ * 当前尚未得到完整帧。
  */
 uint8_t protocol_parser_process_byte(
     protocol_parser_t *parser,
@@ -193,36 +213,98 @@ uint8_t protocol_parser_process_byte(
 
 
 /* =========================================================
- * 六轴关节协议接口
+ * Joint Protocol API
  * ========================================================= */
 
 /**
- * @brief 构造六轴目标角协议帧。
- */
-void protocol_build_joint_target_frame(
-    const int16_t joints[PROTOCOL_JOINT_COUNT],
-    uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
-);
-
-
-/**
- * @brief 构造六轴状态 ACK 协议帧。
- */
-void protocol_build_joint_state_ack_frame(
-    const int16_t joints[PROTOCOL_JOINT_COUNT],
-    uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
-);
-
-
-/**
- * @brief 从完整协议帧中解析六轴实际状态。
+ * @brief 构造目标关节角协议帧。
  *
- * @return 1：解析成功。
- *         0：Command 或 Payload 长度不正确。
+ * @param joints
+ * 六轴目标关节角。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @param frame
+ * 输出协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 成功。
+ *
+ * 其他：
+ * 参数错误。
  */
-uint8_t protocol_parse_joint_state(
+robot_status_t protocol_build_joint_target_frame(
+    const robot_joint_angles_t *joints,
+    uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
+);
+
+
+/**
+ * @brief 构造 JOINT_STATE ACK。
+ */
+robot_status_t protocol_build_joint_state_ack_frame(
+    const robot_joint_angles_t *joints,
+    uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
+);
+
+
+/**
+ * @brief 从协议帧解析六轴 Joint State。
+ *
+ * @param frame
+ * 完整协议帧。
+ *
+ * @param joints
+ * 输出六轴关节角。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 成功。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_COMMAND：
+ * Command 错误。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_LENGTH：
+ * Payload Length 错误。
+ */
+robot_status_t protocol_parse_joint_state(
     const protocol_frame_t *frame,
-    int16_t joints[PROTOCOL_JOINT_COUNT]
+    robot_joint_angles_t *joints
+);
+
+
+/* =========================================================
+ * Diagnostics API
+ * ========================================================= */
+
+/**
+ * @brief 判断当前帧是否为 Diagnostics Request。
+ *
+ * 正确格式：
+ *
+ * Command = 0x83
+ * Length = 0
+ *
+ * @return
+ * 1：
+ * 是。
+ *
+ * 0：
+ * 不是。
+ */
+uint8_t protocol_is_diagnostics_request(
+    const protocol_frame_t *frame
+);
+
+
+/**
+ * @brief 构造 Diagnostics Response。
+ */
+robot_status_t protocol_build_diagnostics_response_frame(
+    uint32_t uart_rx_drop_count,
+    uint8_t frame[PROTOCOL_DIAGNOSTICS_FRAME_LEN]
 );
 
 

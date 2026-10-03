@@ -89,24 +89,19 @@ target_include_directories(
 
     PRIVATE
 
-    # 当前目录：
-    # board.h / FreeRTOSConfig.h
     ${CMAKE_CURRENT_SOURCE_DIR}
 
+    # Common 公共类型与错误码
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
 
     # Driver 层头文件
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 
-
     # Communication 层头文件
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 
-
-    # FreeRTOS 公共头文件
     ${FREERTOS_DIR}/include
 
-
-    # FreeRTOS Cortex-M Port
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
 )
 
