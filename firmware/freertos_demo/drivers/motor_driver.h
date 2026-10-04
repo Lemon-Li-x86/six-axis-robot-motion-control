@@ -4,20 +4,12 @@
  * 用途：
  * 定义六轴机器人关节电机驱动抽象接口。
  *
- * 本模块向上层提供统一的 Motor API，
- * 屏蔽底层状态来源。
+ * 当前仿真环境中，
+ * Joint Feedback 来自 Python / PyBullet。
  *
- * 当前仿真环境中：
- *
- * Joint Feedback
- * 来自 Python / PyBullet。
- *
- * 将来迁移到真实硬件时：
- *
- * Joint Feedback
- * 可以来自 Encoder / Servo Driver。
- *
- * 上层控制算法不需要因此修改接口。
+ * 后续迁移到真实硬件时，
+ * Feedback 可以由 Encoder / Servo Driver 提供，
+ * 上层 Algorithm / Control 模块无需改变接口。
  */
 
 #ifndef MOTOR_DRIVER_H
@@ -29,19 +21,10 @@
 #include "error_code.h"
 
 
-/* =========================================================
- * Motor Driver 初始化
- * ========================================================= */
-
 /**
  * @brief 初始化六轴 Motor Driver。
  *
- * 初始化：
- *
- * 1. Target Position；
- * 2. Feedback Position；
- * 3. Feedback Velocity；
- * 4. 内部状态标志。
+ * 初始化目标位置、位置反馈、速度反馈和内部状态。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -50,14 +33,10 @@
 robot_status_t motor_driver_init(void);
 
 
-/* =========================================================
- * Target Position API
- * ========================================================= */
-
 /**
- * @brief 设置六轴目标位置。
+ * @brief 设置六轴目标关节位置。
  *
- * @param targets
+ * @param[in] targets
  * 六轴目标关节角。
  *
  * 单位：
@@ -65,10 +44,10 @@ robot_status_t motor_driver_init(void);
  *
  * @return
  * ROBOT_STATUS_OK：
- * 成功。
+ * 设置成功。
  *
  * ROBOT_STATUS_ERROR_NULL_POINTER：
- * 输入为空。
+ * targets 为空。
  *
  * ROBOT_STATUS_ERROR_NOT_READY：
  * Driver 尚未初始化。
@@ -79,43 +58,59 @@ robot_status_t motor_driver_set_target_positions(
 
 
 /**
- * @brief 获取当前六轴目标位置。
+ * @brief 获取当前六轴目标关节位置。
  *
- * @param targets
+ * @param[out] targets
  * 输出当前目标关节角。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 获取成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * targets 为空。
+ *
+ * ROBOT_STATUS_ERROR_NOT_READY：
+ * Driver 尚未初始化。
  */
 robot_status_t motor_driver_get_target_positions(
     robot_joint_angles_t *targets
 );
 
 
-/* =========================================================
- * Feedback API
- * ========================================================= */
-
 /**
  * @brief 更新六轴关节位置反馈。
  *
  * 当前仿真环境中，
- * feedback 来自 PyBullet。
+ * Feedback 来自 PyBullet。
  *
- * 后续真实硬件中，
- * 可以由 Encoder / Servo Feedback 替换。
- *
- * @param feedback
+ * @param[in] feedback
  * 当前六轴位置反馈。
  *
- * @param delta_time_s
- * 当前反馈与上一反馈之间的时间，
- * 单位为 second。
+ * 单位：
+ * 0.01 degree。
  *
- * 如果 delta_time_s <= 0，
- * 仍然更新位置，
- * 但当前速度置为 0。
+ * @param[in] delta_time_s
+ * 当前 Feedback 与上一组 Feedback 的时间间隔。
+ *
+ * 单位：
+ * second。
+ *
+ * 当 delta_time_s <= 0 时，
+ * 仍然更新位置，但速度统一置为 0。
  *
  * @return
  * ROBOT_STATUS_OK：
- * 成功。
+ * 更新成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * feedback 为空。
+ *
+ * ROBOT_STATUS_ERROR_NOT_READY：
+ * Driver 尚未初始化。
  */
 robot_status_t motor_driver_update_feedback(
     const robot_joint_angles_t *feedback,
@@ -125,6 +120,23 @@ robot_status_t motor_driver_update_feedback(
 
 /**
  * @brief 获取最近一次六轴位置反馈。
+ *
+ * @param[out] positions
+ * 输出六轴关节位置。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 获取成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * positions 为空。
+ *
+ * ROBOT_STATUS_ERROR_NOT_READY：
+ * Driver 尚未初始化，
+ * 或尚未收到有效 Feedback。
  */
 robot_status_t motor_driver_get_positions(
     robot_joint_angles_t *positions
@@ -132,10 +144,24 @@ robot_status_t motor_driver_get_positions(
 
 
 /**
- * @brief 获取根据位置反馈计算出的六轴速度。
+ * @brief 获取六轴关节速度反馈。
+ *
+ * @param[out] velocities
+ * 输出根据连续位置反馈计算得到的关节速度。
  *
  * 单位：
  * degree / second。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 获取成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * velocities 为空。
+ *
+ * ROBOT_STATUS_ERROR_NOT_READY：
+ * Driver 尚未初始化，
+ * 或尚未收到有效 Feedback。
  */
 robot_status_t motor_driver_get_velocities(
     robot_joint_velocities_t *velocities
@@ -143,14 +169,15 @@ robot_status_t motor_driver_get_velocities(
 
 
 /**
- * @brief 判断是否已经收到过有效反馈。
+ * @brief 判断 Motor Driver 是否已经收到有效反馈。
  *
  * @return
  * 1：
- * 已经收到反馈。
+ * 已经收到至少一组有效 Feedback。
  *
  * 0：
- * 尚未收到反馈。
+ * Driver 尚未初始化，
+ * 或尚未收到有效 Feedback。
  */
 uint8_t motor_driver_has_feedback(void);
 

@@ -47,6 +47,7 @@ add_executable(
 
     drivers/uart_driver.c
     drivers/motor_driver.c
+    drivers/timer_driver.c
 
 
     # ------------------------------------------------------
@@ -55,6 +56,12 @@ add_executable(
 
     communications/protocol.c
     communications/ring_buffer.c
+
+    # ------------------------------------------------------
+    # Diagnostics 层
+    # ------------------------------------------------------
+
+    diagnostics/performance_monitor.c
 
     # ------------------------------------------------------
     # Algorithm 层
@@ -84,6 +91,8 @@ add_executable(
     # ------------------------------------------------------
 
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
+
+    
 )
 
 
@@ -116,6 +125,9 @@ target_include_directories(
 
     # Application 层头文件
     ${CMAKE_CURRENT_SOURCE_DIR}/application
+
+    # Diagnostics 层头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
 )
 
 

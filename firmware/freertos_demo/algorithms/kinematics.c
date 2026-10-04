@@ -76,7 +76,8 @@ robot_status_t kinematics_inverse(
 
 
     /*
-     * 当前没有有效 IK Solution。
+     * 当前具体 IK 尚未实现，
+     * 因此先保证输出解数量为 0。
      */
     solutions->count =
         0U;
@@ -87,7 +88,7 @@ robot_status_t kinematics_inverse(
      *
      * T_base_tool
      * ->
-     * UR5 analytic IK
+     * UR5 Analytic IK
      * ->
      * 最多 8 组 Joint Solution
      */
@@ -135,7 +136,7 @@ robot_status_t kinematics_select_best_solution(
     )
     {
         return
-            ROBOT_STATUS_ERROR_INVALID_LENGTH;
+            ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
 

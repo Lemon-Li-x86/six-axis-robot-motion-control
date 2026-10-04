@@ -13,9 +13,8 @@
  *
  * 本模块不依赖 UART、Protocol 或 FreeRTOS。
  *
- * 因此将来切换真实 Servo / Encoder Backend 时，
- * 上层 Algorithm / Control 模块可以继续使用
- * 相同的 Motor Driver API。
+ * 因此将来切换到真实 Servo / Encoder Backend 时，
+ * 上层 Algorithm / Control 模块仍可以使用相同接口。
  */
 
 #include <stddef.h>
@@ -32,35 +31,29 @@ static uint8_t
     motor_driver_initialized = 0U;
 
 
+/*
+ * 标记是否已经收到过至少一组有效 Feedback。
+ */
 static uint8_t
     motor_feedback_valid = 0U;
 
 
 /*
- * 当前目标位置。
+ * 当前目标关节位置。
  */
 static robot_joint_angles_t
     motor_target_positions;
 
 
 /*
- * 最近一次位置反馈。
+ * 最近一次关节位置反馈。
  */
 static robot_joint_angles_t
     motor_feedback_positions;
 
 
 /*
- * 上一次位置反馈。
- *
- * 用于计算速度。
- */
-static robot_joint_angles_t
-    motor_previous_positions;
-
-
-/*
- * 根据连续位置反馈计算得到的速度。
+ * 根据连续位置反馈计算得到的关节速度。
  *
  * 单位：
  * degree / second。
@@ -89,10 +82,6 @@ robot_status_t motor_driver_init(void)
 
 
         motor_feedback_positions.value[i] =
-            0;
-
-
-        motor_previous_positions.value[i] =
             0;
 
 
@@ -235,9 +224,9 @@ robot_status_t motor_driver_update_feedback(
 
 
     /*
-     * 如果已经存在上一组 Feedback，
-     * 并且采样间隔有效，
-     * 则计算关节速度。
+     * 已经存在上一组有效 Feedback，
+     * 且时间间隔有效时，
+     * 根据位置差计算关节速度。
      */
     if (
         motor_feedback_valid
@@ -265,11 +254,6 @@ robot_status_t motor_driver_update_feedback(
                 (int32_t)motor_feedback_positions.value[i];
 
 
-            /*
-             * raw angle
-             * ->
-             * degree
-             */
             delta_degree =
                 (robot_real_t)delta_raw
                 *
@@ -286,7 +270,8 @@ robot_status_t motor_driver_update_feedback(
     {
         /*
          * 第一组 Feedback，
-         * 或当前时间间隔无法用于速度计算。
+         * 或时间间隔无效时，
+         * 当前速度统一置零。
          */
         for (
             i = 0U;
@@ -301,21 +286,10 @@ robot_status_t motor_driver_update_feedback(
 
 
     /*
-     * 保存旧位置。
-     */
-    for (
-        i = 0U;
-        i < ROBOT_JOINT_COUNT;
-        i++
-    )
-    {
-        motor_previous_positions.value[i] =
-            motor_feedback_positions.value[i];
-    }
-
-
-    /*
-     * 保存新位置。
+     * 保存最新 Position Feedback。
+     *
+     * 下一次 update_feedback() 调用时，
+     * 该值同时作为上一采样点使用。
      */
     for (
         i = 0U;

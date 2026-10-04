@@ -569,15 +569,23 @@ robot_status_t protocol_parse_joint_state(
  * Diagnostics Request
  * ========================================================= */
 
-uint8_t protocol_is_diagnostics_request(
-    const protocol_frame_t *frame
+/* =========================================================
+ * Diagnostics Request Parser
+ * ========================================================= */
+
+robot_status_t protocol_parse_diagnostics_request(
+    const protocol_frame_t *frame,
+    uint8_t *selector
 )
 {
     if (
         frame == NULL
+        ||
+        selector == NULL
     )
     {
-        return 0U;
+        return
+            ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
 
@@ -586,20 +594,85 @@ uint8_t protocol_is_diagnostics_request(
         != CMD_GET_DIAGNOSTICS
     )
     {
-        return 0U;
+        return
+            ROBOT_STATUS_ERROR_INVALID_COMMAND;
+    }
+
+
+    /*
+     * 保持旧版 Diagnostics Request 兼容：
+     *
+     * Length = 0
+     * ->
+     * 查询 RX Drop Count。
+     */
+    if (
+        frame->length
+        == 0U
+    )
+    {
+        *selector =
+            DIAGNOSTICS_METRIC_RX_DROP_COUNT;
+
+
+        return
+            ROBOT_STATUS_OK;
     }
 
 
     if (
         frame->length
-        != 0U
+        != 1U
     )
     {
-        return 0U;
+        return
+            ROBOT_STATUS_ERROR_INVALID_LENGTH;
     }
 
 
-    return 1U;
+    if (
+        frame->payload[0]
+        > DIAGNOSTICS_METRIC_MAX
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    }
+
+
+    *selector =
+        frame->payload[0];
+
+
+    return
+        ROBOT_STATUS_OK;
+}
+
+
+/* =========================================================
+ * Diagnostics Request Check
+ * ========================================================= */
+
+uint8_t protocol_is_diagnostics_request(
+    const protocol_frame_t *frame
+)
+{
+    uint8_t selector;
+
+
+    if (
+        protocol_parse_diagnostics_request(
+            frame,
+            &selector
+        )
+        == ROBOT_STATUS_OK
+    )
+    {
+        return 1U;
+    }
+
+
+    return 0U;
 }
 
 
