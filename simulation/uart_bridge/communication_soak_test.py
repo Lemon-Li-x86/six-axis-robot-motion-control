@@ -21,6 +21,8 @@
 6. 统计实际运行时长和平均发送频率；
 7. 将最终测试结果保存为 JSON。
 
+协议编解码统一由 protocol_codec.py 提供。
+
 本测试属于 QEMU + TCP + FreeRTOS 仿真环境测试，
 不能直接等同于真实 Cortex-M4 硬件 UART 性能。
 """
@@ -34,52 +36,44 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from protocol_codec import (
+    CMD_DIAGNOSTICS_RESPONSE,
+    CMD_JOINT_STATE,
+    CMD_JOINT_STATE_ACK,
+    build_diagnostics_request,
+    build_frame,
+    extract_frames,
+    parse_diagnostics_response_payload,
+    parse_frame,
+)
+
 
 DEFAULT_HOST = "127.0.0.1"
+
 DEFAULT_PORT = 5555
 
-HEADER = b"\xAA\x55"
-
-CMD_JOINT_STATE = 0x81
-CMD_JOINT_STATE_ACK = 0x82
-
-CMD_GET_DIAGNOSTICS = 0x83
-CMD_DIAGNOSTICS_RESPONSE = 0x84
-
 DEFAULT_DURATION_S = 30.0 * 60.0
+
 DEFAULT_RATE_HZ = 100.0
+
 DEFAULT_ACK_TIMEOUT_S = 0.05
+
 DEFAULT_PROGRESS_INTERVAL_S = 60.0
 
 
-def build_frame(
-    command: int,
-    payload: bytes
-) -> bytes:
-
-    frame_without_checksum = (
-        HEADER
-        + bytes([
-            command,
-            len(payload)
-        ])
-        + payload
-    )
-
-    checksum = (
-        sum(frame_without_checksum[2:])
-        & 0xFF
-    )
-
-    return (
-        frame_without_checksum
-        + bytes([checksum])
-    )
-
+# ==========================================================
+# Test Payload Builder
+# ==========================================================
 
 def build_joint_state_frame(
-    sequence: int
+    sequence: int,
 ) -> tuple[bytes, bytes]:
+    """
+    使用 sequence 构造唯一 JOINT_STATE Payload。
+
+    Payload 使用原始 int16 / 0.01° 单位，
+    便于 ACK 与发送数据逐帧匹配。
+    """
 
     base_value = (
         sequence % 30000
@@ -96,129 +90,32 @@ def build_joint_state_frame(
 
     payload = struct.pack(
         "<6h",
-        *joints
+        *joints,
     )
 
     frame = build_frame(
         CMD_JOINT_STATE,
-        payload
+        payload,
     )
 
     return frame, payload
 
 
-def build_diagnostics_request() -> bytes:
-
-    return build_frame(
-        CMD_GET_DIAGNOSTICS,
-        b""
-    )
-
-
-def extract_frames(
-    buffer: bytearray
-) -> list[bytes]:
-
-    frames = []
-
-    while True:
-
-        if len(buffer) < 4:
-            break
-
-        if buffer[0:2] != HEADER:
-
-            del buffer[0]
-
-            continue
-
-        payload_length = (
-            buffer[3]
-        )
-
-        frame_length = (
-            2
-            + 1
-            + 1
-            + payload_length
-            + 1
-        )
-
-        if len(buffer) < frame_length:
-            break
-
-        frame = bytes(
-            buffer[:frame_length]
-        )
-
-        del buffer[:frame_length]
-
-        frames.append(
-            frame
-        )
-
-    return frames
-
-
-def parse_frame(
-    frame: bytes
-):
-
-    if len(frame) < 5:
-
-        return None, None
-
-    if frame[0:2] != HEADER:
-
-        return None, None
-
-    command = (
-        frame[2]
-    )
-
-    payload_length = (
-        frame[3]
-    )
-
-    expected_length = (
-        2
-        + 1
-        + 1
-        + payload_length
-        + 1
-    )
-
-    if len(frame) != expected_length:
-
-        return None, None
-
-    received_checksum = (
-        frame[-1]
-    )
-
-    calculated_checksum = (
-        sum(frame[2:-1])
-        & 0xFF
-    )
-
-    if (
-        received_checksum
-        != calculated_checksum
-    ):
-
-        return None, None
-
-    return (
-        command,
-        frame[4:-1]
-    )
-
+# ==========================================================
+# Socket Settle
+# ==========================================================
 
 def settle_socket(
     sock: socket.socket,
     rx_buffer: bytearray,
-    timeout: float = 0.2
-):
+    timeout: float = 0.2,
+) -> None:
+    """
+    消费当前已经存在于 TCP 链路中的数据。
+
+    用于测试阶段切换前，
+    避免旧 Frame 干扰后续统计。
+    """
 
     deadline = (
         time.perf_counter()
@@ -229,12 +126,11 @@ def settle_socket(
         time.perf_counter()
         < deadline
     ):
-
         readable, _, _ = select.select(
             [sock],
             [],
             [],
-            0.01
+            0.01,
         )
 
         if not readable:
@@ -256,17 +152,25 @@ def settle_socket(
         )
 
 
+# ==========================================================
+# Diagnostics
+# ==========================================================
+
 def query_rx_drop_count(
     sock: socket.socket,
-    rx_buffer: bytearray
+    rx_buffer: bytearray,
 ) -> int:
+    """
+    查询 UART Driver RX Drop Byte Count。
+    """
 
     request = (
         build_diagnostics_request()
     )
 
+    # 如果链路刚经历较高负载，
+    # 允许最多尝试 3 次查询。
     for _ in range(3):
-
         sock.sendall(
             request
         )
@@ -280,7 +184,6 @@ def query_rx_drop_count(
             time.perf_counter()
             < deadline
         ):
-
             remaining = (
                 deadline
                 - time.perf_counter()
@@ -292,8 +195,8 @@ def query_rx_drop_count(
                 [],
                 min(
                     remaining,
-                    0.05
-                )
+                    0.05,
+                ),
             )
 
             if not readable:
@@ -315,36 +218,43 @@ def query_rx_drop_count(
             )
 
             for frame in frames:
-
-                command, payload = (
-                    parse_frame(
-                        frame
-                    )
+                command, payload = parse_frame(
+                    frame
                 )
 
                 if (
                     command
                     == CMD_DIAGNOSTICS_RESPONSE
                     and payload is not None
-                    and len(payload) == 4
                 ):
+                    value = (
+                        parse_diagnostics_response_payload(
+                            payload
+                        )
+                    )
 
-                    return struct.unpack(
-                        "<I",
-                        payload
-                    )[0]
+                    if value is not None:
+                        return value
 
     raise RuntimeError(
         "无法获得 MCU Diagnostics Response"
     )
 
 
+# ==========================================================
+# ACK Wait
+# ==========================================================
+
 def wait_for_matching_ack(
     sock: socket.socket,
     rx_buffer: bytearray,
     expected_payload: bytes,
-    timeout: float
+    timeout: float,
 ) -> bool:
+    """
+    等待与当前 JOINT_STATE Payload
+    完全一致的 ACK。
+    """
 
     deadline = (
         time.perf_counter()
@@ -355,7 +265,6 @@ def wait_for_matching_ack(
         time.perf_counter()
         < deadline
     ):
-
         remaining = (
             deadline
             - time.perf_counter()
@@ -367,8 +276,8 @@ def wait_for_matching_ack(
             [],
             min(
                 remaining,
-                0.005
-            )
+                0.005,
+            ),
         )
 
         if not readable:
@@ -379,7 +288,6 @@ def wait_for_matching_ack(
         )
 
         if not data:
-
             raise ConnectionError(
                 "QEMU UART TCP 连接已断开"
             )
@@ -393,11 +301,8 @@ def wait_for_matching_ack(
         )
 
         for frame in frames:
-
-            command, payload = (
-                parse_frame(
-                    frame
-                )
+            command, payload = parse_frame(
+                frame
             )
 
             if (
@@ -406,16 +311,18 @@ def wait_for_matching_ack(
                 and payload
                 == expected_payload
             ):
-
                 return True
 
     return False
 
 
-def save_result(
-    result: dict
-) -> Path:
+# ==========================================================
+# Result Output
+# ==========================================================
 
+def save_result(
+    result: dict,
+) -> Path:
     current_file = (
         Path(__file__).resolve()
     )
@@ -433,7 +340,7 @@ def save_result(
 
     result_dir.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
     timestamp = (
@@ -452,18 +359,21 @@ def save_result(
 
     with output_path.open(
         "w",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as file:
-
         json.dump(
             result,
             file,
             ensure_ascii=False,
-            indent=4
+            indent=4,
         )
 
     return output_path
 
+
+# ==========================================================
+# Soak Test
+# ==========================================================
 
 def run_soak_test(
     host: str,
@@ -471,17 +381,14 @@ def run_soak_test(
     duration_s: float,
     rate_hz: float,
     ack_timeout_s: float,
-    progress_interval_s: float
-):
-
+    progress_interval_s: float,
+) -> None:
     if duration_s <= 0.0:
-
         raise ValueError(
             "duration 必须大于 0"
         )
 
     if rate_hz <= 0.0:
-
         raise ValueError(
             "rate 必须大于 0"
         )
@@ -499,37 +406,40 @@ def run_soak_test(
     sock = socket.create_connection(
         (
             host,
-            port
+            port,
         )
     )
 
     sock.setsockopt(
         socket.IPPROTO_TCP,
         socket.TCP_NODELAY,
-        1
+        1,
     )
 
     rx_buffer = bytearray()
 
-    print("连接成功。")
+    print(
+        "连接成功。"
+    )
     print()
 
     try:
-
         settle_socket(
             sock,
-            rx_buffer
+            rx_buffer,
         )
 
         drop_before = (
             query_rx_drop_count(
                 sock,
-                rx_buffer
+                rx_buffer,
             )
         )
 
         sent_count = 0
+
         ack_count = 0
+
         timeout_count = 0
 
         start_time = (
@@ -579,7 +489,6 @@ def run_soak_test(
         print()
 
         while True:
-
             now = (
                 time.perf_counter()
             )
@@ -588,7 +497,6 @@ def run_soak_test(
                 break
 
             if now < next_send_time:
-
                 time.sleep(
                     next_send_time
                     - now
@@ -611,16 +519,13 @@ def run_soak_test(
                     sock,
                     rx_buffer,
                     expected_payload,
-                    ack_timeout_s
+                    ack_timeout_s,
                 )
             )
 
             if ack_received:
-
                 ack_count += 1
-
             else:
-
                 timeout_count += 1
 
             next_send_time += (
@@ -637,7 +542,6 @@ def run_soak_test(
                 next_send_time
                 + period_s
             ):
-
                 next_send_time = (
                     current_time
                     + period_s
@@ -647,7 +551,6 @@ def run_soak_test(
                 current_time
                 >= next_progress_time
             ):
-
                 elapsed = (
                     current_time
                     - start_time
@@ -693,13 +596,13 @@ def run_soak_test(
         settle_socket(
             sock,
             rx_buffer,
-            timeout=0.2
+            timeout=0.2,
         )
 
         drop_after = (
             query_rx_drop_count(
                 sock,
-                rx_buffer
+                rx_buffer,
             )
         )
 
@@ -738,51 +641,23 @@ def run_soak_test(
                     timespec="seconds"
                 )
             ),
-            "target_duration_s": (
-                duration_s
-            ),
-            "actual_duration_s": (
-                actual_duration_s
-            ),
-            "target_rate_hz": (
-                rate_hz
-            ),
-            "actual_rate_hz": (
-                actual_rate_hz
-            ),
-            "ack_timeout_s": (
-                ack_timeout_s
-            ),
-            "sent": (
-                sent_count
-            ),
-            "ack": (
-                ack_count
-            ),
-            "lost": (
-                lost_count
-            ),
-            "timeout": (
-                timeout_count
-            ),
-            "ack_success_rate_percent": (
-                success_rate
-            ),
-            "rx_drop_before_bytes": (
-                drop_before
-            ),
-            "rx_drop_after_bytes": (
-                drop_after
-            ),
-            "rx_drop_delta_bytes": (
-                drop_delta
-            ),
+            "target_duration_s": duration_s,
+            "actual_duration_s": actual_duration_s,
+            "target_rate_hz": rate_hz,
+            "actual_rate_hz": actual_rate_hz,
+            "ack_timeout_s": ack_timeout_s,
+            "sent": sent_count,
+            "ack": ack_count,
+            "lost": lost_count,
+            "timeout": timeout_count,
+            "ack_success_rate_percent": success_rate,
+            "rx_drop_before_bytes": drop_before,
+            "rx_drop_after_bytes": drop_after,
+            "rx_drop_delta_bytes": drop_delta,
         }
 
-        output_path = (
-            save_result(
-                result
-            )
+        output_path = save_result(
+            result
         )
 
         print()
@@ -863,12 +738,14 @@ def run_soak_test(
         )
 
     finally:
-
         sock.close()
 
 
-def parse_arguments():
+# ==========================================================
+# Arguments
+# ==========================================================
 
+def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
             "QEMU Cortex-M4 UART "
@@ -878,13 +755,13 @@ def parse_arguments():
 
     parser.add_argument(
         "--host",
-        default=DEFAULT_HOST
+        default=DEFAULT_HOST,
     )
 
     parser.add_argument(
         "--port",
         type=int,
-        default=DEFAULT_PORT
+        default=DEFAULT_PORT,
     )
 
     parser.add_argument(
@@ -894,7 +771,7 @@ def parse_arguments():
         help=(
             "测试持续时间，单位 second。"
             "默认 1800。"
-        )
+        ),
     )
 
     parser.add_argument(
@@ -904,7 +781,7 @@ def parse_arguments():
         help=(
             "目标发送频率，单位 Hz。"
             "默认 100。"
-        )
+        ),
     )
 
     parser.add_argument(
@@ -914,7 +791,7 @@ def parse_arguments():
         help=(
             "单帧 ACK Timeout，单位 second。"
             "默认 0.05。"
-        )
+        ),
     )
 
     parser.add_argument(
@@ -924,14 +801,17 @@ def parse_arguments():
         help=(
             "进度打印周期，单位 second。"
             "默认 60。"
-        )
+        ),
     )
 
     return parser.parse_args()
 
 
-def main():
+# ==========================================================
+# Entry
+# ==========================================================
 
+def main() -> None:
     arguments = (
         parse_arguments()
     )
@@ -944,10 +824,9 @@ def main():
         ack_timeout_s=arguments.ack_timeout,
         progress_interval_s=(
             arguments.progress_interval
-        )
+        ),
     )
 
 
 if __name__ == "__main__":
-
     main()
