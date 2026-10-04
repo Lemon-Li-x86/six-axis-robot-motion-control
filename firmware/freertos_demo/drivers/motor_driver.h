@@ -24,7 +24,8 @@
 /**
  * @brief 初始化六轴 Motor Driver。
  *
- * 初始化目标位置、位置反馈、速度反馈和内部状态。
+ * 初始化目标位置、位置反馈、
+ * 连续位置反馈、速度反馈和内部状态。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -41,6 +42,10 @@ robot_status_t motor_driver_init(void);
  *
  * 单位：
  * 0.01 degree。
+ *
+ * Driver 内部会将输入规范化为：
+ *
+ * [-180°, 180°)
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -61,10 +66,14 @@ robot_status_t motor_driver_set_target_positions(
  * @brief 获取当前六轴目标关节位置。
  *
  * @param[out] targets
- * 输出当前目标关节角。
+ * 输出当前规范化目标关节角。
  *
  * 单位：
  * 0.01 degree。
+ *
+ * 范围：
+ *
+ * [-180°, 180°)
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -87,6 +96,18 @@ robot_status_t motor_driver_get_target_positions(
  * 当前仿真环境中，
  * Feedback 来自 PyBullet。
  *
+ * 输入使用 Canonical Angle：
+ *
+ * [-180°, 180°)
+ *
+ * Driver 会：
+ *
+ * 1. 规范化输入角；
+ * 2. 正确处理 ±180° 回绕；
+ * 3. 计算最短角位移；
+ * 4. 重建连续关节位置；
+ * 5. 根据连续角位移计算速度。
+ *
  * @param[in] feedback
  * 当前六轴位置反馈。
  *
@@ -100,7 +121,8 @@ robot_status_t motor_driver_get_target_positions(
  * second。
  *
  * 当 delta_time_s <= 0 时，
- * 仍然更新位置，但速度统一置为 0。
+ * 仍然更新位置，
+ * 但当前速度统一置为 0。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -119,13 +141,23 @@ robot_status_t motor_driver_update_feedback(
 
 
 /**
- * @brief 获取最近一次六轴位置反馈。
+ * @brief 获取最近一次规范化六轴位置反馈。
  *
  * @param[out] positions
- * 输出六轴关节位置。
+ * 输出六轴 Canonical Angle。
  *
  * 单位：
  * 0.01 degree。
+ *
+ * 范围：
+ *
+ * [-180°, 180°)
+ *
+ * 该接口适合：
+ *
+ * Protocol ACK、
+ * Kinematics、
+ * 普通状态显示。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -144,10 +176,51 @@ robot_status_t motor_driver_get_positions(
 
 
 /**
+ * @brief 获取连续六轴关节位置。
+ *
+ * 与 Canonical Angle 不同，
+ * 连续位置不会在 ±180° 发生跳变。
+ *
+ * 例如：
+ *
+ * Canonical：
+ *
+ * 179° -> -179°
+ *
+ * Continuous：
+ *
+ * 179° -> 181°
+ *
+ * @param[out] positions
+ * 输出连续六轴关节位置。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 获取成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * positions 为空。
+ *
+ * ROBOT_STATUS_ERROR_NOT_READY：
+ * Driver 尚未初始化，
+ * 或尚未收到有效 Feedback。
+ */
+robot_status_t motor_driver_get_unwrapped_positions(
+    robot_joint_positions_t *positions
+);
+
+
+/**
  * @brief 获取六轴关节速度反馈。
  *
+ * 速度根据经过 Wrap Correction
+ * 的连续位置差计算。
+ *
  * @param[out] velocities
- * 输出根据连续位置反馈计算得到的关节速度。
+ * 输出六轴关节速度。
  *
  * 单位：
  * degree / second。

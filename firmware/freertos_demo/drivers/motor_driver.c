@@ -6,10 +6,12 @@
  *
  * 当前实现属于 Simulation Backend：
  *
- * 1. 保存目标关节位置；
- * 2. 保存位置反馈；
- * 3. 根据连续两次位置反馈计算关节速度；
- * 4. 向上层提供统一 Motor API。
+ * 1. 保存规范化目标关节位置；
+ * 2. 保存规范化位置反馈；
+ * 3. 重建连续关节位置；
+ * 4. 正确处理 ±180° Angle Wrap；
+ * 5. 根据连续位置差计算关节速度；
+ * 6. 向上层提供统一 Motor API。
  *
  * 本模块不依赖 UART、Protocol 或 FreeRTOS。
  *
@@ -40,26 +42,146 @@ static uint8_t
 
 /*
  * 当前目标关节位置。
+ *
+ * Canonical Angle：
+ *
+ * [-180°, 180°)
  */
 static robot_joint_angles_t
     motor_target_positions;
 
 
 /*
- * 最近一次关节位置反馈。
+ * 最近一次规范化关节位置反馈。
+ *
+ * Canonical Angle：
+ *
+ * [-180°, 180°)
  */
 static robot_joint_angles_t
     motor_feedback_positions;
 
 
 /*
- * 根据连续位置反馈计算得到的关节速度。
+ * 连续关节位置。
+ *
+ * 不在 ±180° 处回绕。
+ */
+static robot_joint_positions_t
+    motor_feedback_unwrapped_positions;
+
+
+/*
+ * 根据连续位置变化计算得到的关节速度。
  *
  * 单位：
  * degree / second。
  */
 static robot_joint_velocities_t
     motor_feedback_velocities;
+
+
+/* =========================================================
+ * Angle Normalize
+ * ========================================================= */
+
+/*
+ * 将任意 0.01° 整数角规范化到：
+ *
+ * [-18000, 18000)
+ *
+ * 即：
+ *
+ * [-180°, 180°)
+ */
+static robot_joint_angle_t
+motor_driver_normalize_angle_raw(
+    int32_t raw_angle
+)
+{
+    int32_t normalized;
+
+
+    normalized =
+        raw_angle
+        %
+        ROBOT_JOINT_FULL_TURN_RAW;
+
+
+    if (
+        normalized
+        >= ROBOT_JOINT_HALF_TURN_RAW
+    )
+    {
+        normalized -=
+            ROBOT_JOINT_FULL_TURN_RAW;
+    }
+    else if (
+        normalized
+        <
+        -ROBOT_JOINT_HALF_TURN_RAW
+    )
+    {
+        normalized +=
+            ROBOT_JOINT_FULL_TURN_RAW;
+    }
+
+
+    return
+        (robot_joint_angle_t)normalized;
+}
+
+
+/* =========================================================
+ * Shortest Angular Delta
+ * ========================================================= */
+
+/*
+ * 计算两个 Canonical Angle 之间的
+ * 最短角位移。
+ *
+ * 例如：
+ *
+ * previous = +179°
+ * current  = -179°
+ *
+ * 普通减法：
+ *
+ * -358°   X
+ *
+ * 本函数：
+ *
+ * +2°     OK
+ *
+ * 返回单位：
+ *
+ * 0.01 degree
+ */
+static int32_t
+motor_driver_shortest_delta_raw(
+    robot_joint_angle_t current,
+    robot_joint_angle_t previous
+)
+{
+    int32_t delta;
+
+
+    delta =
+        (int32_t)current
+        -
+        (int32_t)previous;
+
+
+    delta =
+        (int32_t)
+        motor_driver_normalize_angle_raw(
+            delta
+        );
+
+
+    return
+        delta;
+}
 
 
 /* =========================================================
@@ -82,6 +204,10 @@ robot_status_t motor_driver_init(void)
 
 
         motor_feedback_positions.value[i] =
+            0;
+
+
+        motor_feedback_unwrapped_positions.value[i] =
             0;
 
 
@@ -139,7 +265,9 @@ robot_status_t motor_driver_set_target_positions(
     )
     {
         motor_target_positions.value[i] =
-            targets->value[i];
+            motor_driver_normalize_angle_raw(
+                (int32_t)targets->value[i]
+            );
     }
 
 
@@ -223,82 +351,98 @@ robot_status_t motor_driver_update_feedback(
     }
 
 
-    /*
-     * 已经存在上一组有效 Feedback，
-     * 且时间间隔有效时，
-     * 根据位置差计算关节速度。
-     */
-    if (
-        motor_feedback_valid
-        &&
-        delta_time_s > 0.0F
-    )
-    {
-        for (
-            i = 0U;
-            i < ROBOT_JOINT_COUNT;
-            i++
-        )
-        {
-            int32_t
-                delta_raw;
-
-
-            robot_real_t
-                delta_degree;
-
-
-            delta_raw =
-                (int32_t)feedback->value[i]
-                -
-                (int32_t)motor_feedback_positions.value[i];
-
-
-            delta_degree =
-                (robot_real_t)delta_raw
-                *
-                ROBOT_JOINT_ANGLE_UNIT_DEG;
-
-
-            motor_feedback_velocities.value[i] =
-                delta_degree
-                /
-                delta_time_s;
-        }
-    }
-    else
-    {
-        /*
-         * 第一组 Feedback，
-         * 或时间间隔无效时，
-         * 当前速度统一置零。
-         */
-        for (
-            i = 0U;
-            i < ROBOT_JOINT_COUNT;
-            i++
-        )
-        {
-            motor_feedback_velocities.value[i] =
-                0.0F;
-        }
-    }
-
-
-    /*
-     * 保存最新 Position Feedback。
-     *
-     * 下一次 update_feedback() 调用时，
-     * 该值同时作为上一采样点使用。
-     */
     for (
         i = 0U;
         i < ROBOT_JOINT_COUNT;
         i++
     )
     {
+        robot_joint_angle_t
+            current_angle;
+
+
+        current_angle =
+            motor_driver_normalize_angle_raw(
+                (int32_t)feedback->value[i]
+            );
+
+
+        if (
+            motor_feedback_valid
+        )
+        {
+            int32_t
+                delta_raw;
+
+
+            delta_raw =
+                motor_driver_shortest_delta_raw(
+                    current_angle,
+                    motor_feedback_positions.value[i]
+                );
+
+
+            /*
+             * 使用最短角位移更新连续位置。
+             */
+            motor_feedback_unwrapped_positions.value[i]
+                +=
+                delta_raw;
+
+
+            /*
+             * 时间间隔有效时，
+             * 根据经过 Wrap Correction 的
+             * 连续角位移计算速度。
+             */
+            if (
+                delta_time_s > 0.0F
+            )
+            {
+                robot_real_t
+                    delta_degree;
+
+
+                delta_degree =
+                    (robot_real_t)delta_raw
+                    *
+                    ROBOT_JOINT_ANGLE_UNIT_DEG;
+
+
+                motor_feedback_velocities.value[i] =
+                    delta_degree
+                    /
+                    delta_time_s;
+            }
+            else
+            {
+                motor_feedback_velocities.value[i] =
+                    0.0F;
+            }
+        }
+        else
+        {
+            /*
+             * 第一组 Feedback
+             * 没有历史状态可用于展开。
+             *
+             * 因此将 Canonical Angle
+             * 作为连续位置初始值。
+             */
+            motor_feedback_unwrapped_positions.value[i] =
+                (robot_joint_position_t)current_angle;
+
+
+            motor_feedback_velocities.value[i] =
+                0.0F;
+        }
+
+
+        /*
+         * 保存最新 Canonical Feedback。
+         */
         motor_feedback_positions.value[i] =
-            feedback->value[i];
+            current_angle;
     }
 
 
@@ -312,7 +456,7 @@ robot_status_t motor_driver_update_feedback(
 
 
 /* =========================================================
- * 获取 Position Feedback
+ * 获取 Canonical Position Feedback
  * ========================================================= */
 
 robot_status_t motor_driver_get_positions(
@@ -357,6 +501,60 @@ robot_status_t motor_driver_get_positions(
     {
         positions->value[i] =
             motor_feedback_positions.value[i];
+    }
+
+
+    return
+        ROBOT_STATUS_OK;
+}
+
+
+/* =========================================================
+ * 获取 Continuous Position Feedback
+ * ========================================================= */
+
+robot_status_t motor_driver_get_unwrapped_positions(
+    robot_joint_positions_t *positions
+)
+{
+    uint32_t i;
+
+
+    if (
+        positions == NULL
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_NULL_POINTER;
+    }
+
+
+    if (
+        !motor_driver_initialized
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_NOT_READY;
+    }
+
+
+    if (
+        !motor_feedback_valid
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_NOT_READY;
+    }
+
+
+    for (
+        i = 0U;
+        i < ROBOT_JOINT_COUNT;
+        i++
+    )
+    {
+        positions->value[i] =
+            motor_feedback_unwrapped_positions.value[i];
     }
 
 

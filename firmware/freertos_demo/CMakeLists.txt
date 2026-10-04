@@ -77,6 +77,7 @@ add_executable(
     # ------------------------------------------------------
 
     algorithms/kinematics.c
+    algorithms/matrix4.c
 
 
     # ------------------------------------------------------
@@ -183,6 +184,7 @@ target_link_libraries(
 
     PRIVATE
 
+    m
     gcc
 )
 

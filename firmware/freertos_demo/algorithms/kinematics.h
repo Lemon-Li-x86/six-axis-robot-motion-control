@@ -4,10 +4,6 @@
  * 用途：
  * 定义六轴机器人运动学算法层的公共接口。
  *
- * 本文件当前只冻结 API，
- * 正运动学和逆运动学具体算法
- * 将在下一阶段实现。
- *
  * Algorithm Layer 不依赖：
  *
  * UART
@@ -16,6 +12,52 @@
  * Motor Driver
  *
  * 因此运动学算法可以独立测试。
+ *
+ *
+ * =========================================================
+ * 公共坐标系约定
+ * =========================================================
+ *
+ * Kinematics 对外统一使用
+ * 当前 UR5 URDF / PyBullet 坐标系：
+ *
+ * Base Frame：
+ *
+ * base_link
+ *
+ * End Frame：
+ *
+ * ee_link
+ *
+ * 因此：
+ *
+ * robot_transform_t
+ *
+ * 在本模块公共接口中的含义为：
+ *
+ * T_base_ee
+ *
+ * 即 ee_link 相对于 base_link
+ * 的齐次变换。
+ *
+ *
+ * Standard DH 坐标系：
+ *
+ * {0} ... {6}
+ *
+ * 仅作为本模块内部实现细节。
+ *
+ * Forward Kinematics 内部可以：
+ *
+ * Joint Angles
+ * ->
+ * Standard DH T_0_6
+ * ->
+ * Coordinate Conversion
+ * ->
+ * Public T_base_ee
+ *
+ * Inverse Kinematics 则执行逆过程。
  */
 
 #ifndef KINEMATICS_H
@@ -46,6 +88,10 @@
  *
  * solutions：
  * 有效关节角解。
+ *
+ * 每组解使用 Canonical Angle：
+ *
+ * [-180°, 180°)
  */
 typedef struct
 {
@@ -71,8 +117,16 @@ typedef struct
  * 单位：
  * 0.01 degree。
  *
+ * Canonical Range：
+ *
+ * [-180°, 180°)
+ *
  * @param transform
- * 输出 Base Frame 到 Tool Frame
+ * 输出：
+ *
+ * T_base_ee
+ *
+ * 即 ee_link 相对于 base_link
  * 的 4 × 4 齐次变换矩阵。
  *
  * 平移单位：
@@ -86,7 +140,7 @@ typedef struct
  * 输入或输出为空。
  *
  * ROBOT_STATUS_ERROR_OUT_OF_RANGE：
- * 关节角超过允许范围。
+ * 输入数据超过算法允许范围。
  *
  * ROBOT_STATUS_ERROR_NOT_IMPLEMENTED：
  * 当前算法尚未实现。
@@ -105,7 +159,11 @@ robot_status_t kinematics_forward(
  * @brief 计算六轴机器人逆运动学全部可行解析解。
  *
  * @param transform
- * 输入 Base Frame 到 Tool Frame
+ * 输入目标：
+ *
+ * T_base_ee
+ *
+ * 即 ee_link 相对于 base_link
  * 的目标齐次变换矩阵。
  *
  * @param solutions
@@ -114,6 +172,10 @@ robot_status_t kinematics_forward(
  * 最多包含：
  * KINEMATICS_MAX_IK_SOLUTIONS
  * 组解。
+ *
+ * 每组关节角规范化到：
+ *
+ * [-180°, 180°)
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -154,11 +216,17 @@ robot_status_t kinematics_inverse(
  * 逆运动学候选解集合。
  *
  * @param reference
- * 当前机器人关节角，
+ * 当前机器人 Canonical Joint Angles，
  * 作为选择最接近解的参考。
  *
  * @param selected
  * 输出最终选中的关节角。
+ *
+ * 输出采用：
+ *
+ * [-180°, 180°)
+ *
+ * Canonical Angle。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -169,6 +237,9 @@ robot_status_t kinematics_inverse(
  *
  * ROBOT_STATUS_ERROR_NO_SOLUTION：
  * 输入候选解为空。
+ *
+ * ROBOT_STATUS_ERROR_OUT_OF_RANGE：
+ * 解数量异常。
  *
  * ROBOT_STATUS_ERROR_NOT_IMPLEMENTED：
  * 当前筛选算法尚未实现。
