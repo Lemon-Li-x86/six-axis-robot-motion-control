@@ -24,7 +24,7 @@ add_executable(
     freertos_demo
 
     # ------------------------------------------------------
-    # 系统入口 / 板级代码
+    # System / BSP
     # ------------------------------------------------------
 
     startup.s
@@ -34,7 +34,14 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # Driver 层
+    # Robot Model
+    # ------------------------------------------------------
+
+    model/ur5_model.c
+
+
+    # ------------------------------------------------------
+    # Driver Layer
     # ------------------------------------------------------
 
     drivers/uart_driver.c
@@ -43,7 +50,7 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # Communication 层
+    # Communication Layer
     # ------------------------------------------------------
 
     communications/protocol.c
@@ -51,7 +58,7 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # Application 层
+    # Application Layer
     # ------------------------------------------------------
 
     application/uart_tx_manager.c
@@ -59,22 +66,31 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # Diagnostics 层
+    # Diagnostics
     # ------------------------------------------------------
 
     diagnostics/performance_monitor.c
 
 
     # ------------------------------------------------------
-    # Algorithm 层
+    # Algorithm / Math
     # ------------------------------------------------------
 
-    algorithms/kinematics.c
-    algorithms/matrix4.c
+    algorithms/math/matrix4.c
 
 
     # ------------------------------------------------------
-    # Test
+    # Algorithm / Kinematics
+    # ------------------------------------------------------
+
+    algorithms/kinematics/kinematics_common.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/kinematics/ur5_analytic_ik.c
+    algorithms/kinematics/kinematics_inverse.c
+
+
+    # ------------------------------------------------------
+    # Tests
     # ------------------------------------------------------
 
     tests/kinematics_self_test.c
@@ -97,7 +113,7 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # FreeRTOS 动态内存管理
+    # FreeRTOS Memory Management
     # ------------------------------------------------------
 
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
@@ -105,7 +121,7 @@ add_executable(
 
 
 # ==========================================================
-# 头文件搜索路径
+# Include Paths
 # ==========================================================
 
 target_include_directories(
@@ -115,28 +131,69 @@ target_include_directories(
 
     ${CMAKE_CURRENT_SOURCE_DIR}
 
+
+    # ------------------------------------------------------
     # Common
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 
-    # Driver
+
+    # ------------------------------------------------------
+    # Robot Model
+    # ------------------------------------------------------
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+
+
+    # ------------------------------------------------------
+    # Drivers
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 
-    # Communication
+
+    # ------------------------------------------------------
+    # Communications
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 
-    # Algorithm
-    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
 
+    # ------------------------------------------------------
     # Application
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/application
 
+
+    # ------------------------------------------------------
     # Diagnostics
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
 
-    # Test
+
+    # ------------------------------------------------------
+    # Algorithms
+    # ------------------------------------------------------
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+
+
+    # ------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------
+
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
 
+
+    # ------------------------------------------------------
     # FreeRTOS
+    # ------------------------------------------------------
+
     ${FREERTOS_DIR}/include
 
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
@@ -144,7 +201,7 @@ target_include_directories(
 
 
 # ==========================================================
-# 编译选项
+# Compile Options
 # ==========================================================
 
 target_compile_options(
@@ -161,7 +218,7 @@ target_compile_options(
 
 
 # ==========================================================
-# 链接选项
+# Link Options
 # ==========================================================
 
 target_link_options(
@@ -179,7 +236,7 @@ target_link_options(
 
 
 # ==========================================================
-# 数学库 / GCC Runtime
+# Libraries
 # ==========================================================
 
 target_link_libraries(
@@ -193,7 +250,7 @@ target_link_libraries(
 
 
 # ==========================================================
-# 输出文件
+# Output
 # ==========================================================
 
 set_target_properties(
