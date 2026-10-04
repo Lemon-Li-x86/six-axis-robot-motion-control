@@ -12,11 +12,39 @@
  * Test Tolerance
  * ========================================================= */
 
+/*
+ * 已知 FK Reference Matrix Test。
+ *
+ * 这些测试直接使用预先计算好的期望矩阵，
+ * 因此保持较严格容差。
+ */
 #define KINEMATICS_TEST_ROTATION_TOLERANCE \
     0.001F
 
 #define KINEMATICS_TEST_TRANSLATION_TOLERANCE_MM \
     0.05F
+
+
+/*
+ * IK -> FK Round-Trip Test。
+ *
+ * kinematics_inverse() 输出最终会量化为：
+ *
+ * 0.01 degree
+ *
+ * 因此即使解析解在浮点域完全正确，
+ * 转成 robot_joint_angles_t 后再执行 FK，
+ * 末端位置仍然会产生少量量化误差。
+ *
+ * 所以 Round-Trip 使用独立容差，
+ * 不与 Known FK Reference Test 混用。
+ */
+#define KINEMATICS_TEST_IK_ROUND_TRIP_ROTATION_TOLERANCE \
+    0.002F
+
+#define KINEMATICS_TEST_IK_ROUND_TRIP_TRANSLATION_TOLERANCE_MM \
+    0.5F
+
 
 #define KINEMATICS_TEST_ANGLE_TOLERANCE_RAD \
     0.001F
@@ -108,7 +136,7 @@
 
 
 /* =========================================================
- * Helpers
+ * Scalar Helpers
  * ========================================================= */
 
 static robot_real_t
@@ -158,6 +186,10 @@ scalar_is_close(
         1U;
 }
 
+
+/* =========================================================
+ * Joint Helpers
+ * ========================================================= */
 
 static uint8_t
 joint_angles_are_equal(
@@ -240,10 +272,16 @@ joint_angles_are_canonical(
  * Transform Compare
  * ========================================================= */
 
+/**
+ * @brief 使用指定 Rotation / Translation Tolerance
+ *        比较两个 4x4 Transform。
+ */
 static uint8_t
-transform_is_close(
+transform_is_close_with_tolerance(
     const robot_transform_t *actual,
-    const robot_transform_t *expected
+    const robot_transform_t *expected,
+    robot_real_t rotation_tolerance,
+    robot_real_t translation_tolerance_mm
 )
 {
     uint32_t
@@ -273,6 +311,17 @@ transform_is_close(
                 difference;
 
 
+            /*
+             * Homogeneous Transform：
+             *
+             * [ R R R Tx ]
+             * [ R R R Ty ]
+             * [ R R R Tz ]
+             * [ 0 0 0  1 ]
+             *
+             * 只有前三行第四列
+             * 使用 mm Translation Tolerance。
+             */
             if (
                 column
                 ==
@@ -284,12 +333,12 @@ transform_is_close(
             )
             {
                 tolerance =
-                    KINEMATICS_TEST_TRANSLATION_TOLERANCE_MM;
+                    translation_tolerance_mm;
             }
             else
             {
                 tolerance =
-                    KINEMATICS_TEST_ROTATION_TOLERANCE;
+                    rotation_tolerance;
             }
 
 
@@ -324,6 +373,45 @@ transform_is_close(
 
     return
         1U;
+}
+
+
+/**
+ * @brief Known FK Reference Matrix 的严格比较。
+ */
+static uint8_t
+transform_is_close(
+    const robot_transform_t *actual,
+    const robot_transform_t *expected
+)
+{
+    return
+        transform_is_close_with_tolerance(
+            actual,
+            expected,
+            KINEMATICS_TEST_ROTATION_TOLERANCE,
+            KINEMATICS_TEST_TRANSLATION_TOLERANCE_MM
+        );
+}
+
+
+/**
+ * @brief IK Solution Quantization 后的
+ *        FK Round-Trip 比较。
+ */
+static uint8_t
+transform_round_trip_is_close(
+    const robot_transform_t *actual,
+    const robot_transform_t *expected
+)
+{
+    return
+        transform_is_close_with_tolerance(
+            actual,
+            expected,
+            KINEMATICS_TEST_IK_ROUND_TRIP_ROTATION_TOLERANCE,
+            KINEMATICS_TEST_IK_ROUND_TRIP_TRANSLATION_TOLERANCE_MM
+        );
 }
 
 
@@ -519,7 +607,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q1 */
+    /* =====================================================
+     * q1
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q1_candidates(
@@ -580,7 +670,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q5 */
+    /* =====================================================
+     * q5
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q5_candidates(
@@ -623,7 +715,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q6 */
+    /* =====================================================
+     * q6
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q6(
@@ -683,7 +777,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q3 */
+    /* =====================================================
+     * q3
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q3_candidates(
@@ -771,7 +867,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q2 */
+    /* =====================================================
+     * q2
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q2(
@@ -897,7 +995,9 @@ run_partial_ik_chain_test(
     }
 
 
-    /* q4 */
+    /* =====================================================
+     * q4
+     * ===================================================== */
 
     if (
         kinematics_internal_solve_q4(
@@ -1063,9 +1163,7 @@ run_inverse_solution_assembly_test(
 
     /*
      * Known Joints
-     *
      * ->
-     *
      * FK Target
      */
     if (
@@ -1084,9 +1182,7 @@ run_inverse_solution_assembly_test(
 
     /*
      * Target
-     *
      * ->
-     *
      * Public IK API
      */
     if (
@@ -1196,6 +1292,185 @@ run_inverse_solution_assembly_test(
     {
         return
             ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    return
+        ROBOT_STATUS_OK;
+}
+
+
+/* =========================================================
+ * IK -> FK Round-Trip Test
+ * ========================================================= */
+
+/**
+ * @brief 验证 Public IK 返回的每一组 Solution
+ *        都能通过 FK 重建原始目标 Transform。
+ *
+ * 流程：
+ *
+ * Original Joints
+ * ->
+ * FK Target
+ * ->
+ * IK Solutions
+ * ->
+ * FK(each solution)
+ * ->
+ * Target Transform
+ *
+ * 这项测试不是只验证：
+ *
+ * “原始 Joint Configuration 是否被找回来”。
+ *
+ * 而是验证：
+ *
+ * “Public IK API 返回的每一组候选解，
+ *  是否都真的描述相同末端位姿。”
+ *
+ * 这是后续重构 kinematics.c
+ * 最重要的 Regression Safety Net。
+ */
+static robot_status_t
+run_inverse_round_trip_test(
+    const robot_joint_angles_t *original_joints
+)
+{
+    robot_transform_t
+        target_transform;
+
+
+    robot_transform_t
+        reconstructed_transform;
+
+
+    kinematics_ik_solutions_t
+        solutions;
+
+
+    uint32_t
+        solution_index;
+
+
+    /*
+     * Step 1：
+     *
+     * 已知有效关节姿态
+     * ->
+     * Target Transform。
+     */
+    if (
+        kinematics_forward(
+            original_joints,
+            &target_transform
+        )
+        !=
+        ROBOT_STATUS_OK
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    /*
+     * Step 2：
+     *
+     * Target Transform
+     * ->
+     * Public IK Solutions。
+     */
+    if (
+        kinematics_inverse(
+            &target_transform,
+            &solutions
+        )
+        !=
+        ROBOT_STATUS_OK
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    /*
+     * 当前测试目标必须至少存在一组解。
+     */
+    if (
+        solutions.count
+        ==
+        0U
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    /*
+     * 防御性检查。
+     *
+     * Public API 不允许返回
+     * 超过固定数组容量的 Solution Count。
+     */
+    if (
+        solutions.count
+        >
+        KINEMATICS_MAX_IK_SOLUTIONS
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    /*
+     * Step 3：
+     *
+     * 对 Public IK 返回的每一组 Solution：
+     *
+     * Solution
+     * ->
+     * FK
+     * ->
+     * reconstructed_transform
+     *
+     * 必须重新得到同一个目标位姿。
+     */
+    for (
+        solution_index = 0U;
+        solution_index < solutions.count;
+        solution_index++
+    )
+    {
+        if (
+            kinematics_forward(
+                &solutions.solutions[
+                    solution_index
+                ],
+                &reconstructed_transform
+            )
+            !=
+            ROBOT_STATUS_OK
+        )
+        {
+            return
+                ROBOT_STATUS_ERROR_INTERNAL;
+        }
+
+
+        if (
+            !transform_round_trip_is_close(
+                &reconstructed_transform,
+                &target_transform
+            )
+        )
+        {
+            return
+                ROBOT_STATUS_ERROR_INTERNAL;
+        }
     }
 
 
@@ -1444,6 +1719,9 @@ kinematics_self_test_run(void)
      *   40,
      *  -10
      * ]
+     *
+     * 这是一组普通非奇异姿态，
+     * 当前解析 IK 应产生完整 8 解。
      */
     static const robot_joint_angles_t
         joints_ik_validation =
@@ -1461,7 +1739,7 @@ kinematics_self_test_run(void)
 
 
     /* =====================================================
-     * FK
+     * FK Reference Tests
      * ===================================================== */
 
     if (
@@ -1507,7 +1785,7 @@ kinematics_self_test_run(void)
 
 
     /* =====================================================
-     * q1
+     * q1 Analytic Branch Tests
      * ===================================================== */
 
     if (
@@ -1541,9 +1819,19 @@ kinematics_self_test_run(void)
 
 
     /* =====================================================
-     * Formula Chain
+     * Analytic Formula Chain
      *
-     * q1 -> q5 -> q6 -> q3 -> q2 -> q4
+     * q1
+     * ->
+     * q5
+     * ->
+     * q6
+     * ->
+     * q3
+     * ->
+     * q2
+     * ->
+     * q4
      * ===================================================== */
 
     if (
@@ -1563,10 +1851,39 @@ kinematics_self_test_run(void)
      * Public kinematics_inverse()
      *
      * Full 8-Solution Assembly
+     *
+     * 验证：
+     *
+     * 1. Solution Count；
+     * 2. Canonical Angle；
+     * 3. Duplicate Removal；
+     * 4. Original Configuration Presence。
      * ===================================================== */
 
     if (
         run_inverse_solution_assembly_test(
+            &joints_ik_validation
+        )
+        !=
+        ROBOT_STATUS_OK
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+
+    /* =====================================================
+     * IK -> FK Round-Trip Regression
+     *
+     * 对 Public IK 返回的每一组 Solution
+     * 重新执行 FK。
+     *
+     * 所有解都必须回到同一个 Target Transform。
+     * ===================================================== */
+
+    if (
+        run_inverse_round_trip_test(
             &joints_ik_validation
         )
         !=
