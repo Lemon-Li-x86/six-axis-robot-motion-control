@@ -47,6 +47,7 @@ add_executable(
     drivers/uart_driver.c
     drivers/motor_driver.c
     drivers/timer_driver.c
+    drivers/gpio_driver.c
 
 
     # ------------------------------------------------------
@@ -63,6 +64,7 @@ add_executable(
 
     application/uart_tx_manager.c
     application/protocol_tasks.c
+    application/runtime_config.c
 
 
     # ------------------------------------------------------

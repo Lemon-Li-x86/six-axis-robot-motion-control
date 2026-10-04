@@ -1,370 +1,405 @@
-/*
- * 文件：uart_driver.c
- *
- * 用途：
- * 实现 QEMU MPS2-AN386 平台 UART0 驱动。
- *
- * 本模块负责：
- *
- * 1. UART0 寄存器访问；
- * 2. UART 初始化；
- * 3. UART 数据发送；
- * 4. UART RX 中断；
- * 5. UART RX Ring Buffer；
- * 6. RX Event Callback；
- * 7. RX 丢字节统计。
- *
- * 数据接收路径：
- *
- * UART Hardware
- *      ↓
- * UART0_RX_IRQHandler
- *      ↓
- * Ring Buffer
- *      ↓
- * RX Event Callback
- */
+#include <stddef.h>
+#include <stdint.h>
 
 #include "uart_driver.h"
 #include "ring_buffer.h"
 
 
 /* =========================================================
- * UART0 寄存器
+ * UART0 Registers
  * ========================================================= */
 
-#define UART0_BASE \
-    0x40004000UL
-
+#define UART0_BASE 0x40004000UL
 
 #define UART0_DATA \
     (*(volatile uint32_t *)(UART0_BASE + 0x000UL))
 
-
 #define UART0_STATE \
     (*(volatile uint32_t *)(UART0_BASE + 0x004UL))
-
 
 #define UART0_CTRL \
     (*(volatile uint32_t *)(UART0_BASE + 0x008UL))
 
-
 #define UART0_INTSTATUS \
     (*(volatile uint32_t *)(UART0_BASE + 0x00CUL))
-
 
 #define UART0_BAUDDIV \
     (*(volatile uint32_t *)(UART0_BASE + 0x010UL))
 
 
 /* =========================================================
- * UART STATE
- * ========================================================= */
-
-#define UART_STATE_TX_FULL \
-    (1U << 0)
-
-
-/* =========================================================
  * UART CTRL
  * ========================================================= */
 
-/* TX Enable */
-#define UART_CTRL_TX_ENABLE \
-    (1U << 0)
-
-/* RX Enable */
-#define UART_CTRL_RX_ENABLE \
-    (1U << 1)
-
-/* RX Interrupt Enable */
-#define UART_CTRL_RX_INTERRUPT_ENABLE \
-    (1U << 3)
+#define UART_CTRL_TX_ENABLE             (1UL << 0)
+#define UART_CTRL_RX_ENABLE             (1UL << 1)
+#define UART_CTRL_TX_INTERRUPT_ENABLE   (1UL << 2)
+#define UART_CTRL_RX_INTERRUPT_ENABLE   (1UL << 3)
 
 
 /* =========================================================
  * UART Interrupt Status
  * ========================================================= */
 
-#define UART_INTERRUPT_RX \
-    (1U << 1)
+#define UART_INTERRUPT_TX (1UL << 0)
+#define UART_INTERRUPT_RX (1UL << 1)
 
 
 /* =========================================================
- * Cortex-M NVIC
+ * NVIC
  * ========================================================= */
 
-/*
- * Interrupt Set Enable Register。
- */
 #define NVIC_ISER0 \
     (*(volatile uint32_t *)0xE000E100UL)
 
-
-/*
- * Interrupt Clear Enable Register。
- */
 #define NVIC_ICER0 \
     (*(volatile uint32_t *)0xE000E180UL)
 
-
-/*
- * Interrupt Clear Pending Register。
- */
 #define NVIC_ICPR0 \
     (*(volatile uint32_t *)0xE000E280UL)
 
-
-/*
- * External IRQ 0 Priority Register。
- *
- * 每个 IRQ Priority 占一个 Byte。
- */
-#define NVIC_IRQ0_PRIORITY \
-    (*(volatile uint8_t *)0xE000E400UL)
+#define NVIC_IPR_BASE 0xE000E400UL
 
 
 /*
  * MPS2-AN386：
  *
- * UART0 RX = External IRQ 0。
+ * IRQ0 = UART0 RX
+ * IRQ1 = UART0 TX
  */
-#define UART0_RX_IRQ_NUMBER \
-    0U
-
+#define UART0_RX_IRQ_NUMBER 0U
+#define UART0_TX_IRQ_NUMBER 1U
 
 #define UART0_RX_IRQ_MASK \
-    (1U << UART0_RX_IRQ_NUMBER)
+    (1UL << UART0_RX_IRQ_NUMBER)
 
+#define UART0_TX_IRQ_MASK \
+    (1UL << UART0_TX_IRQ_NUMBER)
 
-/*
- * UART ISR 会调用 FreeRTOS FromISR API。
- *
- * 因此不能继续使用 NVIC 默认最高优先级 0。
- *
- * 这里使用较低的中断优先级，
- * 使 ISR 可以安全调用 RTOS API。
- */
-#define UART0_RX_IRQ_PRIORITY_VALUE \
-    0x80U
+#define UART0_RX_IRQ_PRIORITY \
+    (*(volatile uint8_t *)(NVIC_IPR_BASE + UART0_RX_IRQ_NUMBER))
+
+#define UART0_TX_IRQ_PRIORITY \
+    (*(volatile uint8_t *)(NVIC_IPR_BASE + UART0_TX_IRQ_NUMBER))
+
+#define UART_IRQ_PRIORITY_VALUE 0x80U
 
 
 /* =========================================================
- * UART RX Ring Buffer
+ * Driver State
  * ========================================================= */
 
 static ring_buffer_t uart_rx_buffer;
+static ring_buffer_t uart_tx_buffer;
 
+static volatile uint32_t uart_rx_drop_count = 0U;
 
-/*
- * Ring Buffer 已满时，
- * 记录丢失的 RX 字节数量。
- */
-static volatile uint32_t
-    uart_rx_drop_count = 0U;
-
-
-/* =========================================================
- * UART RX Event Callback
- * ========================================================= */
+static volatile uint8_t uart_tx_active = 0U;
+static uint8_t uart_driver_initialized = 0U;
 
 static uart_driver_rx_event_callback_t
-    uart_rx_event_callback = 0;
+    uart_rx_event_callback = NULL;
 
 
 /* =========================================================
- * UART 单字节发送
+ * Internal Helpers
  * ========================================================= */
 
-static void uart_driver_write_byte(
-    uint8_t data
+static uint32_t uart_driver_ring_buffer_used(
+    const ring_buffer_t *buffer
 )
 {
-    /*
-     * 等待 TX Buffer 可用。
-     */
-    while (
-        UART0_STATE
-        & UART_STATE_TX_FULL
-    )
+    uint32_t head = buffer->head;
+    uint32_t tail = buffer->tail;
+
+    if (head >= tail)
     {
+        return head - tail;
     }
 
+    return (
+        RING_BUFFER_CAPACITY
+        - tail
+        + head
+    );
+}
 
-    UART0_DATA =
-        (uint32_t)data;
+
+static uint32_t uart_driver_tx_free_space(void)
+{
+    uint32_t used =
+        uart_driver_ring_buffer_used(
+            &uart_tx_buffer
+        );
+
+    /*
+     * Ring Buffer 保留一个位置区分 full / empty。
+     */
+    return (
+        RING_BUFFER_CAPACITY
+        - 1U
+        - used
+    );
 }
 
 
 /* =========================================================
- * UART 初始化
+ * Initialization
  * ========================================================= */
 
-void uart_driver_init(void)
+robot_status_t uart_driver_init(void)
 {
-    /*
-     * 初始化软件接收缓冲区。
-     */
-    ring_buffer_init(
-        &uart_rx_buffer
-    );
-
+    ring_buffer_init(&uart_rx_buffer);
+    ring_buffer_init(&uart_tx_buffer);
 
     uart_rx_drop_count = 0U;
+    uart_tx_active = 0U;
 
-    uart_rx_event_callback = 0;
+    uart_rx_event_callback = NULL;
 
-
-    /*
-     * 配置期间关闭 UART。
-     */
     UART0_CTRL = 0U;
 
-
     /*
-     * 波特率配置保持当前项目不变。
+     * CMSDK APB UART 要求 BAUDDIV >= 16。
+     *
+     * 保持项目已有配置。
      */
     UART0_BAUDDIV = 16U;
 
-
     /*
-     * 清除 UART RX Interrupt 状态。
+     * 清除 RX / TX 中断状态。
      */
     UART0_INTSTATUS =
-        UART_INTERRUPT_RX;
-
+        UART_INTERRUPT_RX
+        |
+        UART_INTERRUPT_TX;
 
     /*
-     * 暂时关闭 UART0 RX NVIC Interrupt。
-     *
-     * 后续由 ProtocolRX Task
-     * 主动调用 enable 接口开启。
+     * 初始化阶段关闭两个 UART NVIC IRQ。
      */
     NVIC_ICER0 =
-        UART0_RX_IRQ_MASK;
+        UART0_RX_IRQ_MASK
+        |
+        UART0_TX_IRQ_MASK;
 
-
-    /*
-     * 清除残留 Pending 状态。
-     */
     NVIC_ICPR0 =
-        UART0_RX_IRQ_MASK;
-
+        UART0_RX_IRQ_MASK
+        |
+        UART0_TX_IRQ_MASK;
 
     /*
-     * 当前只开启 UART TX / RX 功能。
-     *
-     * 暂时不开 RX Interrupt。
+     * 初始只开启 UART RX / TX 功能，
+     * 暂不打开 RX/TX Interrupt。
      */
     UART0_CTRL =
         UART_CTRL_TX_ENABLE
         |
         UART_CTRL_RX_ENABLE;
+
+    uart_driver_initialized = 1U;
+
+    return ROBOT_STATUS_OK;
 }
 
 
 /* =========================================================
- * 注册 RX Event Callback
+ * RX Callback
  * ========================================================= */
 
 void uart_driver_set_rx_event_callback(
     uart_driver_rx_event_callback_t callback
 )
 {
-    uart_rx_event_callback =
-        callback;
+    uart_rx_event_callback = callback;
 }
 
 
 /* =========================================================
- * 开启 UART RX Interrupt
+ * Enable RX Interrupt
  * ========================================================= */
 
-void uart_driver_enable_rx_interrupt(void)
+robot_status_t uart_driver_enable_rx_interrupt(void)
 {
-    /*
-     * 首先清除残留的 UART RX Interrupt。
-     */
+    if (!uart_driver_initialized)
+    {
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    }
+
     UART0_INTSTATUS =
         UART_INTERRUPT_RX;
 
-
-    /*
-     * 清除 NVIC Pending 状态。
-     */
     NVIC_ICPR0 =
         UART0_RX_IRQ_MASK;
 
+    UART0_RX_IRQ_PRIORITY =
+        UART_IRQ_PRIORITY_VALUE;
 
-    /*
-     * 设置 UART0 RX IRQ Priority。
-     *
-     * ISR 后续会调用 FreeRTOS
-     * FromISR API，因此不能保持
-     * Cortex-M 默认最高优先级 0。
-     */
-    NVIC_IRQ0_PRIORITY =
-        UART0_RX_IRQ_PRIORITY_VALUE;
-
-
-    /*
-     * 打开 UART RX Interrupt。
-     */
     UART0_CTRL |=
         UART_CTRL_RX_INTERRUPT_ENABLE;
 
-
-    /*
-     * 在 NVIC 中开启 External IRQ 0。
-     */
     NVIC_ISER0 =
         UART0_RX_IRQ_MASK;
+
+    return ROBOT_STATUS_OK;
 }
 
 
 /* =========================================================
- * UART 数据发送
+ * Interrupt Driven TX
  * ========================================================= */
 
-void uart_driver_write(
+robot_status_t uart_driver_write(
     const uint8_t *data,
     uint32_t length
 )
 {
     uint32_t i;
+    uint8_t first_byte;
 
-
-    for (
-        i = 0U;
-        i < length;
-        i++
-    )
+    if (!uart_driver_initialized)
     {
-        uart_driver_write_byte(
-            data[i]
-        );
+        return ROBOT_STATUS_ERROR_NOT_READY;
     }
+
+    if (data == NULL)
+    {
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    }
+
+    if (length == 0U)
+    {
+        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
+    }
+
+    /*
+     * 暂时屏蔽 TX IRQ。
+     *
+     * 这样 Task 在检查空间并向 TX Ring Buffer
+     * 写数据时，TX ISR 不会同时修改 tail。
+     */
+    NVIC_ICER0 =
+        UART0_TX_IRQ_MASK;
+
+    /*
+     * 要求本次写入必须整体进入 Ring Buffer。
+     *
+     * 不允许只写半个协议帧。
+     */
+    if (length > uart_driver_tx_free_space())
+    {
+        if (uart_tx_active)
+        {
+            NVIC_ISER0 =
+                UART0_TX_IRQ_MASK;
+        }
+
+        return ROBOT_STATUS_ERROR_BUFFER_FULL;
+    }
+
+    for (i = 0U; i < length; i++)
+    {
+        if (!ring_buffer_write(
+                &uart_tx_buffer,
+                data[i]))
+        {
+            /*
+             * 前面已经检查过可用空间，
+             * 正常情况下不应进入这里。
+             */
+            if (uart_tx_active)
+            {
+                NVIC_ISER0 =
+                    UART0_TX_IRQ_MASK;
+            }
+
+            return ROBOT_STATUS_ERROR_INTERNAL;
+        }
+    }
+
+    /*
+     * 已经有 TX 正在进行：
+     *
+     * 新数据只需排在 TX Ring Buffer 后面，
+     * ISR 会继续发送。
+     */
+    if (uart_tx_active)
+    {
+        NVIC_ISER0 =
+            UART0_TX_IRQ_MASK;
+
+        return ROBOT_STATUS_OK;
+    }
+
+    /*
+     * 当前 UART TX 空闲。
+     *
+     * 取出第一个字节作为 kick-start，
+     * 后面的字节由 TX IRQ 连续发送。
+     */
+    if (!ring_buffer_read(
+            &uart_tx_buffer,
+            &first_byte))
+    {
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    }
+
+    UART0_INTSTATUS =
+        UART_INTERRUPT_TX;
+
+    NVIC_ICPR0 =
+        UART0_TX_IRQ_MASK;
+
+    UART0_TX_IRQ_PRIORITY =
+        UART_IRQ_PRIORITY_VALUE;
+
+    UART0_CTRL |=
+        UART_CTRL_TX_INTERRUPT_ENABLE;
+
+    uart_tx_active = 1U;
+
+    /*
+     * 写入第一个字节。
+     *
+     * 当硬件完成发送、TXFULL 从 1 变为 0 时，
+     * CMSDK UART 将产生 TX Interrupt。
+     */
+    UART0_DATA =
+        (uint32_t)first_byte;
+
+    /*
+     * 最后打开 NVIC IRQ。
+     *
+     * 如果第一个字节已经在 QEMU 中立即完成，
+     * TX IRQ 此时已经 pending，
+     * 开启后会立即进入 ISR。
+     */
+    NVIC_ISER0 =
+        UART0_TX_IRQ_MASK;
+
+    return ROBOT_STATUS_OK;
 }
 
 
 /* =========================================================
- * 从 RX Ring Buffer 读取数据
+ * RX Ring Buffer
  * ========================================================= */
 
 uint8_t uart_driver_read_byte(
     uint8_t *data
 )
 {
+    if (!uart_driver_initialized ||
+        data == NULL)
+    {
+        return 0U;
+    }
+
     return ring_buffer_read(
         &uart_rx_buffer,
         data
     );
 }
 
-
-/* =========================================================
- * 获取 RX 丢字节数量
- * ========================================================= */
 
 uint32_t uart_driver_get_rx_drop_count(void)
 {
@@ -373,69 +408,99 @@ uint32_t uart_driver_get_rx_drop_count(void)
 
 
 /* =========================================================
- * UART0 RX Interrupt Handler
+ * TX State
+ * ========================================================= */
+
+uint8_t uart_driver_is_tx_busy(void)
+{
+    return uart_tx_active;
+}
+
+
+/* =========================================================
+ * UART0 RX IRQ
  * ========================================================= */
 
 void UART0_RX_IRQHandler(void)
 {
     uint8_t byte;
 
+    if (!(UART0_INTSTATUS & UART_INTERRUPT_RX))
+    {
+        return;
+    }
 
     /*
-     * 确认 RX Interrupt。
+     * W1C：Write 1 to Clear。
      */
-    if (
-        UART0_INTSTATUS
-        & UART_INTERRUPT_RX
-    )
+    UART0_INTSTATUS =
+        UART_INTERRUPT_RX;
+
+    byte =
+        (uint8_t)(UART0_DATA & 0xFFU);
+
+    if (!ring_buffer_write(
+            &uart_rx_buffer,
+            byte))
     {
-        /*
-         * 清除 RX Interrupt 状态。
-         */
-        UART0_INTSTATUS =
-            UART_INTERRUPT_RX;
-
-
-        /*
-         * 从 UART DATA Register
-         * 读取接收到的字节。
-         */
-        byte =
-            (uint8_t)(
-                UART0_DATA
-                & 0xFFU
-            );
-
-
-        /*
-         * 将数据放入软件 Ring Buffer。
-         */
-        if (
-            !ring_buffer_write(
-                &uart_rx_buffer,
-                byte
-            )
-        )
-        {
-            /*
-             * Ring Buffer 已满。
-             */
-            uart_rx_drop_count++;
-        }
-
-
-        /*
-         * 通知上层：
-         * UART 收到了新数据。
-         *
-         * Callback 在 ISR 上下文运行。
-         */
-        if (
-            uart_rx_event_callback
-            != 0
-        )
-        {
-            uart_rx_event_callback();
-        }
+        uart_rx_drop_count++;
     }
+
+    if (uart_rx_event_callback != NULL)
+    {
+        uart_rx_event_callback();
+    }
+}
+
+
+/* =========================================================
+ * UART0 TX IRQ
+ * ========================================================= */
+
+void UART0_TX_IRQHandler(void)
+{
+    uint8_t byte;
+
+    if (!(UART0_INTSTATUS & UART_INTERRUPT_TX))
+    {
+        return;
+    }
+
+    /*
+     * 当前字节发送完成。
+     */
+    UART0_INTSTATUS =
+        UART_INTERRUPT_TX;
+
+    /*
+     * 软件 TX Buffer 还有数据：
+     * 继续发送下一个字节。
+     */
+    if (ring_buffer_read(
+            &uart_tx_buffer,
+            &byte))
+    {
+        UART0_DATA =
+            (uint32_t)byte;
+
+        return;
+    }
+
+    /*
+     * Ring Buffer 已空。
+     *
+     * 当前完整 TX 流已经发送完毕，
+     * 关闭 TX IRQ，等待下一次 uart_driver_write()
+     * 重新 kick-start。
+     */
+    UART0_CTRL &=
+        ~UART_CTRL_TX_INTERRUPT_ENABLE;
+
+    uart_tx_active = 0U;
+
+    NVIC_ICER0 =
+        UART0_TX_IRQ_MASK;
+
+    NVIC_ICPR0 =
+        UART0_TX_IRQ_MASK;
 }

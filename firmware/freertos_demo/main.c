@@ -29,10 +29,12 @@
 #include "uart_driver.h"
 #include "motor_driver.h"
 #include "timer_driver.h"
+#include "gpio_driver.h"
 
 #include "robot_types.h"
 #include "error_code.h"
 
+#include "runtime_config.h"
 #include "uart_tx_manager.h"
 #include "protocol_tasks.h"
 
@@ -90,7 +92,68 @@ main(void)
     uart_driver_init();
 
 
-    timer_driver_init();
+timer_driver_init();
+
+
+if (
+    gpio_driver_init()
+    !=
+    ROBOT_STATUS_OK
+)
+{
+    while (1)
+    {
+    }
+}
+
+
+/*
+ * 第2阶段 Timer 周期中断验证。
+ *
+ * Timer1：
+ *
+ * 100 Hz
+ * =
+ * 10 ms 周期。
+ *
+ * 当前暂时不注册业务 Callback，
+ * Driver ISR 仍会正常：
+ *
+ * 1. 响应 Interrupt；
+ * 2. 清除 IRQ；
+ * 3. 累加 IRQ Counter。
+ *
+ * 后续 Control / Trajectory 模块
+ * 可以注册实际 Callback。
+ */
+if (
+    timer_driver_start_periodic(
+        100U,
+        0
+    )
+    !=
+    ROBOT_STATUS_OK
+)
+{
+    while (1)
+    {
+    }
+}
+
+/* =====================================================
+ * Runtime Configuration
+ * ===================================================== */
+
+if (
+    runtime_config_init()
+    !=
+    ROBOT_STATUS_OK
+)
+{
+    while (1)
+    {
+    }
+}
 
 
     /* =====================================================
