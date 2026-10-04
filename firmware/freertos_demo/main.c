@@ -11,13 +11,14 @@
  * 3. UART TX Manager 初始化；
  * 4. Timer Driver 初始化；
  * 5. Performance Monitor 初始化；
- * 6. Motor Driver 初始化；
- * 7. 创建 ProtocolTX Task；
- * 8. 创建 ProtocolRX Task；
- * 9. 使用 Task Notification 实现 UART RX 事件驱动；
- * 10. 将通信数据交给 Motor Driver；
- * 11. 提供通信与内部性能 Diagnostics；
- * 12. 启动 FreeRTOS Scheduler。
+ * 6. 执行 Kinematics Forward Kinematics 自检；
+ * 7. Motor Driver 初始化；
+ * 8. 创建 ProtocolTX Task；
+ * 9. 创建 ProtocolRX Task；
+ * 10. 使用 Task Notification 实现 UART RX 事件驱动；
+ * 11. 将通信数据交给 Motor Driver；
+ * 12. 提供通信与内部性能 Diagnostics；
+ * 13. 启动 FreeRTOS Scheduler。
  */
 
 #include <stddef.h>
@@ -41,6 +42,12 @@
 #include "uart_tx_manager.h"
 
 #include "performance_monitor.h"
+
+/*
+ * Stage 2：
+ * UR5 Forward Kinematics 自检。
+ */
+#include "kinematics_self_test.h"
 
 
 /* =========================================================
@@ -555,6 +562,7 @@ static void task_protocol_rx(
  * @brief 固件主入口。
  *
  * 完成 Board、Driver、Diagnostics、
+ * Kinematics Self Test、
  * UART TX Manager 和 FreeRTOS Task 初始化，
  * 随后启动 Scheduler。
  *
@@ -622,12 +630,43 @@ int main(void)
 
     /*
      * Scheduler 启动前执行 1000 次
-     *完整 Protocol Frame Parser Benchmark。
+     * 完整 Protocol Frame Parser Benchmark。
      */
     if (
         performance_monitor_run_parser_benchmark(
             1000U
         )
+        != ROBOT_STATUS_OK
+    )
+    {
+        while (1)
+        {
+        }
+    }
+
+
+    /* =====================================================
+     * Kinematics Self Test
+     * ===================================================== */
+
+    /*
+     * Scheduler 启动前执行 UR5 Forward Kinematics
+     * 数值自检。
+     *
+     * 当前验证：
+     *
+     * 1. Zero Configuration；
+     * 2. Joint 1 = +60°；
+     * 3. Joint 2 = -90°。
+     *
+     * 如果 FK 结果与已知期望矩阵不符，
+     * 固件停止启动。
+     *
+     * 这样可以避免错误运动学结果
+     * 进入后续 Control / Trajectory 模块。
+     */
+    if (
+        kinematics_self_test_run()
         != ROBOT_STATUS_OK
     )
     {

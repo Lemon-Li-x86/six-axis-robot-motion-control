@@ -79,6 +79,12 @@ add_executable(
     algorithms/kinematics.c
     algorithms/matrix4.c
 
+    # ------------------------------------------------------
+    # Test
+    # ------------------------------------------------------
+
+    tests/kinematics_self_test.c
+
 
     # ------------------------------------------------------
     # FreeRTOS Kernel
@@ -101,6 +107,10 @@ add_executable(
     # ------------------------------------------------------
 
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
+
+    
+
+    
 )
 
 
@@ -133,10 +143,15 @@ target_include_directories(
     # Diagnostics
     ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
 
+    # Test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+
     # FreeRTOS
     ${FREERTOS_DIR}/include
 
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
+
+    
 )
 
 
@@ -181,13 +196,17 @@ target_link_options(
 
 target_link_libraries(
     freertos_demo
-
     PRIVATE
 
-    m
-    gcc
-)
+    "-Wl,--start-group"
 
+    m
+    c
+    nosys
+    gcc
+
+    "-Wl,--end-group"
+)
 
 # ==========================================================
 # 输出文件

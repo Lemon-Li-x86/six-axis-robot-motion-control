@@ -64,7 +64,7 @@ SECTIONS
      *
      * 按 C 语言规则，它们在程序开始前必须全部清零。
      */
-    .bss :
+        .bss :
     {
         . = ALIGN(4);
         _sbss = .;
@@ -75,4 +75,18 @@ SECTIONS
         . = ALIGN(4);
         _ebss = .;
     } > RAM
+
+    /*
+     * C library / libnosys 使用的 Heap 起始标记。
+     *
+     * 当前工程本身主要使用 FreeRTOS heap_4，
+     * 并不依赖 libc malloc()。
+     *
+     * 但 libnosys 的 _sbrk() 需要名为 end 的符号，
+     * 因此在静态数据区域结束后提供该标记。
+     */
+    . = ALIGN(8);
+    end = .;
+    _end = .;
+    
 }
