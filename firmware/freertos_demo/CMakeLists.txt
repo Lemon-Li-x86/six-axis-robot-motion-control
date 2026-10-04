@@ -55,6 +55,7 @@ add_executable(
     # ------------------------------------------------------
 
     application/uart_tx_manager.c
+    application/protocol_tasks.c
 
 
     # ------------------------------------------------------
