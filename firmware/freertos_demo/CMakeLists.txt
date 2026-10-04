@@ -90,10 +90,14 @@ add_executable(
 
 
     # ------------------------------------------------------
-    # Tests
+    # Tests / Kinematics
     # ------------------------------------------------------
 
-    tests/kinematics_self_test.c
+    tests/kinematics/kinematics_test_support.c
+    tests/kinematics/kinematics_fk_test.c
+    tests/kinematics/kinematics_ik_solver_test.c
+    tests/kinematics/kinematics_ik_test.c
+    tests/kinematics/kinematics_self_test.c
 
 
     # ------------------------------------------------------
@@ -187,7 +191,7 @@ target_include_directories(
     # Tests
     # ------------------------------------------------------
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/kinematics
 
 
     # ------------------------------------------------------
