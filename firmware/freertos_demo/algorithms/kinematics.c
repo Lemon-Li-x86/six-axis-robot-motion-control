@@ -6,27 +6,29 @@
  *
  * 当前已实现：
  *
- * 1. Standard DH Forward Kinematics；
- * 2. Public / DH 坐标转换；
+ * 1. Standard DH 单关节变换；
+ * 2. UR5 Forward Kinematics；
+ * 3. Public / DH 坐标转换；
  *
- * Analytic IK：
+ * IK：
  *
- * 3. q1 Shoulder x 2；
- * 4. q5 Wrist x 2；
- * 5. q6；
- * 6. Wrist Singularity Detection；
- * 7. q3 Elbow x 2；
- * 8. q2；
- * 9. q4；
- * 10. 最多 8 个完整六轴 Branch；
- * 11. radian -> Canonical 0.01 degree；
- * 12. kinematics_ik_solutions_t Assembly。
+ * 4. q1 Shoulder 两个候选；
+ * 5. q5 Wrist 两个候选；
+ * 6. q6 Wrist；
+ * 7. Wrist Singularity 检测；
+ * 8. q3 Elbow 两个候选；
+ * 9. q2 Shoulder Lift；
+ * 10. q4 Wrist 1；
+ * 11. 最多 8 组完整 IK Solution Assembly；
+ * 12. [-180°, 180°) Canonical Angle；
+ * 13. 0.01° int16_t 量化；
+ * 14. Duplicate Solution Removal。
  *
  * 尚未完成：
  *
  * 1. Joint Limit Filtering；
- * 2. Duplicate Removal；
- * 3. 全部 IK 解 FK Round-Trip Validation；
+ * 2. IK -> FK Round-Trip Verification；
+ * 3. 更完整的奇异位形策略；
  * 4. IK Solution Selection。
  */
 
@@ -57,17 +59,30 @@
     (180.0F / KINEMATICS_PI_F)
 
 
+/*
+ * Canonical Joint Angle：
+ *
+ * [-180°, 180°)
+ *
+ * robot_joint_angles_t：
+ *
+ * 0.01 degree / unit
+ */
+#define KINEMATICS_HALF_TURN_JOINT_UNITS \
+    18000L
+
+#define KINEMATICS_FULL_TURN_JOINT_UNITS \
+    36000L
+
+
 #define KINEMATICS_GEOMETRY_EPSILON_MM_SQUARED \
     0.01F
-
 
 #define KINEMATICS_TRIG_DOMAIN_EPSILON \
     0.00001F
 
-
 #define KINEMATICS_SINGULARITY_EPSILON \
     0.0001F
-
 
 #define KINEMATICS_ORIENTATION_EPSILON_SQUARED \
     0.00000001F
@@ -250,6 +265,9 @@ kinematics_abs_real(
 }
 
 
+/**
+ * @brief 将 radian 规范化到 [-pi, pi)。
+ */
 static robot_real_t
 kinematics_normalize_angle_rad(
     robot_real_t angle_rad
@@ -282,146 +300,11 @@ kinematics_normalize_angle_rad(
 }
 
 
-/*
- * 将 integer centi-degree 规范化到：
- *
- * [-18000, 17999]
- */
-static int32_t
-kinematics_normalize_joint_raw(
-    int32_t raw
-)
-{
-    while (
-        raw
-        >
-        ROBOT_JOINT_ANGLE_MAX_RAW
-    )
-    {
-        raw -=
-            ROBOT_JOINT_FULL_TURN_RAW;
-    }
-
-
-    while (
-        raw
-        <
-        ROBOT_JOINT_ANGLE_MIN_RAW
-    )
-    {
-        raw +=
-            ROBOT_JOINT_FULL_TURN_RAW;
-    }
-
-
-    return
-        raw;
-}
-
-
 /**
- * @brief radian -> Canonical Joint Raw。
+ * @brief 非负平方根。
  *
- * 输出：
- *
- * 1 unit = 0.01 degree
- *
- * Range：
- *
- * [-18000, 17999]
- */
-static robot_joint_angle_t
-kinematics_angle_rad_to_joint_raw(
-    robot_real_t angle_rad
-)
-{
-    robot_real_t
-        normalized_rad;
-
-
-    robot_real_t
-        degree;
-
-
-    robot_real_t
-        scaled_raw;
-
-
-    int32_t
-        rounded_raw;
-
-
-    normalized_rad =
-        kinematics_normalize_angle_rad(
-            angle_rad
-        );
-
-
-    degree =
-        normalized_rad
-        *
-        KINEMATICS_RAD_TO_DEG_F;
-
-
-    scaled_raw =
-        degree
-        /
-        ROBOT_JOINT_ANGLE_UNIT_DEG;
-
-
-    /*
-     * 不调用 roundf()，
-     * 避免额外 C Library 依赖。
-     *
-     * C integer cast 向 0 截断，
-     * 因此：
-     *
-     * positive：
-     * +0.5
-     *
-     * negative：
-     * -0.5
-     */
-    if (
-        scaled_raw
-        >=
-        0.0F
-    )
-    {
-        rounded_raw =
-            (int32_t)
-            (
-                scaled_raw
-                +
-                0.5F
-            );
-    }
-    else
-    {
-        rounded_raw =
-            (int32_t)
-            (
-                scaled_raw
-                -
-                0.5F
-            );
-    }
-
-
-    rounded_raw =
-        kinematics_normalize_joint_raw(
-            rounded_raw
-        );
-
-
-    return
-        (robot_joint_angle_t)
-        rounded_raw;
-}
-
-
-/*
- * Freestanding Square Root。
+ * 使用 Newton-Raphson，
+ * 避免额外 sqrtf / errno 依赖。
  */
 static robot_real_t
 kinematics_sqrt_nonnegative(
@@ -488,36 +371,310 @@ kinematics_sqrt_nonnegative(
 
 
 /* =========================================================
- * Solution Assembly Helper
+ * Joint Angle Conversion
  * ========================================================= */
 
 /**
- * @brief 将一组完整 radian IK Branch
- *        写入公共 Solution Array。
+ * @brief
+ * radian
+ *
+ * ->
+ *
+ * [-180°, 180°)
+ *
+ * ->
+ *
+ * 0.01 degree / unit
+ *
+ * ->
+ *
+ * int16_t
  */
-static robot_status_t
-kinematics_append_solution(
-    kinematics_ik_solutions_t *solutions,
+static int16_t
+kinematics_angle_rad_to_joint_value(
+    robot_real_t angle_rad
+)
+{
+    robot_real_t
+        angle_deg;
+
+
+    robot_real_t
+        scaled_value;
+
+
+    int32_t
+        rounded_value;
+
+
+    angle_rad =
+        kinematics_normalize_angle_rad(
+            angle_rad
+        );
+
+
+    angle_deg =
+        angle_rad
+        *
+        KINEMATICS_RAD_TO_DEG_F;
+
+
+    scaled_value =
+        angle_deg
+        /
+        ROBOT_JOINT_ANGLE_UNIT_DEG;
+
+
+    /*
+     * 避免 roundf()。
+     *
+     * 正数：
+     *
+     * +0.5 后截断。
+     *
+     * 负数：
+     *
+     * -0.5 后截断。
+     */
+    if (
+        scaled_value
+        >=
+        0.0F
+    )
+    {
+        rounded_value =
+            (int32_t)
+            (
+                scaled_value
+                +
+                0.5F
+            );
+    }
+    else
+    {
+        rounded_value =
+            (int32_t)
+            (
+                scaled_value
+                -
+                0.5F
+            );
+    }
+
+
+    /*
+     * 浮点量化可能把：
+     *
+     * 179.99999°
+     *
+     * 四舍五入成：
+     *
+     * +18000
+     *
+     * 但 Canonical Range 要求：
+     *
+     * [-18000, 18000)
+     *
+     * 因此再次整数规范化。
+     */
+    while (
+        rounded_value
+        >=
+        KINEMATICS_HALF_TURN_JOINT_UNITS
+    )
+    {
+        rounded_value -=
+            KINEMATICS_FULL_TURN_JOINT_UNITS;
+    }
+
+
+    while (
+        rounded_value
+        <
+        -KINEMATICS_HALF_TURN_JOINT_UNITS
+    )
+    {
+        rounded_value +=
+            KINEMATICS_FULL_TURN_JOINT_UNITS;
+    }
+
+
+    return
+        (int16_t)
+        rounded_value;
+}
+
+
+/* =========================================================
+ * Solution Helpers
+ * ========================================================= */
+
+static void
+kinematics_build_joint_solution(
     robot_real_t q1_rad,
     robot_real_t q2_rad,
     robot_real_t q3_rad,
     robot_real_t q4_rad,
     robot_real_t q5_rad,
-    robot_real_t q6_rad
+    robot_real_t q6_rad,
+    robot_joint_angles_t *solution
 )
 {
-    robot_joint_angles_t
-        *solution;
+    if (
+        solution
+        ==
+        NULL
+    )
+    {
+        return;
+    }
+
+
+    solution->value[0] =
+        kinematics_angle_rad_to_joint_value(
+            q1_rad
+        );
+
+
+    solution->value[1] =
+        kinematics_angle_rad_to_joint_value(
+            q2_rad
+        );
+
+
+    solution->value[2] =
+        kinematics_angle_rad_to_joint_value(
+            q3_rad
+        );
+
+
+    solution->value[3] =
+        kinematics_angle_rad_to_joint_value(
+            q4_rad
+        );
+
+
+    solution->value[4] =
+        kinematics_angle_rad_to_joint_value(
+            q5_rad
+        );
+
+
+    solution->value[5] =
+        kinematics_angle_rad_to_joint_value(
+            q6_rad
+        );
+}
+
+
+static uint8_t
+kinematics_joint_solution_equal(
+    const robot_joint_angles_t *left,
+    const robot_joint_angles_t *right
+)
+{
+    uint32_t
+        joint_index;
+
+
+    if (
+        left
+        ==
+        NULL
+        ||
+        right
+        ==
+        NULL
+    )
+    {
+        return
+            0U;
+    }
+
+
+    for (
+        joint_index = 0U;
+        joint_index < ROBOT_JOINT_COUNT;
+        joint_index++
+    )
+    {
+        if (
+            left->value[
+                joint_index
+            ]
+            !=
+            right->value[
+                joint_index
+            ]
+        )
+        {
+            return
+                0U;
+        }
+    }
+
+
+    return
+        1U;
+}
+
+
+/**
+ * @brief 将 Candidate 加入 Solution Set。
+ *
+ * 如果 Candidate 在 0.01° 量化后
+ * 已经与现有解完全一致，
+ * 则视为 Duplicate 并忽略。
+ */
+static robot_status_t
+kinematics_add_solution_if_unique(
+    kinematics_ik_solutions_t *solutions,
+    const robot_joint_angles_t *candidate
+)
+{
+    uint32_t
+        solution_index;
 
 
     if (
         solutions
         ==
         NULL
+        ||
+        candidate
+        ==
+        NULL
     )
     {
         return
             ROBOT_STATUS_ERROR_NULL_POINTER;
+    }
+
+
+    for (
+        solution_index = 0U;
+        solution_index < solutions->count;
+        solution_index++
+    )
+    {
+        if (
+            kinematics_joint_solution_equal(
+                &solutions->solutions[
+                    solution_index
+                ],
+                candidate
+            )
+        )
+        {
+            /*
+             * Duplicate：
+             *
+             * 不报错，
+             * 只是不要重复保存。
+             */
+            return
+                ROBOT_STATUS_OK;
+        }
     }
 
 
@@ -532,46 +689,10 @@ kinematics_append_solution(
     }
 
 
-    solution =
-        &solutions->solutions[
-            solutions->count
-        ];
-
-
-    solution->value[0] =
-        kinematics_angle_rad_to_joint_raw(
-            q1_rad
-        );
-
-
-    solution->value[1] =
-        kinematics_angle_rad_to_joint_raw(
-            q2_rad
-        );
-
-
-    solution->value[2] =
-        kinematics_angle_rad_to_joint_raw(
-            q3_rad
-        );
-
-
-    solution->value[3] =
-        kinematics_angle_rad_to_joint_raw(
-            q4_rad
-        );
-
-
-    solution->value[4] =
-        kinematics_angle_rad_to_joint_raw(
-            q5_rad
-        );
-
-
-    solution->value[5] =
-        kinematics_angle_rad_to_joint_raw(
-            q6_rad
-        );
+    solutions->solutions[
+        solutions->count
+    ] =
+        *candidate;
 
 
     solutions->count++;
@@ -790,6 +911,7 @@ kinematics_public_to_dh_transform(
 
 /* =========================================================
  * Shared IK Geometry
+ * p13
  * ========================================================= */
 
 static robot_status_t
@@ -957,7 +1079,7 @@ kinematics_compute_p13(
 
 /* =========================================================
  * IK Stage 1
- * q1
+ * q1 Shoulder
  * ========================================================= */
 
 static robot_status_t
@@ -1158,7 +1280,7 @@ kinematics_solve_q1_candidates(
 
 /* =========================================================
  * IK Stage 2
- * q5
+ * q5 Wrist
  * ========================================================= */
 
 static robot_status_t
@@ -1347,7 +1469,7 @@ kinematics_solve_q5_candidates(
 
 /* =========================================================
  * IK Stage 3
- * q6
+ * q6 Wrist
  * ========================================================= */
 
 static robot_status_t
@@ -1485,7 +1607,7 @@ kinematics_solve_q6(
 
 /* =========================================================
  * IK Stage 4
- * q3
+ * q3 Elbow
  * ========================================================= */
 
 static robot_status_t
@@ -1690,7 +1812,7 @@ kinematics_solve_q3_candidates(
 
 /* =========================================================
  * IK Stage 5
- * q2
+ * q2 Shoulder Lift
  * ========================================================= */
 
 static robot_status_t
@@ -1875,7 +1997,7 @@ kinematics_solve_q2(
 
 /* =========================================================
  * IK Stage 6
- * q4
+ * q4 Wrist 1
  * ========================================================= */
 
 static robot_status_t
@@ -2701,10 +2823,6 @@ kinematics_inverse(
         q2_candidates_rad[2][2][2];
 
 
-    robot_real_t
-        q4_candidates_rad[2][2][2];
-
-
     uint8_t
         q5_branch_valid[2] =
         {
@@ -2772,35 +2890,6 @@ kinematics_inverse(
         };
 
 
-    uint8_t
-        q4_branch_valid[2][2][2] =
-        {
-            {
-                {
-                    0U,
-                    0U
-                },
-
-                {
-                    0U,
-                    0U
-                }
-            },
-
-            {
-                {
-                    0U,
-                    0U
-                },
-
-                {
-                    0U,
-                    0U
-                }
-            }
-        };
-
-
     uint32_t
         shoulder_index;
 
@@ -2809,11 +2898,6 @@ kinematics_inverse(
 
     uint32_t
         elbow_index;
-
-
-    uint32_t
-        valid_q4_branch_count =
-            0U;
 
 
     uint32_t
@@ -2840,12 +2924,19 @@ kinematics_inverse(
     }
 
 
+    /*
+     * 每次调用从空集合开始。
+     */
     solutions->count =
         0U;
 
 
     /* =====================================================
-     * Public -> Standard DH
+     * Public T_base_ee
+     *
+     * ->
+     *
+     * Standard DH T_0_6
      * ===================================================== */
 
     status =
@@ -3141,19 +3232,23 @@ kinematics_inverse(
                 status =
                     kinematics_solve_q2(
                         &dh_transform,
+
                         q1_candidates_rad[
                             shoulder_index
                         ],
+
                         q5_candidates_rad[
                             shoulder_index
                         ][
                             wrist_index
                         ],
+
                         q6_candidates_rad[
                             shoulder_index
                         ][
                             wrist_index
                         ],
+
                         q3_candidates_rad[
                             shoulder_index
                         ][
@@ -3161,6 +3256,7 @@ kinematics_inverse(
                         ][
                             elbow_index
                         ],
+
                         &q2_candidates_rad[
                             shoulder_index
                         ][
@@ -3210,6 +3306,10 @@ kinematics_inverse(
     /* =====================================================
      * Stage 6
      * q4
+     *
+     * +
+     *
+     * Complete Solution Assembly
      * ===================================================== */
 
     for (
@@ -3230,6 +3330,14 @@ kinematics_inverse(
                 elbow_index++
             )
             {
+                robot_real_t
+                    q4_rad;
+
+
+                robot_joint_angles_t
+                    candidate;
+
+
                 if (
                     !q2_branch_valid[
                         shoulder_index
@@ -3280,13 +3388,7 @@ kinematics_inverse(
                             wrist_index
                         ],
 
-                        &q4_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ][
-                            elbow_index
-                        ]
+                        &q4_rad
                     );
 
 
@@ -3313,137 +3415,72 @@ kinematics_inverse(
                 }
 
 
-                q4_branch_valid[
-                    shoulder_index
-                ][
-                    wrist_index
-                ][
-                    elbow_index
-                ] =
-                    1U;
+                /*
+                 * 完整 Branch：
+                 *
+                 * [
+                 *   q1,
+                 *   q2,
+                 *   q3,
+                 *   q4,
+                 *   q5,
+                 *   q6
+                 * ]
+                 *
+                 * radian
+                 *
+                 * ->
+                 *
+                 * Canonical 0.01°
+                 */
+                kinematics_build_joint_solution(
+                    q1_candidates_rad[
+                        shoulder_index
+                    ],
 
-
-                valid_q4_branch_count++;
-            }
-        }
-    }
-
-
-    /*
-     * 一个完整非奇异 Branch 都没有。
-     */
-    if (
-        valid_q4_branch_count
-        ==
-        0U
-    )
-    {
-        if (
-            singular_branch_count
-            >
-            0U
-        )
-        {
-            return
-                ROBOT_STATUS_ERROR_SINGULAR;
-        }
-
-
-        return
-            ROBOT_STATUS_ERROR_NO_SOLUTION;
-    }
-
-
-    /* =====================================================
-     * Stage 7
-     * Complete Solution Assembly
-     *
-     * float radian branch
-     *
-     * ->
-     *
-     * Canonical 0.01 degree
-     *
-     * ->
-     *
-     * solutions[]
-     * ===================================================== */
-
-    for (
-        shoulder_index = 0U;
-        shoulder_index < 2U;
-        shoulder_index++
-    )
-    {
-        for (
-            wrist_index = 0U;
-            wrist_index < 2U;
-            wrist_index++
-        )
-        {
-            for (
-                elbow_index = 0U;
-                elbow_index < 2U;
-                elbow_index++
-            )
-            {
-                if (
-                    !q4_branch_valid[
+                    q2_candidates_rad[
                         shoulder_index
                     ][
                         wrist_index
                     ][
                         elbow_index
-                    ]
-                )
-                {
-                    continue;
-                }
+                    ],
+
+                    q3_candidates_rad[
+                        shoulder_index
+                    ][
+                        wrist_index
+                    ][
+                        elbow_index
+                    ],
+
+                    q4_rad,
+
+                    q5_candidates_rad[
+                        shoulder_index
+                    ][
+                        wrist_index
+                    ],
+
+                    q6_candidates_rad[
+                        shoulder_index
+                    ][
+                        wrist_index
+                    ],
+
+                    &candidate
+                );
 
 
+                /*
+                 * 添加到最终 Solution Set。
+                 *
+                 * 量化后相同的解自动去重。
+                 */
                 status =
-                    kinematics_append_solution(
+                    kinematics_add_solution_if_unique(
                         solutions,
-
-                        q1_candidates_rad[
-                            shoulder_index
-                        ],
-
-                        q2_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ][
-                            elbow_index
-                        ],
-
-                        q3_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ][
-                            elbow_index
-                        ],
-
-                        q4_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ][
-                            elbow_index
-                        ],
-
-                        q5_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ],
-
-                        q6_candidates_rad[
-                            shoulder_index
-                        ][
-                            wrist_index
-                        ]
+                        &candidate
                     );
 
 
@@ -3453,9 +3490,6 @@ kinematics_inverse(
                     ROBOT_STATUS_OK
                 )
                 {
-                    solutions->count =
-                        0U;
-
                     return
                         status;
                 }
@@ -3464,33 +3498,43 @@ kinematics_inverse(
     }
 
 
-    /*
-     * 理论保护。
-     */
+    /* =====================================================
+     * Final Result
+     * ===================================================== */
+
     if (
         solutions->count
-        ==
+        >
         0U
     )
     {
-        if (
-            singular_branch_count
-            >
-            0U
-        )
-        {
-            return
-                ROBOT_STATUS_ERROR_SINGULAR;
-        }
-
-
+        /*
+         * 即使某些 Branch Singular，
+         * 只要还有正常合法 Branch，
+         * 公共接口就返回正常解集合。
+         */
         return
-            ROBOT_STATUS_ERROR_NO_SOLUTION;
+            ROBOT_STATUS_OK;
+    }
+
+
+    /*
+     * 没有普通解，
+     * 但至少发现了奇异 Branch。
+     */
+    if (
+        singular_branch_count
+        >
+        0U
+    )
+    {
+        return
+            ROBOT_STATUS_ERROR_SINGULAR;
     }
 
 
     return
-        ROBOT_STATUS_OK;
+        ROBOT_STATUS_ERROR_NO_SOLUTION;
 }
 
 

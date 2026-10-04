@@ -22,6 +22,13 @@
     0.001F
 
 
+#define KINEMATICS_TEST_CANONICAL_MIN_VALUE \
+    (-18000)
+
+#define KINEMATICS_TEST_CANONICAL_MAX_VALUE \
+    18000
+
+
 /* =========================================================
  * Known Angles
  * ========================================================= */
@@ -152,10 +159,6 @@ scalar_is_close(
 }
 
 
-/* =========================================================
- * Joint Compare
- * ========================================================= */
-
 static uint8_t
 joint_angles_are_equal(
     const robot_joint_angles_t *left,
@@ -164,21 +167,6 @@ joint_angles_are_equal(
 {
     uint32_t
         joint_index;
-
-
-    if (
-        left
-        ==
-        NULL
-        ||
-        right
-        ==
-        NULL
-    )
-    {
-        return
-            0U;
-    }
 
 
     for (
@@ -195,6 +183,46 @@ joint_angles_are_equal(
             right->value[
                 joint_index
             ]
+        )
+        {
+            return
+                0U;
+        }
+    }
+
+
+    return
+        1U;
+}
+
+
+static uint8_t
+joint_angles_are_canonical(
+    const robot_joint_angles_t *joints
+)
+{
+    uint32_t
+        joint_index;
+
+
+    for (
+        joint_index = 0U;
+        joint_index < ROBOT_JOINT_COUNT;
+        joint_index++
+    )
+    {
+        if (
+            joints->value[
+                joint_index
+            ]
+            <
+            KINEMATICS_TEST_CANONICAL_MIN_VALUE
+            ||
+            joints->value[
+                joint_index
+            ]
+            >=
+            KINEMATICS_TEST_CANONICAL_MAX_VALUE
         )
         {
             return
@@ -405,7 +433,7 @@ run_q1_test_case(
 
 
 /* =========================================================
- * Partial Analytic IK Chain
+ * Partial IK Chain Test
  * ========================================================= */
 
 static robot_status_t
@@ -1008,39 +1036,13 @@ run_partial_ik_chain_test(
  * Public IK Solution Assembly Test
  * ========================================================= */
 
-/**
- * @brief 验证公共 kinematics_inverse()。
- *
- * Known Joints：
- *
- * [30, -45, 60, 20, 40, -10]
- *
- * ->
- *
- * FK
- *
- * ->
- *
- * Target T_base_ee
- *
- * ->
- *
- * Public IK
- *
- * ->
- *
- * 1~8 Complete Solutions
- *
- * 并要求至少存在一组与原始
- * Canonical Joint Angles 完全一致。
- */
 static robot_status_t
 run_inverse_solution_assembly_test(
     const robot_joint_angles_t *original_joints
 )
 {
     robot_transform_t
-        target_transform;
+        transform;
 
 
     kinematics_ik_solutions_t
@@ -1051,27 +1053,12 @@ run_inverse_solution_assembly_test(
         solution_index;
 
     uint32_t
-        joint_index;
+        compare_index;
 
 
     uint8_t
         original_solution_found =
             0U;
-
-
-    robot_status_t
-        status;
-
-
-    if (
-        original_joints
-        ==
-        NULL
-    )
-    {
-        return
-            ROBOT_STATUS_ERROR_INTERNAL;
-    }
 
 
     /*
@@ -1081,15 +1068,11 @@ run_inverse_solution_assembly_test(
      *
      * FK Target
      */
-    status =
+    if (
         kinematics_forward(
             original_joints,
-            &target_transform
-        );
-
-
-    if (
-        status
+            &transform
+        )
         !=
         ROBOT_STATUS_OK
     )
@@ -1104,17 +1087,13 @@ run_inverse_solution_assembly_test(
      *
      * ->
      *
-     * Public IK
+     * Public IK API
      */
-    status =
-        kinematics_inverse(
-            &target_transform,
-            &solutions
-        );
-
-
     if (
-        status
+        kinematics_inverse(
+            &transform,
+            &solutions
+        )
         !=
         ROBOT_STATUS_OK
     )
@@ -1125,17 +1104,12 @@ run_inverse_solution_assembly_test(
 
 
     /*
-     * 必须返回：
-     *
-     * 1 <= count <= 8
+     * 当前这组普通非奇异目标
+     * 应得到完整 8 组解析解。
      */
     if (
         solutions.count
-        ==
-        0U
-        ||
-        solutions.count
-        >
+        !=
         KINEMATICS_MAX_IK_SOLUTIONS
     )
     {
@@ -1145,9 +1119,10 @@ run_inverse_solution_assembly_test(
 
 
     /*
-     * 所有公共输出必须已经处于：
+     * 所有解必须：
      *
-     * [-18000, 17999]
+     * 1. Canonical；
+     * 2. 不重复。
      */
     for (
         solution_index = 0U;
@@ -1155,33 +1130,39 @@ run_inverse_solution_assembly_test(
         solution_index++
     )
     {
-        for (
-            joint_index = 0U;
-            joint_index < ROBOT_JOINT_COUNT;
-            joint_index++
+        if (
+            !joint_angles_are_canonical(
+                &solutions.solutions[
+                    solution_index
+                ]
+            )
         )
         {
-            int32_t
-                raw;
+            return
+                ROBOT_STATUS_ERROR_INTERNAL;
+        }
 
 
-            raw =
-                (int32_t)
-                solutions.solutions[
-                    solution_index
-                ].value[
-                    joint_index
-                ];
+        for (
+            compare_index =
+                solution_index
+                +
+                1U;
 
+            compare_index < solutions.count;
 
+            compare_index++
+        )
+        {
             if (
-                raw
-                <
-                ROBOT_JOINT_ANGLE_MIN_RAW
-                ||
-                raw
-                >
-                ROBOT_JOINT_ANGLE_MAX_RAW
+                joint_angles_are_equal(
+                    &solutions.solutions[
+                        solution_index
+                    ],
+                    &solutions.solutions[
+                        compare_index
+                    ]
+                )
             )
             {
                 return
@@ -1191,7 +1172,8 @@ run_inverse_solution_assembly_test(
 
 
         /*
-         * 查找原始解。
+         * 原始 Joint Configuration
+         * 必须是解析解之一。
          */
         if (
             joint_angles_are_equal(
@@ -1208,10 +1190,6 @@ run_inverse_solution_assembly_test(
     }
 
 
-    /*
-     * 对 FK 生成的 Target，
-     * IK 必须至少找回原始 Joint Branch。
-     */
     if (
         !original_solution_found
     )
@@ -1456,7 +1434,7 @@ kinematics_self_test_run(void)
 
 
     /*
-     * Main IK Validation：
+     * IK Validation：
      *
      * [
      *   30,
@@ -1563,7 +1541,9 @@ kinematics_self_test_run(void)
 
 
     /* =====================================================
-     * Analytic IK Individual Stages
+     * Formula Chain
+     *
+     * q1 -> q5 -> q6 -> q3 -> q2 -> q4
      * ===================================================== */
 
     if (
@@ -1580,7 +1560,9 @@ kinematics_self_test_run(void)
 
 
     /* =====================================================
-     * Public IK Solution Assembly
+     * Public kinematics_inverse()
+     *
+     * Full 8-Solution Assembly
      * ===================================================== */
 
     if (
