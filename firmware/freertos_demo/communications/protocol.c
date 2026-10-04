@@ -10,12 +10,14 @@
  * 2. Variable Length Payload；
  * 3. Checksum 校验；
  * 4. Joint 数据编码与解码；
- * 5. Diagnostics 帧构造。
+ * 5. Diagnostics Request 解析；
+ * 6. Diagnostics Response 构造。
  *
  * 本模块不访问 UART Hardware。
  */
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "protocol.h"
 
@@ -31,14 +33,18 @@ static void protocol_parser_reset(
     parser->state =
         PROTOCOL_STATE_WAIT_HEADER_0;
 
+
     parser->payload_index =
         0U;
+
 
     parser->checksum =
         0U;
 
+
     parser->frame.command =
         0U;
+
 
     parser->frame.length =
         0U;
@@ -46,7 +52,7 @@ static void protocol_parser_reset(
 
 
 /* =========================================================
- * 通用协议帧构造
+ * Generic Frame Builder
  * ========================================================= */
 
 static robot_status_t protocol_build_frame(
@@ -94,11 +100,14 @@ static robot_status_t protocol_build_frame(
     frame[0] =
         PROTOCOL_HEADER_0;
 
+
     frame[1] =
         PROTOCOL_HEADER_1;
 
+
     frame[2] =
         command;
+
 
     frame[3] =
         payload_length;
@@ -107,7 +116,8 @@ static robot_status_t protocol_build_frame(
     checksum =
         (uint8_t)(
             command
-            + payload_length
+            +
+            payload_length
         );
 
 
@@ -126,7 +136,8 @@ static robot_status_t protocol_build_frame(
         checksum =
             (uint8_t)(
                 checksum
-                + payload[i]
+                +
+                payload[i]
             );
     }
 
@@ -221,8 +232,8 @@ uint8_t protocol_parser_process_byte(
             )
             {
                 /*
-                 * 当前 AA
-                 * 可能是新帧第一个 Header。
+                 * 当前 AA 既不是第二个 Header，
+                 * 又可能是下一帧新的 Header0。
                  */
                 parser->state =
                     PROTOCOL_STATE_WAIT_HEADER_1;
@@ -242,8 +253,10 @@ uint8_t protocol_parser_process_byte(
             parser->frame.command =
                 byte;
 
+
             parser->checksum =
                 byte;
+
 
             parser->state =
                 PROTOCOL_STATE_READ_LENGTH;
@@ -260,7 +273,8 @@ uint8_t protocol_parser_process_byte(
             parser->checksum =
                 (uint8_t)(
                     parser->checksum
-                    + byte
+                    +
+                    byte
                 );
 
 
@@ -276,6 +290,7 @@ uint8_t protocol_parser_process_byte(
                 protocol_parser_reset(
                     parser
                 );
+
 
                 break;
             }
@@ -312,13 +327,15 @@ uint8_t protocol_parser_process_byte(
             parser->checksum =
                 (uint8_t)(
                     parser->checksum
-                    + byte
+                    +
+                    byte
                 );
 
 
             if (
                 parser->payload_index
-                >= parser->frame.length
+                >=
+                parser->frame.length
             )
             {
                 parser->state =
@@ -385,7 +402,7 @@ uint8_t protocol_parser_process_byte(
 
 
 /* =========================================================
- * 通用 Joint Frame Builder
+ * Generic Joint Frame Builder
  * ========================================================= */
 
 static robot_status_t protocol_build_joint_frame(
@@ -397,6 +414,7 @@ static robot_status_t protocol_build_joint_frame(
     uint8_t payload[
         PROTOCOL_JOINT_PAYLOAD_LEN
     ];
+
 
     uint32_t i;
 
@@ -418,7 +436,10 @@ static robot_status_t protocol_build_joint_frame(
         i++
     )
     {
-        uint16_t value =
+        uint16_t value;
+
+
+        value =
             (uint16_t)(
                 joints->value[i]
             );
@@ -429,7 +450,8 @@ static robot_status_t protocol_build_joint_frame(
         ] =
             (uint8_t)(
                 value
-                & 0xFFU
+                &
+                0xFFU
             );
 
 
@@ -438,19 +460,22 @@ static robot_status_t protocol_build_joint_frame(
         ] =
             (uint8_t)(
                 (
-                    value >> 8U
+                    value
+                    >> 8U
                 )
-                & 0xFFU
+                &
+                0xFFU
             );
     }
 
 
-    return protocol_build_frame(
-        command,
-        payload,
-        PROTOCOL_JOINT_PAYLOAD_LEN,
-        frame
-    );
+    return
+        protocol_build_frame(
+            command,
+            payload,
+            PROTOCOL_JOINT_PAYLOAD_LEN,
+            frame
+        );
 }
 
 
@@ -463,11 +488,12 @@ robot_status_t protocol_build_joint_target_frame(
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 )
 {
-    return protocol_build_joint_frame(
-        CMD_SET_JOINT_TARGETS,
-        joints,
-        frame
-    );
+    return
+        protocol_build_joint_frame(
+            CMD_SET_JOINT_TARGETS,
+            joints,
+            frame
+        );
 }
 
 
@@ -480,11 +506,12 @@ robot_status_t protocol_build_joint_state_ack_frame(
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 )
 {
-    return protocol_build_joint_frame(
-        CMD_JOINT_STATE_ACK,
-        joints,
-        frame
-    );
+    return
+        protocol_build_joint_frame(
+            CMD_JOINT_STATE_ACK,
+            joints,
+            frame
+        );
 }
 
 
@@ -566,10 +593,6 @@ robot_status_t protocol_parse_joint_state(
 
 
 /* =========================================================
- * Diagnostics Request
- * ========================================================= */
-
-/* =========================================================
  * Diagnostics Request Parser
  * ========================================================= */
 
@@ -604,7 +627,7 @@ robot_status_t protocol_parse_diagnostics_request(
      *
      * Length = 0
      * ->
-     * 查询 RX Drop Count。
+     * RX Drop Count。
      */
     if (
         frame->length
@@ -681,7 +704,7 @@ uint8_t protocol_is_diagnostics_request(
  * ========================================================= */
 
 robot_status_t protocol_build_diagnostics_response_frame(
-    uint32_t uart_rx_drop_count,
+    uint32_t value,
     uint8_t frame[PROTOCOL_DIAGNOSTICS_FRAME_LEN]
 )
 {
@@ -701,45 +724,50 @@ robot_status_t protocol_build_diagnostics_response_frame(
 
     payload[0] =
         (uint8_t)(
-            uart_rx_drop_count
-            & 0xFFU
+            value
+            &
+            0xFFU
         );
 
 
     payload[1] =
         (uint8_t)(
             (
-                uart_rx_drop_count
+                value
                 >> 8U
             )
-            & 0xFFU
+            &
+            0xFFU
         );
 
 
     payload[2] =
         (uint8_t)(
             (
-                uart_rx_drop_count
+                value
                 >> 16U
             )
-            & 0xFFU
+            &
+            0xFFU
         );
 
 
     payload[3] =
         (uint8_t)(
             (
-                uart_rx_drop_count
+                value
                 >> 24U
             )
-            & 0xFFU
+            &
+            0xFFU
         );
 
 
-    return protocol_build_frame(
-        CMD_DIAGNOSTICS_RESPONSE,
-        payload,
-        PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN,
-        frame
-    );
+    return
+        protocol_build_frame(
+            CMD_DIAGNOSTICS_RESPONSE,
+            payload,
+            PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN,
+            frame
+        );
 }

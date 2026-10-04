@@ -57,11 +57,20 @@ add_executable(
     communications/protocol.c
     communications/ring_buffer.c
 
+
+    # ------------------------------------------------------
+    # Application 层
+    # ------------------------------------------------------
+
+    application/uart_tx_manager.c
+
+
     # ------------------------------------------------------
     # Diagnostics 层
     # ------------------------------------------------------
 
     diagnostics/performance_monitor.c
+
 
     # ------------------------------------------------------
     # Algorithm 层
@@ -91,8 +100,6 @@ add_executable(
     # ------------------------------------------------------
 
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
-
-    
 )
 
 
@@ -107,27 +114,28 @@ target_include_directories(
 
     ${CMAKE_CURRENT_SOURCE_DIR}
 
-    # Common 公共类型与错误码
+    # Common
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 
-    # Driver 层头文件
+    # Driver
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 
-    # Communication 层头文件
+    # Communication
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 
+    # Algorithm
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
+
+    # Application
+    ${CMAKE_CURRENT_SOURCE_DIR}/application
+
+    # Diagnostics
+    ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
+
+    # FreeRTOS
     ${FREERTOS_DIR}/include
 
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
-
-    # Algorithm 层头文件
-    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms
-
-    # Application 层头文件
-    ${CMAKE_CURRENT_SOURCE_DIR}/application
-
-    # Diagnostics 层头文件
-    ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
 )
 
 

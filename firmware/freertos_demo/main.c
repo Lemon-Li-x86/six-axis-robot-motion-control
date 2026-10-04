@@ -8,18 +8,16 @@
  *
  * 1. Board 初始化；
  * 2. UART Driver 初始化；
- * 3. Timer Driver 初始化；
- * 4. Performance Monitor 初始化；
- * 5. Motor Driver 初始化；
- * 6. 创建 ProtocolTX Task；
- * 7. 创建 ProtocolRX Task；
- * 8. 使用 Task Notification 实现 UART RX 事件驱动；
- * 9. 将通信数据交给 Motor Driver；
- * 10. 提供通信与内部性能 Diagnostics；
- * 11. 启动 FreeRTOS Scheduler。
- *
- * 核心机器人数据类型由 robot_types.h 统一定义。
- * Task 调度参数由 task_config.h 统一定义。
+ * 3. UART TX Manager 初始化；
+ * 4. Timer Driver 初始化；
+ * 5. Performance Monitor 初始化；
+ * 6. Motor Driver 初始化；
+ * 7. 创建 ProtocolTX Task；
+ * 8. 创建 ProtocolRX Task；
+ * 9. 使用 Task Notification 实现 UART RX 事件驱动；
+ * 10. 将通信数据交给 Motor Driver；
+ * 11. 提供通信与内部性能 Diagnostics；
+ * 12. 启动 FreeRTOS Scheduler。
  */
 
 #include <stddef.h>
@@ -29,6 +27,7 @@
 #include "task.h"
 
 #include "board.h"
+
 #include "uart_driver.h"
 #include "motor_driver.h"
 #include "timer_driver.h"
@@ -39,6 +38,8 @@
 #include "error_code.h"
 
 #include "task_config.h"
+#include "uart_tx_manager.h"
+
 #include "performance_monitor.h"
 
 
@@ -57,33 +58,23 @@ static TaskHandle_t
 /**
  * @brief UART RX 中断事件回调。
  *
- * 当前数据路径：
+ * 当前路径：
  *
  * UART RX IRQ
  * ->
  * UART Driver Ring Buffer
  * ->
- * 本 Callback
- * ->
  * Task Notification
  * ->
  * ProtocolRX Task
  *
- * 本函数同时记录 ISR 时间点，
- * 用于测量：
- *
- * UART ISR
- * ->
- * ProtocolRX Task Wakeup
- *
- * 的内部延迟。
+ * 同时记录 ISR 时间点，
+ * 用于测量 UART ISR 到 ProtocolRX Task
+ * 真正恢复运行之间的延迟。
  *
  * @note
- * 本函数运行在 ISR 上下文，
- * 不允许阻塞。
- *
- * 如果调用 FreeRTOS API，
- * 必须使用 FromISR 版本。
+ * 本函数运行在 ISR Context，
+ * 不能阻塞。
  */
 static void uart_rx_event_from_isr(void)
 {
@@ -92,11 +83,6 @@ static void uart_rx_event_from_isr(void)
             pdFALSE;
 
 
-    /*
-     * 如果 ProtocolRX Task
-     * 已经为下一次 Wakeup Measurement 做好准备，
-     * 这里记录 ISR 起始时间。
-     */
     performance_monitor_mark_rx_isr();
 
 
@@ -131,14 +117,14 @@ static void uart_rx_event_from_isr(void)
  * ->
  * Protocol
  * ->
- * UART
+ * UART TX Manager
  * ->
- * Python / PyBullet
+ * UART Driver
  *
  * @param[in] parameters
  * FreeRTOS Task 参数。
  *
- * 当前未使用，应传入 NULL。
+ * 当前未使用。
  */
 static void task_protocol_tx(
     void *parameters
@@ -158,12 +144,6 @@ static void task_protocol_tx(
 
     for (;;)
     {
-        /*
-         * 上层不直接维护 Joint Target。
-         *
-         * 当前目标位置统一从
-         * Motor Driver 获取。
-         */
         if (
             motor_driver_get_target_positions(
                 &joint_targets
@@ -179,7 +159,14 @@ static void task_protocol_tx(
                 == ROBOT_STATUS_OK
             )
             {
-                uart_driver_write(
+                /*
+                 * 完整 Frame 通过 UART TX Manager
+                 * 串行发送。
+                 *
+                 * 即使 ProtocolRX Task 此时需要发送 ACK，
+                 * 两个 Task 的 Frame 也不会发生字节交叉。
+                 */
+                (void)uart_tx_manager_send_frame(
                     frame,
                     PROTOCOL_JOINT_FRAME_LEN
                 );
@@ -187,11 +174,6 @@ static void task_protocol_tx(
         }
 
 
-        /*
-         * 当前按照
-         * TASK_PERIOD_PROTOCOL_TX_MS
-         * 周期发送目标位置。
-         */
         vTaskDelay(
             pdMS_TO_TICKS(
                 TASK_PERIOD_PROTOCOL_TX_MS
@@ -226,7 +208,7 @@ static void task_protocol_tx(
  * @param[in] parameters
  * FreeRTOS Task 参数。
  *
- * 当前未使用，应传入 NULL。
+ * 当前未使用。
  */
 static void task_protocol_rx(
     void *parameters
@@ -255,21 +237,10 @@ static void task_protocol_rx(
     ];
 
 
-    /*
-     * 最近一次有效 Joint Feedback
-     * 对应的 FreeRTOS Tick。
-     */
     TickType_t
         previous_feedback_tick = 0U;
 
 
-    /*
-     * 标记 previous_feedback_tick
-     * 是否已经有效。
-     *
-     * 第一组 Feedback 没有上一时刻，
-     * 因此无法计算速度。
-     */
     uint8_t
         feedback_time_valid = 0U;
 
@@ -283,12 +254,9 @@ static void task_protocol_rx(
 
 
     /*
-     * Scheduler 已经运行，
-     * ProtocolRX Task 已创建，
-     * UART Callback 已注册。
-     *
-     * 此时再打开 UART RX Interrupt，
-     * 避免 ISR 到来时上层尚未准备完成。
+     * Scheduler、Task 和 Callback
+     * 均准备完成后，
+     * 再打开 UART RX Interrupt。
      */
     uart_driver_enable_rx_interrupt();
 
@@ -299,20 +267,16 @@ static void task_protocol_rx(
 
 
         /*
-         * 告诉 Performance Monitor：
-         *
-         * 下一次真正到达的 UART RX ISR
-         * 可以作为 Task Wakeup Measurement
-         * 的起始点。
+         * 下一次 UART RX ISR
+         * 可以作为 Wakeup Measurement 起点。
          */
         performance_monitor_arm_task_wakeup();
 
 
         /*
-         * 没有 UART RX Event 时，
-         * 当前 Task 完全阻塞。
+         * 没有 UART RX Event 时完全阻塞。
          *
-         * 不再使用 1 ms Polling。
+         * 不使用周期 Polling。
          */
         (void)ulTaskNotifyTake(
             pdTRUE,
@@ -320,21 +284,12 @@ static void task_protocol_rx(
         );
 
 
-        /*
-         * Task 从 Notification 中恢复运行后，
-         * 记录结束时间。
-         *
-         * 如果此次 Wakeup 对应一个已经记录的
-         * UART ISR 起始时间，
-         * Performance Monitor 会生成一个有效 Sample。
-         */
         performance_monitor_record_task_wakeup();
 
 
         /*
-         * 被 ISR 唤醒以后，
-         * 一次性消费 UART Driver Ring Buffer
-         * 中当前已经到达的全部字节。
+         * 一次性消费当前 Ring Buffer
+         * 中全部可用字节。
          */
         while (
             uart_driver_read_byte(
@@ -374,11 +329,6 @@ static void task_protocol_rx(
                         xTaskGetTickCount();
 
 
-                    /*
-                     * 第一组 Feedback
-                     * 没有上一采样时间，
-                     * 因此不能计算速度。
-                     */
                     if (
                         feedback_time_valid
                     )
@@ -405,15 +355,6 @@ static void task_protocol_rx(
                     }
 
 
-                    /*
-                     * 将新的 Joint Feedback
-                     * 交给 Motor Driver。
-                     *
-                     * Motor Driver 统一负责：
-                     *
-                     * 1. Position Feedback；
-                     * 2. Velocity Feedback。
-                     */
                     if (
                         motor_driver_update_feedback(
                             &received_joint_states,
@@ -433,9 +374,6 @@ static void task_protocol_rx(
                         /*
                          * ACK 使用 Motor Driver
                          * 已经保存的标准状态。
-                         *
-                         * Protocol 层不直接成为
-                         * Robot State Storage。
                          */
                         if (
                             motor_driver_get_positions(
@@ -452,7 +390,7 @@ static void task_protocol_rx(
                                 == ROBOT_STATUS_OK
                             )
                             {
-                                uart_driver_write(
+                                (void)uart_tx_manager_send_frame(
                                     ack_frame,
                                     PROTOCOL_JOINT_FRAME_LEN
                                 );
@@ -498,12 +436,7 @@ static void task_protocol_rx(
                                 diagnostics_selector
                             )
                             {
-                                /* -------------------------
-                                 * UART RX Drop Count
-                                 * ------------------------- */
-
-                                case
-                                    DIAGNOSTICS_METRIC_RX_DROP_COUNT:
+                                case DIAGNOSTICS_METRIC_RX_DROP_COUNT:
 
                                     diagnostics_value =
                                         uart_driver_get_rx_drop_count();
@@ -511,12 +444,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                /* -------------------------
-                                 * Timer Frequency
-                                 * ------------------------- */
-
-                                case
-                                    DIAGNOSTICS_METRIC_TIMER_FREQUENCY_HZ:
+                                case DIAGNOSTICS_METRIC_TIMER_FREQUENCY_HZ:
 
                                     diagnostics_value =
                                         timer_driver_get_frequency_hz();
@@ -524,12 +452,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                /* -------------------------
-                                 * Protocol Parser
-                                 * ------------------------- */
-
-                                case
-                                    DIAGNOSTICS_METRIC_PARSER_SAMPLE_COUNT:
+                                case DIAGNOSTICS_METRIC_PARSER_SAMPLE_COUNT:
 
                                     diagnostics_value =
                                         metrics.parser_sample_count;
@@ -537,8 +460,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_PARSER_MIN_TICKS:
+                                case DIAGNOSTICS_METRIC_PARSER_MIN_TICKS:
 
                                     diagnostics_value =
                                         metrics.parser_min_ticks;
@@ -546,8 +468,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_PARSER_AVERAGE_TICKS:
+                                case DIAGNOSTICS_METRIC_PARSER_AVERAGE_TICKS:
 
                                     diagnostics_value =
                                         metrics.parser_average_ticks;
@@ -555,8 +476,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_PARSER_MAX_TICKS:
+                                case DIAGNOSTICS_METRIC_PARSER_MAX_TICKS:
 
                                     diagnostics_value =
                                         metrics.parser_max_ticks;
@@ -564,12 +484,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                /* -------------------------
-                                 * ISR -> Task Wakeup
-                                 * ------------------------- */
-
-                                case
-                                    DIAGNOSTICS_METRIC_TASK_WAKEUP_SAMPLE_COUNT:
+                                case DIAGNOSTICS_METRIC_TASK_WAKEUP_SAMPLE_COUNT:
 
                                     diagnostics_value =
                                         metrics.task_wakeup_sample_count;
@@ -577,8 +492,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_TASK_WAKEUP_MIN_TICKS:
+                                case DIAGNOSTICS_METRIC_TASK_WAKEUP_MIN_TICKS:
 
                                     diagnostics_value =
                                         metrics.task_wakeup_min_ticks;
@@ -586,8 +500,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_TASK_WAKEUP_AVERAGE_TICKS:
+                                case DIAGNOSTICS_METRIC_TASK_WAKEUP_AVERAGE_TICKS:
 
                                     diagnostics_value =
                                         metrics.task_wakeup_average_ticks;
@@ -595,8 +508,7 @@ static void task_protocol_rx(
                                     break;
 
 
-                                case
-                                    DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS:
+                                case DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS:
 
                                     diagnostics_value =
                                         metrics.task_wakeup_max_ticks;
@@ -621,7 +533,7 @@ static void task_protocol_rx(
                                 == ROBOT_STATUS_OK
                             )
                             {
-                                uart_driver_write(
+                                (void)uart_tx_manager_send_frame(
                                     diagnostics_frame,
                                     PROTOCOL_DIAGNOSTICS_FRAME_LEN
                                 );
@@ -642,21 +554,15 @@ static void task_protocol_rx(
 /**
  * @brief 固件主入口。
  *
- * 初始化 Board、UART、Timer、Performance Monitor、
- * Motor Driver 和 FreeRTOS Task，
- * 随后启动 FreeRTOS Scheduler。
+ * 完成 Board、Driver、Diagnostics、
+ * UART TX Manager 和 FreeRTOS Task 初始化，
+ * 随后启动 Scheduler。
  *
  * @return
  * 正常情况下不会返回。
  */
 int main(void)
 {
-    /*
-     * 当前仿真测试初始目标：
-     *
-     * Joint 1 = 60.00°
-     * Joint 2~6 = 0.00°
-     */
     const robot_joint_angles_t
         initial_joint_targets =
         {
@@ -689,13 +595,22 @@ int main(void)
     uart_driver_init();
 
 
-    /*
-     * 初始化自由运行 CMSDK APB Timer0。
-     *
-     * Performance Monitor
-     * 后续使用该 Timer 进行高分辨率计时。
-     */
     timer_driver_init();
+
+
+    /* =====================================================
+     * UART TX Serialization
+     * ===================================================== */
+
+    if (
+        uart_tx_manager_init()
+        != ROBOT_STATUS_OK
+    )
+    {
+        while (1)
+        {
+        }
+    }
 
 
     /* =====================================================
@@ -706,16 +621,20 @@ int main(void)
 
 
     /*
-     * 在 Scheduler 启动前，
-     * 对完整 Protocol Frame Parser
-     * 执行 1000 次内部 Benchmark。
-     *
-     * 结果保存在 Performance Monitor 中，
-     * 后续可通过 Diagnostics 查询。
+     * Scheduler 启动前执行 1000 次
+     *完整 Protocol Frame Parser Benchmark。
      */
-    (void)performance_monitor_run_parser_benchmark(
-        1000U
-    );
+    if (
+        performance_monitor_run_parser_benchmark(
+            1000U
+        )
+        != ROBOT_STATUS_OK
+    )
+    {
+        while (1)
+        {
+        }
+    }
 
 
     /* =====================================================
@@ -750,30 +669,42 @@ int main(void)
      * FreeRTOS Task
      * ===================================================== */
 
-    xTaskCreate(
-        task_protocol_tx,
-        "ProtocolTX",
-        TASK_STACK_DEPTH_PROTOCOL_TX,
-        NULL,
-        TASK_PRIORITY_PROTOCOL_TX,
-        NULL
-    );
+    if (
+        xTaskCreate(
+            task_protocol_tx,
+            "ProtocolTX",
+            TASK_STACK_DEPTH_PROTOCOL_TX,
+            NULL,
+            TASK_PRIORITY_PROTOCOL_TX,
+            NULL
+        )
+        != pdPASS
+    )
+    {
+        while (1)
+        {
+        }
+    }
 
 
-    xTaskCreate(
-        task_protocol_rx,
-        "ProtocolRX",
-        TASK_STACK_DEPTH_PROTOCOL_RX,
-        NULL,
-        TASK_PRIORITY_PROTOCOL_RX,
-        &protocol_rx_task_handle
-    );
+    if (
+        xTaskCreate(
+            task_protocol_rx,
+            "ProtocolRX",
+            TASK_STACK_DEPTH_PROTOCOL_RX,
+            NULL,
+            TASK_PRIORITY_PROTOCOL_RX,
+            &protocol_rx_task_handle
+        )
+        != pdPASS
+    )
+    {
+        while (1)
+        {
+        }
+    }
 
 
-    /*
-     * ProtocolRX Task Handle 已经获得，
-     * 此时再注册 UART ISR Callback。
-     */
     uart_driver_set_rx_event_callback(
         uart_rx_event_from_isr
     );

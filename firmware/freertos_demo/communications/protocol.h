@@ -4,6 +4,9 @@
  * 用途：
  * 定义 UART 二进制通信协议格式、
  * 通用协议帧、字节流状态机以及对外接口。
+ *
+ * 核心 Robot 数据类型由 robot_types.h 定义。
+ * 通用状态码由 error_code.h 定义。
  */
 
 #ifndef PROTOCOL_H
@@ -15,6 +18,10 @@
 #include "error_code.h"
 
 
+/* =========================================================
+ * Protocol Header
+ * ========================================================= */
+
 #define PROTOCOL_HEADER_0 0xAAU
 
 #define PROTOCOL_HEADER_1 0x55U
@@ -24,14 +31,19 @@
  * Command
  * ========================================================= */
 
+/* Cortex-M4 -> Python：设置六轴目标关节角。 */
 #define CMD_SET_JOINT_TARGETS 0x01U
 
+/* Python -> Cortex-M4：发送六轴实际关节状态。 */
 #define CMD_JOINT_STATE 0x81U
 
+/* Cortex-M4 -> Python：确认 Joint State 已接收。 */
 #define CMD_JOINT_STATE_ACK 0x82U
 
+/* Python -> Cortex-M4：请求 Diagnostics。 */
 #define CMD_GET_DIAGNOSTICS 0x83U
 
+/* Cortex-M4 -> Python：返回 Diagnostics。 */
 #define CMD_DIAGNOSTICS_RESPONSE 0x84U
 
 
@@ -47,6 +59,12 @@
     (2U + 1U + 1U + PROTOCOL_JOINT_PAYLOAD_LEN + 1U)
 
 
+/*
+ * 为旧代码保留兼容名称。
+ *
+ * 实际 Joint Count
+ * 统一定义于 robot_types.h。
+ */
 #define PROTOCOL_JOINT_COUNT \
     ROBOT_JOINT_COUNT
 
@@ -56,8 +74,12 @@
  * ========================================================= */
 
 /*
- * Diagnostics Response
- * 始终返回一个 uint32_t。
+ * Diagnostics Response Payload：
+ *
+ * uint32_t value
+ *
+ * 共 4 Byte，
+ * Little Endian。
  */
 #define PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN 4U
 
@@ -68,12 +90,17 @@
 
 /*
  * 空 Diagnostics Request
- * 保持旧行为：
+ * 保持旧版行为：
  *
- * 返回 UART RX Drop Count。
+ * Length = 0
+ * ->
+ * 查询 UART RX Drop Count。
  *
- * 如果 Request Payload 长度为 1，
- * 则该字节表示下面的 Metric Selector。
+ * Length = 1 时：
+ *
+ * Payload[0]
+ * ->
+ * Metric Selector。
  */
 #define DIAGNOSTICS_METRIC_RX_DROP_COUNT 0U
 
@@ -94,6 +121,7 @@
 #define DIAGNOSTICS_METRIC_TASK_WAKEUP_AVERAGE_TICKS 8U
 
 #define DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS 9U
+
 
 #define DIAGNOSTICS_METRIC_MAX \
     DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS
@@ -119,6 +147,10 @@ typedef struct
 } protocol_frame_t;
 
 
+/* =========================================================
+ * Parser State
+ * ========================================================= */
+
 typedef enum
 {
     PROTOCOL_STATE_WAIT_HEADER_0 = 0,
@@ -136,6 +168,10 @@ typedef enum
 } protocol_parser_state_t;
 
 
+/* =========================================================
+ * Parser Object
+ * ========================================================= */
+
 typedef struct
 {
     protocol_parser_state_t state;
@@ -149,11 +185,15 @@ typedef struct
 } protocol_parser_t;
 
 
+/* =========================================================
+ * Parser API
+ * ========================================================= */
+
 /**
- * @brief 初始化协议 Parser。
+ * @brief 初始化协议字节流 Parser。
  *
  * @param[in,out] parser
- * Parser 对象。
+ * 待初始化 Parser 对象。
  */
 void protocol_parser_init(
     protocol_parser_t *parser
@@ -161,7 +201,7 @@ void protocol_parser_init(
 
 
 /**
- * @brief 向协议 Parser 输入一个字节。
+ * @brief 向协议状态机输入一个字节。
  *
  * @param[in,out] parser
  * Parser 状态对象。
@@ -170,14 +210,16 @@ void protocol_parser_init(
  * 当前输入字节。
  *
  * @param[out] output_frame
- * 完整合法协议帧输出位置。
+ * 当完整合法帧解析成功时，
+ * 输出解析后的完整协议帧。
  *
  * @return
  * 1：
- * 已解析得到完整合法帧。
+ * 成功解析出完整且 Checksum 正确的协议帧。
  *
  * 0：
- * 尚未得到完整合法帧。
+ * 当前尚未得到完整合法帧，
+ * 或参数为空。
  */
 uint8_t protocol_parser_process_byte(
     protocol_parser_t *parser,
@@ -186,8 +228,28 @@ uint8_t protocol_parser_process_byte(
 );
 
 
+/* =========================================================
+ * Joint Protocol API
+ * ========================================================= */
+
 /**
- * @brief 构造目标关节角协议帧。
+ * @brief 构造六轴目标关节角协议帧。
+ *
+ * @param[in] joints
+ * 六轴目标关节角。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @param[out] frame
+ * 输出完整 CMD_SET_JOINT_TARGETS 协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * joints 或 frame 为空。
  */
 robot_status_t protocol_build_joint_target_frame(
     const robot_joint_angles_t *joints,
@@ -196,7 +258,23 @@ robot_status_t protocol_build_joint_target_frame(
 
 
 /**
- * @brief 构造 Joint State ACK。
+ * @brief 构造 Joint State ACK 帧。
+ *
+ * @param[in] joints
+ * 已接收并保存的六轴关节状态。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @param[out] frame
+ * 输出完整 CMD_JOINT_STATE_ACK 协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * joints 或 frame 为空。
  */
 robot_status_t protocol_build_joint_state_ack_frame(
     const robot_joint_angles_t *joints,
@@ -205,7 +283,29 @@ robot_status_t protocol_build_joint_state_ack_frame(
 
 
 /**
- * @brief 解析 Joint State。
+ * @brief 从协议帧解析六轴 Joint State。
+ *
+ * @param[in] frame
+ * 已经通过 Parser Checksum 校验的完整协议帧。
+ *
+ * @param[out] joints
+ * 输出六轴关节状态。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 解析成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * frame 或 joints 为空。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_COMMAND：
+ * 当前帧不是 CMD_JOINT_STATE。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_LENGTH：
+ * Payload Length 不符合六轴 Joint State 格式。
  */
 robot_status_t protocol_parse_joint_state(
     const protocol_frame_t *frame,
@@ -213,20 +313,26 @@ robot_status_t protocol_parse_joint_state(
 );
 
 
+/* =========================================================
+ * Diagnostics API
+ * ========================================================= */
+
 /**
  * @brief 解析 Diagnostics Request。
  *
  * @param[in] frame
- * 完整协议帧。
+ * 已通过 Parser 校验的完整协议帧。
  *
  * @param[out] selector
- * 输出需要查询的性能指标编号。
+ * 输出需要查询的 Diagnostics Metric。
  *
  * Length = 0 时：
+ *
  * selector 自动设为
  * DIAGNOSTICS_METRIC_RX_DROP_COUNT。
  *
  * Length = 1 时：
+ *
  * Payload[0] 作为 selector。
  *
  * @return
@@ -234,16 +340,16 @@ robot_status_t protocol_parse_joint_state(
  * 请求合法。
  *
  * ROBOT_STATUS_ERROR_NULL_POINTER：
- * 输入或输出为空。
+ * frame 或 selector 为空。
  *
  * ROBOT_STATUS_ERROR_INVALID_COMMAND：
- * Command 错误。
+ * 当前 Command 不是 CMD_GET_DIAGNOSTICS。
  *
  * ROBOT_STATUS_ERROR_INVALID_LENGTH：
  * Payload Length 不是 0 或 1。
  *
  * ROBOT_STATUS_ERROR_INVALID_ARGUMENT：
- * Selector 超出支持范围。
+ * Selector 超出当前支持范围。
  */
 robot_status_t protocol_parse_diagnostics_request(
     const protocol_frame_t *frame,
@@ -252,14 +358,17 @@ robot_status_t protocol_parse_diagnostics_request(
 
 
 /**
- * @brief 判断当前帧是否为合法 Diagnostics Request。
+ * @brief 判断协议帧是否为合法 Diagnostics Request。
+ *
+ * @param[in] frame
+ * 待判断协议帧。
  *
  * @return
  * 1：
- * 是。
+ * 是合法 Diagnostics Request。
  *
  * 0：
- * 不是。
+ * 不是合法 Diagnostics Request。
  */
 uint8_t protocol_is_diagnostics_request(
     const protocol_frame_t *frame
@@ -270,10 +379,17 @@ uint8_t protocol_is_diagnostics_request(
  * @brief 构造 Diagnostics Response。
  *
  * @param[in] value
- * 当前查询指标的 uint32_t 数值。
+ * 当前 Diagnostics Metric 的 uint32_t 数值。
  *
  * @param[out] frame
- * 输出 Diagnostics Response。
+ * 输出完整 CMD_DIAGNOSTICS_RESPONSE 协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * frame 为空。
  */
 robot_status_t protocol_build_diagnostics_response_frame(
     uint32_t value,
