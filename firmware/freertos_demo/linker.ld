@@ -26,67 +26,58 @@ SECTIONS
         KEEP(*(.isr_vector))
     } > FLASH
 
+
     /* 程序代码和只读常量 */
     .text :
     {
         *(.text*)
         *(.rodata*)
 
-        /* 保持 4 字节对齐 */
         . = ALIGN(4);
     } > FLASH
 
+
     /*
-     * .data 中是“有初始值的全局/静态变量”。
+     * .data 中是有初始值的全局 / 静态变量。
      *
-     * 初始值存放在 FLASH 中，
-     * 程序运行时需要复制到 RAM。
-     *
-     * _sidata：FLASH 中 .data 初始值的位置
-     * _sdata ：RAM 中 .data 开始位置
-     * _edata ：RAM 中 .data 结束位置
+     * 初始值存放在 FLASH，
+     * 启动时复制到 RAM。
      */
     _sidata = LOADADDR(.data);
 
     .data :
     {
         . = ALIGN(4);
+
         _sdata = .;
 
         *(.data*)
 
         . = ALIGN(4);
+
         _edata = .;
+
     } > RAM AT > FLASH
 
+
     /*
-     * .bss 中是“没有显式初始值的全局/静态变量”。
+     * .bss 中是未显式初始化的
+     * 全局 / 静态变量。
      *
-     * 按 C 语言规则，它们在程序开始前必须全部清零。
+     * 启动时清零。
      */
-        .bss :
+    .bss :
     {
         . = ALIGN(4);
+
         _sbss = .;
 
         *(.bss*)
         *(COMMON)
 
         . = ALIGN(4);
-        _ebss = .;
-    } > RAM
 
-    /*
-     * C library / libnosys 使用的 Heap 起始标记。
-     *
-     * 当前工程本身主要使用 FreeRTOS heap_4，
-     * 并不依赖 libc malloc()。
-     *
-     * 但 libnosys 的 _sbrk() 需要名为 end 的符号，
-     * 因此在静态数据区域结束后提供该标记。
-     */
-    . = ALIGN(8);
-    end = .;
-    _end = .;
-    
+        _ebss = .;
+
+    } > RAM
 }

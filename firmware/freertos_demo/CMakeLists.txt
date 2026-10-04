@@ -3,14 +3,6 @@
 #
 # 用途：
 # 配置 Cortex-M4 / FreeRTOS 固件工程。
-#
-# 主要负责：
-# 1. 指定项目源文件；
-# 2. 指定 FreeRTOS Kernel 源文件；
-# 3. 设置各模块头文件搜索路径；
-# 4. 配置 Cortex-M4 编译参数；
-# 5. 配置链接脚本；
-# 6. 生成 freertos_demo.elf。
 # ==========================================================
 
 
@@ -79,6 +71,7 @@ add_executable(
     algorithms/kinematics.c
     algorithms/matrix4.c
 
+
     # ------------------------------------------------------
     # Test
     # ------------------------------------------------------
@@ -107,10 +100,6 @@ add_executable(
     # ------------------------------------------------------
 
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
-
-    
-
-    
 )
 
 
@@ -150,8 +139,6 @@ target_include_directories(
     ${FREERTOS_DIR}/include
 
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
-
-    
 )
 
 
@@ -191,22 +178,18 @@ target_link_options(
 
 
 # ==========================================================
-# GCC 底层运行库
+# 数学库 / GCC Runtime
 # ==========================================================
 
 target_link_libraries(
     freertos_demo
+
     PRIVATE
 
-    "-Wl,--start-group"
-
     m
-    c
-    nosys
     gcc
-
-    "-Wl,--end-group"
 )
+
 
 # ==========================================================
 # 输出文件

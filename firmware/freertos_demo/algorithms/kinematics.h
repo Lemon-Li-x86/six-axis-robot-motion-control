@@ -46,18 +46,6 @@
  * {0} ... {6}
  *
  * 仅作为本模块内部实现细节。
- *
- * Forward Kinematics 内部可以：
- *
- * Joint Angles
- * ->
- * Standard DH T_0_6
- * ->
- * Coordinate Conversion
- * ->
- * Public T_base_ee
- *
- * Inverse Kinematics 则执行逆过程。
  */
 
 #ifndef KINEMATICS_H
@@ -75,7 +63,15 @@
 
 /*
  * UR5 球形腕结构
- * 理论上最多存在 8 组解析逆解。
+ * 理论上最多存在 8 组解析逆解：
+ *
+ * 2 Shoulder
+ * ×
+ * 2 Wrist
+ * ×
+ * 2 Elbow
+ * =
+ * 8
  */
 #define KINEMATICS_MAX_IK_SOLUTIONS 8U
 
@@ -92,6 +88,10 @@
  * 每组解使用 Canonical Angle：
  *
  * [-180°, 180°)
+ *
+ * 单位：
+ *
+ * 0.01 degree
  */
 typedef struct
 {
@@ -138,12 +138,6 @@ typedef struct
  *
  * ROBOT_STATUS_ERROR_NULL_POINTER：
  * 输入或输出为空。
- *
- * ROBOT_STATUS_ERROR_OUT_OF_RANGE：
- * 输入数据超过算法允许范围。
- *
- * ROBOT_STATUS_ERROR_NOT_IMPLEMENTED：
- * 当前算法尚未实现。
  */
 robot_status_t kinematics_forward(
     const robot_joint_angles_t *joints,
@@ -156,42 +150,65 @@ robot_status_t kinematics_forward(
  * ========================================================= */
 
 /**
- * @brief 计算六轴机器人逆运动学全部可行解析解。
+ * @brief 计算六轴机器人逆运动学解析解。
+ *
+ * 当前阶段返回：
+ *
+ * 1. 几何有效；
+ * 2. 非 Wrist Singular；
+ * 3. Canonical Angle 已规范化；
+ * 4. 已量化为 0.01 degree；
+ *
+ * 的完整六轴解析解。
+ *
+ * 后续阶段还会继续加入：
+ *
+ * 1. Joint Limit Filtering；
+ * 2. Duplicate Removal；
+ * 3. 每组解的 FK Round-Trip Validation。
  *
  * @param transform
  * 输入目标：
  *
  * T_base_ee
  *
- * 即 ee_link 相对于 base_link
- * 的目标齐次变换矩阵。
- *
  * @param solutions
  * 输出逆运动学解集合。
  *
- * 最多包含：
- * KINEMATICS_MAX_IK_SOLUTIONS
- * 组解。
+ * 最多：
  *
- * 每组关节角规范化到：
+ * KINEMATICS_MAX_IK_SOLUTIONS
+ *
+ * 即 8 组。
+ *
+ * 每组：
+ *
+ * [q1, q2, q3, q4, q5, q6]
+ *
+ * 单位：
+ *
+ * 0.01 degree
+ *
+ * Canonical Range：
  *
  * [-180°, 180°)
  *
  * @return
  * ROBOT_STATUS_OK：
- * 至少得到一组有效解。
+ * 至少得到一组完整解析解。
  *
  * ROBOT_STATUS_ERROR_NULL_POINTER：
  * 输入或输出为空。
  *
  * ROBOT_STATUS_ERROR_NO_SOLUTION：
- * 当前目标位姿无可行解。
+ * 当前目标不存在非奇异几何解。
  *
  * ROBOT_STATUS_ERROR_SINGULAR：
- * 当前位姿处于运动学奇异状态。
+ * 当前目标仅存在当前接口无法唯一表达的
+ * 奇异解。
  *
- * ROBOT_STATUS_ERROR_NOT_IMPLEMENTED：
- * 当前算法尚未实现。
+ * ROBOT_STATUS_ERROR_OUT_OF_RANGE：
+ * 内部生成的 Solution 数量异常。
  */
 robot_status_t kinematics_inverse(
     const robot_transform_t *transform,
@@ -216,17 +233,10 @@ robot_status_t kinematics_inverse(
  * 逆运动学候选解集合。
  *
  * @param reference
- * 当前机器人 Canonical Joint Angles，
- * 作为选择最接近解的参考。
+ * 当前机器人 Canonical Joint Angles。
  *
  * @param selected
  * 输出最终选中的关节角。
- *
- * 输出采用：
- *
- * [-180°, 180°)
- *
- * Canonical Angle。
  *
  * @return
  * ROBOT_STATUS_OK：
