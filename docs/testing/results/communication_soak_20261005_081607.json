@@ -1,0 +1,17 @@
+{
+    "test": "QEMU + TCP + FreeRTOS UART Communication Soak Test",
+    "timestamp": "2026-10-05T08:16:07",
+    "target_duration_s": 600.0,
+    "actual_duration_s": 600.00893489999,
+    "target_rate_hz": 100.0,
+    "actual_rate_hz": 99.98517773739405,
+    "ack_timeout_s": 0.05,
+    "sent": 59992,
+    "ack": 59992,
+    "lost": 0,
+    "timeout": 0,
+    "ack_success_rate_percent": 100.0,
+    "rx_drop_before_bytes": 0,
+    "rx_drop_after_bytes": 0,
+    "rx_drop_delta_bytes": 0
+}

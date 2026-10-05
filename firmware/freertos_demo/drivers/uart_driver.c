@@ -6,25 +6,25 @@
 
 
 /* =========================================================
- * UART0 Registers
+ * UART / NVIC Configuration
  * ========================================================= */
 
-#define UART0_BASE 0x40004000UL
+/*
+ * MPS2-AN386:
+ *
+ * IRQ0 = UART0 RX
+ * IRQ1 = UART0 TX
+ */
+#define UART0_RX_IRQ_NUMBER 0U
+#define UART0_TX_IRQ_NUMBER 1U
 
-#define UART0_DATA \
-    (*(volatile uint32_t *)(UART0_BASE + 0x000UL))
+#define UART0_RX_IRQ_MASK \
+    (1UL << UART0_RX_IRQ_NUMBER)
 
-#define UART0_STATE \
-    (*(volatile uint32_t *)(UART0_BASE + 0x004UL))
+#define UART0_TX_IRQ_MASK \
+    (1UL << UART0_TX_IRQ_NUMBER)
 
-#define UART0_CTRL \
-    (*(volatile uint32_t *)(UART0_BASE + 0x008UL))
-
-#define UART0_INTSTATUS \
-    (*(volatile uint32_t *)(UART0_BASE + 0x00CUL))
-
-#define UART0_BAUDDIV \
-    (*(volatile uint32_t *)(UART0_BASE + 0x010UL))
+#define UART_IRQ_PRIORITY_VALUE 0x80U
 
 
 /* =========================================================
@@ -46,8 +46,67 @@
 
 
 /* =========================================================
- * NVIC
+ * Register Backend
  * ========================================================= */
+
+#ifdef UART_DRIVER_HOST_TEST
+
+#include "uart_driver_test_backend.h"
+
+
+#define UART0_DATA \
+    uart_driver_test_uart0_data
+
+#define UART0_STATE \
+    uart_driver_test_uart0_state
+
+#define UART0_CTRL \
+    uart_driver_test_uart0_ctrl
+
+#define UART0_INTSTATUS \
+    uart_driver_test_uart0_intstatus
+
+#define UART0_BAUDDIV \
+    uart_driver_test_uart0_bauddiv
+
+
+#define NVIC_ISER0 \
+    uart_driver_test_nvic_iser0
+
+#define NVIC_ICER0 \
+    uart_driver_test_nvic_icer0
+
+#define NVIC_ICPR0 \
+    uart_driver_test_nvic_icpr0
+
+
+#define UART0_RX_IRQ_PRIORITY \
+    uart_driver_test_nvic_ipr[UART0_RX_IRQ_NUMBER]
+
+#define UART0_TX_IRQ_PRIORITY \
+    uart_driver_test_nvic_ipr[UART0_TX_IRQ_NUMBER]
+
+
+#else
+
+
+#define UART0_BASE 0x40004000UL
+
+#define UART0_DATA \
+    (*(volatile uint32_t *)(UART0_BASE + 0x000UL))
+
+#define UART0_STATE \
+    (*(volatile uint32_t *)(UART0_BASE + 0x004UL))
+
+#define UART0_CTRL \
+    (*(volatile uint32_t *)(UART0_BASE + 0x008UL))
+
+#define UART0_INTSTATUS \
+    (*(volatile uint32_t *)(UART0_BASE + 0x00CUL))
+
+#define UART0_BAUDDIV \
+    (*(volatile uint32_t *)(UART0_BASE + 0x010UL))
+
 
 #define NVIC_ISER0 \
     (*(volatile uint32_t *)0xE000E100UL)
@@ -61,29 +120,18 @@
 #define NVIC_IPR_BASE 0xE000E400UL
 
 
-/*
- * MPS2-AN386：
- *
- * IRQ0 = UART0 RX
- * IRQ1 = UART0 TX
- */
-#define UART0_RX_IRQ_NUMBER 0U
-#define UART0_TX_IRQ_NUMBER 1U
-
-#define UART0_RX_IRQ_MASK \
-    (1UL << UART0_RX_IRQ_NUMBER)
-
-#define UART0_TX_IRQ_MASK \
-    (1UL << UART0_TX_IRQ_NUMBER)
-
 #define UART0_RX_IRQ_PRIORITY \
-    (*(volatile uint8_t *)(NVIC_IPR_BASE + UART0_RX_IRQ_NUMBER))
+    (*(volatile uint8_t *)( \
+        NVIC_IPR_BASE + UART0_RX_IRQ_NUMBER \
+    ))
 
 #define UART0_TX_IRQ_PRIORITY \
-    (*(volatile uint8_t *)(NVIC_IPR_BASE + UART0_TX_IRQ_NUMBER))
+    (*(volatile uint8_t *)( \
+        NVIC_IPR_BASE + UART0_TX_IRQ_NUMBER \
+    ))
 
-#define UART_IRQ_PRIORITY_VALUE 0x80U
 
+#endif
 
 /* =========================================================
  * Driver State
