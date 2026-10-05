@@ -7,12 +7,6 @@
  * 当前支持：
  *
  * ProtocolTX Period。
- *
- * 当前 Cortex-M4 为 32 bit 平台，
- * 对齐 uint32_t 的单次读写是原子的。
- *
- * 当前仅有一个简单配置值，
- * 因此暂不引入 Mutex。
  */
 
 #include <stdint.h>
@@ -25,67 +19,58 @@
  * Runtime State
  * ========================================================= */
 
-static volatile uint32_t
-    runtime_protocol_tx_period_ms =
-        TASK_PERIOD_PROTOCOL_TX_MS;
+/*
+ * 当前 Cortex-M4 为 32 bit 平台。
+ *
+ * runtime_protocol_tx_period_ms 为对齐的 uint32_t，
+ * 当前仅存在单一读写者模型，因此暂不额外引入 Mutex。
+ *
+ * 参数范围由 runtime_config.h 定义：
+ *
+ * RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MIN_MS
+ * ~
+ * RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MAX_MS
+ */
+static volatile uint32_t runtime_protocol_tx_period_ms =
+    TASK_PERIOD_PROTOCOL_TX_MS;
 
 
 /* =========================================================
- * Init
+ * Public API
  * ========================================================= */
 
-robot_status_t
-runtime_config_init(void)
+robot_status_t runtime_config_init(void)
 {
+    /*
+     * 每次初始化时恢复为 task_config.h
+     * 中定义的默认 ProtocolTX 周期。
+     */
     runtime_protocol_tx_period_ms =
         TASK_PERIOD_PROTOCOL_TX_MS;
 
-
-    return
-        ROBOT_STATUS_OK;
+    return ROBOT_STATUS_OK;
 }
 
 
-/* =========================================================
- * Set Protocol TX Period
- * ========================================================= */
-
-robot_status_t
-runtime_config_set_protocol_tx_period_ms(
+robot_status_t runtime_config_set_protocol_tx_period_ms(
     uint32_t period_ms
 )
 {
     if (
-        period_ms
-        <
-        RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MIN_MS
-        ||
-        period_ms
-        >
-        RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MAX_MS
+        period_ms < RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MIN_MS
+        || period_ms > RUNTIME_CONFIG_PROTOCOL_TX_PERIOD_MAX_MS
     )
     {
-        return
-            ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
+    runtime_protocol_tx_period_ms = period_ms;
 
-    runtime_protocol_tx_period_ms =
-        period_ms;
-
-
-    return
-        ROBOT_STATUS_OK;
+    return ROBOT_STATUS_OK;
 }
 
 
-/* =========================================================
- * Get Protocol TX Period
- * ========================================================= */
-
-uint32_t
-runtime_config_get_protocol_tx_period_ms(void)
+uint32_t runtime_config_get_protocol_tx_period_ms(void)
 {
-    return
-        runtime_protocol_tx_period_ms;
+    return runtime_protocol_tx_period_ms;
 }
