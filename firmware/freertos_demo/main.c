@@ -8,14 +8,15 @@
  *
  * 1. Board 初始化；
  * 2. Driver 初始化；
- * 3. UART TX Manager 初始化；
- * 4. Performance Monitor 初始化；
- * 5. 启动前 Performance Benchmark；
- * 6. 启动前 Kinematics Self Test；
- * 7. Motor Driver 初始化；
- * 8. 设置初始关节目标；
- * 9. 启动 Application Tasks；
- * 10. 启动 FreeRTOS Scheduler。
+ * 3. Runtime Configuration 初始化；
+ * 4. UART TX Manager 初始化；
+ * 5. Performance Monitor 初始化；
+ * 6. 启动前 Performance Benchmark；
+ * 7. 启动前 Kinematics Self Test；
+ * 8. Motor Driver 初始化；
+ * 9. 设置初始关节目标；
+ * 10. 启动 Application Tasks；
+ * 11. 启动 FreeRTOS Scheduler。
  *
  * Protocol 收发和 Application Dispatch
  * 不在 main.c 中实现。
@@ -81,7 +82,6 @@ main(void)
 
     board_clock_init();
 
-
     board_gpio_init();
 
 
@@ -91,69 +91,69 @@ main(void)
 
     uart_driver_init();
 
+    timer_driver_init();
 
-timer_driver_init();
-
-
-if (
-    gpio_driver_init()
-    !=
-    ROBOT_STATUS_OK
-)
-{
-    while (1)
-    {
-    }
-}
-
-
-/*
- * 第2阶段 Timer 周期中断验证。
- *
- * Timer1：
- *
- * 100 Hz
- * =
- * 10 ms 周期。
- *
- * 当前暂时不注册业务 Callback，
- * Driver ISR 仍会正常：
- *
- * 1. 响应 Interrupt；
- * 2. 清除 IRQ；
- * 3. 累加 IRQ Counter。
- *
- * 后续 Control / Trajectory 模块
- * 可以注册实际 Callback。
- */
-if (
-    timer_driver_start_periodic(
-        100U,
-        0
+    if (
+        gpio_driver_init()
+        !=
+        ROBOT_STATUS_OK
     )
-    !=
-    ROBOT_STATUS_OK
-)
-{
-    while (1)
     {
+        while (1)
+        {
+        }
     }
-}
 
-/* =====================================================
- * Runtime Configuration
- * ===================================================== */
 
-if (
-    runtime_config_init()
-    !=
-    ROBOT_STATUS_OK
-)
-{
-    while (1)
+    /*
+     * 第2阶段 Timer 周期中断验证。
+     *
+     * Timer1：
+     *
+     * 100 Hz
+     * =
+     * 10 ms 周期。
+     *
+     * 当前暂时不注册业务 Callback。
+     *
+     * Driver ISR 仍然负责：
+     *
+     * 1. 响应 Timer Interrupt；
+     * 2. 清除 IRQ；
+     * 3. 累加 IRQ Counter。
+     *
+     * 后续 Control / Trajectory 模块
+     * 可以注册实际周期 Callback。
+     */
+    if (
+        timer_driver_start_periodic(
+            100U,
+            0
+        )
+        !=
+        ROBOT_STATUS_OK
+    )
     {
+        while (1)
+        {
+        }
     }
-}
+
+
+    /* =====================================================
+     * Runtime Configuration
+     * ===================================================== */
+
+    if (
+        runtime_config_init()
+        !=
+        ROBOT_STATUS_OK
+    )
+    {
+        while (1)
+        {
+        }
+    }
 
 
     /* =====================================================
@@ -183,7 +183,7 @@ if (
      * Scheduler 启动前执行完整
      * Protocol Frame Parser Benchmark。
      *
-     * 当前保留 1000 个 Sample，
+     * 当前使用 1000 个 Sample，
      * 用于建立通信性能基线。
      */
     if (
@@ -250,11 +250,13 @@ if (
 
 
     /*
-     * 当前 Stage 1 / Stage 2
-     * 默认测试目标：
+     * 当前默认测试目标：
      *
      * Joint 1 = +60°
      * Joint 2~6 = 0°
+     *
+     * 公共关节角单位为 0.01 degree，
+     * 因此 +60.00° 表示为 6000。
      */
     if (
         motor_driver_set_target_positions(

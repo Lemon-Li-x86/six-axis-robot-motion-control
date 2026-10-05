@@ -1,3 +1,20 @@
+/*
+ * 文件：protocol.h
+ *
+ * 用途：
+ * 定义 Cortex-M4 与 Python 仿真端之间的
+ * 二进制通信协议公共接口。
+ *
+ * 当前协议支持：
+ *
+ * 1. 可变长度 Payload；
+ * 2. Byte Stream Parser；
+ * 3. Checksum；
+ * 4. 六轴关节目标与状态；
+ * 5. Runtime Parameter；
+ * 6. Diagnostics。
+ */
+
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
@@ -91,8 +108,12 @@
 typedef struct
 {
     uint8_t command;
+
     uint8_t length;
-    uint8_t payload[PROTOCOL_MAX_PAYLOAD_LEN];
+
+    uint8_t payload[
+        PROTOCOL_MAX_PAYLOAD_LEN
+    ];
 
 } protocol_frame_t;
 
@@ -100,10 +121,15 @@ typedef struct
 typedef enum
 {
     PROTOCOL_STATE_WAIT_HEADER_0 = 0,
+
     PROTOCOL_STATE_WAIT_HEADER_1,
+
     PROTOCOL_STATE_READ_COMMAND,
+
     PROTOCOL_STATE_READ_LENGTH,
+
     PROTOCOL_STATE_READ_PAYLOAD,
+
     PROTOCOL_STATE_READ_CHECKSUM
 
 } protocol_parser_state_t;
@@ -116,6 +142,7 @@ typedef struct
     protocol_frame_t frame;
 
     uint8_t payload_index;
+
     uint8_t checksum;
 
 } protocol_parser_t;
@@ -125,10 +152,41 @@ typedef struct
  * Parser API
  * ========================================================= */
 
+/**
+ * @brief 初始化 Protocol Byte Stream Parser。
+ *
+ * @param[in,out] parser
+ * 待初始化的 Parser State。
+ *
+ * @note
+ * parser 为 NULL 时函数直接返回。
+ */
 void protocol_parser_init(
     protocol_parser_t *parser
 );
 
+
+/**
+ * @brief 向 Parser 输入一个 Byte。
+ *
+ * @param[in,out] parser
+ * Parser State。
+ *
+ * @param[in] byte
+ * 当前输入 Byte。
+ *
+ * @param[out] output_frame
+ * 当合法完整 Frame 解析完成时，
+ * 输出解析结果。
+ *
+ * @return
+ * 1：
+ * 已解析出一个完整合法 Frame。
+ *
+ * 0：
+ * 当前尚未形成完整合法 Frame，
+ * 或输入参数无效。
+ */
 uint8_t protocol_parser_process_byte(
     protocol_parser_t *parser,
     uint8_t byte,
@@ -140,16 +198,81 @@ uint8_t protocol_parser_process_byte(
  * Joint API
  * ========================================================= */
 
+/**
+ * @brief 构造 SET_JOINT_TARGETS Frame。
+ *
+ * @param[in] joints
+ * 六轴目标关节角。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @param[out] frame
+ * 输出完整协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * 输入或输出指针为空。
+ */
 robot_status_t protocol_build_joint_target_frame(
     const robot_joint_angles_t *joints,
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 );
 
+
+/**
+ * @brief 构造 JOINT_STATE_ACK Frame。
+ *
+ * @param[in] joints
+ * 六轴关节状态。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @param[out] frame
+ * 输出完整协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * 输入或输出指针为空。
+ */
 robot_status_t protocol_build_joint_state_ack_frame(
     const robot_joint_angles_t *joints,
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 );
 
+
+/**
+ * @brief 解析 JOINT_STATE Frame。
+ *
+ * @param[in] frame
+ * 输入协议帧。
+ *
+ * @param[out] joints
+ * 输出六轴关节状态。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 解析成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * 输入或输出指针为空。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_COMMAND：
+ * Command 不是 CMD_JOINT_STATE。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_LENGTH：
+ * Payload Length 非法。
+ */
 robot_status_t protocol_parse_joint_state(
     const protocol_frame_t *frame,
     robot_joint_angles_t *joints
@@ -160,12 +283,60 @@ robot_status_t protocol_parse_joint_state(
  * Parameter API
  * ========================================================= */
 
+/**
+ * @brief 解析 SET_PARAMETER Frame。
+ *
+ * @param[in] frame
+ * 输入协议帧。
+ *
+ * @param[out] parameter_id
+ * 输出 Parameter ID。
+ *
+ * @param[out] value
+ * 输出 Parameter Value。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 解析成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * 输入或输出指针为空。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_COMMAND：
+ * Command 非法。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_LENGTH：
+ * Payload Length 非法。
+ */
 robot_status_t protocol_parse_set_parameter(
     const protocol_frame_t *frame,
     uint8_t *parameter_id,
     uint32_t *value
 );
 
+
+/**
+ * @brief 构造 PARAMETER_ACK Frame。
+ *
+ * @param[in] parameter_id
+ * Parameter ID。
+ *
+ * @param[in] status
+ * 参数配置结果。
+ *
+ * @param[in] effective_value
+ * 当前实际生效值。
+ *
+ * @param[out] frame
+ * 输出完整协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * frame 为空。
+ */
 robot_status_t protocol_build_parameter_ack_frame(
     uint8_t parameter_id,
     robot_status_t status,
@@ -178,15 +349,75 @@ robot_status_t protocol_build_parameter_ack_frame(
  * Diagnostics API
  * ========================================================= */
 
+/**
+ * @brief 解析 GET_DIAGNOSTICS Frame。
+ *
+ * @param[in] frame
+ * 输入协议帧。
+ *
+ * @param[out] selector
+ * 输出 Diagnostics Metric Selector。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 解析成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * 输入或输出指针为空。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_COMMAND：
+ * Command 非法。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_LENGTH：
+ * Payload Length 非法。
+ *
+ * ROBOT_STATUS_ERROR_INVALID_ARGUMENT：
+ * Selector 超出支持范围。
+ *
+ * @note
+ * Length 为 0 时使用默认 Selector：
+ * DIAGNOSTICS_METRIC_RX_DROP_COUNT。
+ */
 robot_status_t protocol_parse_diagnostics_request(
     const protocol_frame_t *frame,
     uint8_t *selector
 );
 
+
+/**
+ * @brief 判断 Frame 是否为合法 Diagnostics Request。
+ *
+ * @param[in] frame
+ * 输入协议帧。
+ *
+ * @return
+ * 1：
+ * 是合法 Diagnostics Request。
+ *
+ * 0：
+ * 不是合法 Diagnostics Request。
+ */
 uint8_t protocol_is_diagnostics_request(
     const protocol_frame_t *frame
 );
 
+
+/**
+ * @brief 构造 DIAGNOSTICS_RESPONSE Frame。
+ *
+ * @param[in] value
+ * 需要返回的 32 bit Diagnostics Value。
+ *
+ * @param[out] frame
+ * 输出完整协议帧。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 构造成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * frame 为空。
+ */
 robot_status_t protocol_build_diagnostics_response_frame(
     uint32_t value,
     uint8_t frame[PROTOCOL_DIAGNOSTICS_FRAME_LEN]
