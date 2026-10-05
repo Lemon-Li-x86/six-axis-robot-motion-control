@@ -2,21 +2,16 @@
 文件：internal_performance_metrics.py
 
 用途：
-读取 Cortex-M4 固件内部性能基线。
+读取 Cortex-M4 固件内部 Performance Monitor 指标。
 
-建议运行顺序：
+当前读取：
 
-1. 重启 QEMU；
-2. 运行 performance_baseline.py；
-3. 再运行本程序。
+1. Timer Frequency；
+2. Protocol Parser Sample Count；
+3. Protocol Parser Minimum / Average / Maximum Tick；
+4. UART RX ISR -> ProtocolRX Task Wakeup Sample Count；
+5. Task Wakeup Minimum / Average / Maximum Tick。
 
-这样 Task Wakeup 已经积累约 200 个以上样本。
-
-协议编解码和 Diagnostics Selector
-统一由 protocol_codec.py 提供。
-
-结果属于 QEMU 仿真基线，
-不能直接代表真实 Cortex-M4 硬件性能。
 """
 
 import select
@@ -41,9 +36,21 @@ from protocol_codec import (
 )
 
 
-HOST = "127.0.0.1"
+# ==========================================================
+# TCP Configuration
+# ==========================================================
 
+HOST = "127.0.0.1"
 PORT = 5555
+
+# 单次 Diagnostics Query 最大等待时间，单位 second。
+DIAGNOSTICS_TIMEOUT_S = 1.0
+
+# select() 单次最长等待时间，单位 second。
+SOCKET_POLL_INTERVAL_S = 0.05
+
+# 单次 Socket Read 最大长度，单位 Byte。
+SOCKET_RECV_SIZE = 4096
 
 
 # ==========================================================
@@ -55,10 +62,29 @@ def query_metric(
     rx_buffer: bytearray,
     selector: int,
 ) -> int:
-    request = (
-        build_diagnostics_request(
-            selector
-        )
+    """
+    查询一个固件 Diagnostics Metric。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        selector:
+            Diagnostics Metric Selector。
+
+    Returns:
+        MCU 返回的 uint32 Metric Value。
+
+    Raises:
+        RuntimeError:
+            在 Timeout 内没有获得合法
+            Diagnostics Response。
+    """
+    request = build_diagnostics_request(
+        selector
     )
 
     sock.sendall(
@@ -67,13 +93,10 @@ def query_metric(
 
     deadline = (
         time.perf_counter()
-        + 1.0
+        + DIAGNOSTICS_TIMEOUT_S
     )
 
-    while (
-        time.perf_counter()
-        < deadline
-    ):
+    while time.perf_counter() < deadline:
         remaining = (
             deadline
             - time.perf_counter()
@@ -85,7 +108,7 @@ def query_metric(
             [],
             min(
                 remaining,
-                0.05,
+                SOCKET_POLL_INTERVAL_S,
             ),
         )
 
@@ -93,7 +116,7 @@ def query_metric(
             continue
 
         data = sock.recv(
-            4096
+            SOCKET_RECV_SIZE
         )
 
         if not data:
@@ -113,8 +136,7 @@ def query_metric(
             )
 
             if (
-                command
-                == CMD_DIAGNOSTICS_RESPONSE
+                command == CMD_DIAGNOSTICS_RESPONSE
                 and payload is not None
             ):
                 value = (
@@ -139,6 +161,21 @@ def ticks_to_us(
     ticks: int,
     frequency_hz: int,
 ) -> float:
+    """
+    将 Timer Tick 数转换为 microsecond。
+
+    Args:
+        ticks:
+            Timer Tick 数。
+
+        frequency_hz:
+            Timer Frequency，单位 Hz。
+
+    Returns:
+        时间长度，单位 microsecond。
+
+        frequency_hz <= 0 时返回 0。
+    """
     if frequency_hz <= 0:
         return 0.0
 
@@ -154,6 +191,9 @@ def ticks_to_us(
 # ==========================================================
 
 def main() -> None:
+    """
+    连接 QEMU UART 并打印全部内部性能指标。
+    """
     sock = socket.create_connection(
         (
             HOST,
@@ -161,6 +201,8 @@ def main() -> None:
         )
     )
 
+    # 减少 localhost 小数据包
+    # 被 Nagle Algorithm 合并的影响。
     sock.setsockopt(
         socket.IPPROTO_TCP,
         socket.TCP_NODELAY,

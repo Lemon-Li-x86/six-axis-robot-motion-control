@@ -3,32 +3,16 @@
 
 用途：
 对当前 QEMU Cortex-M4 UART 通信链路
-进行连续高频压力测试。
+执行连续高频压力测试。
 
 测试内容：
 
-1. 按指定目标速率连续发送 JOINT_STATE（0x81）；
-2. 统计 MCU 返回的 JOINT_STATE_ACK（0x82）；
-3. 统计成功帧数和丢失帧数；
-4. 测量实际完成发送所需时间；
-5. 根据实际发送时间计算真实平均发送速率。
-
-协议编解码统一由 protocol_codec.py 提供。
-
-注意：
-
-TEST_RATES_HZ 表示目标发送速率。
-
-Windows + Python 不能保证严格按照该频率调度，
-因此最终必须同时观察 actual_rate_hz。
-
-本测试反映：
-
-QEMU + TCP + Windows + Python + FreeRTOS
-
-组成的完整仿真系统压力表现。
-
-不能直接作为真实 Cortex-M4 硬件吞吐能力。
+1. 按目标发送频率连续发送 JOINT_STATE；
+2. 同时消费 MCU 返回的 JOINT_STATE_ACK；
+3. 统计匹配 ACK 数量；
+4. 统计最终丢失 Frame 数量；
+5. 记录实际发送耗时；
+6. 根据实际耗时计算真实平均发送频率。
 """
 
 import select
@@ -46,11 +30,10 @@ from protocol_codec import (
 
 
 # ==========================================================
-# TCP
+# TCP Configuration
 # ==========================================================
 
 HOST = "127.0.0.1"
-
 PORT = 5555
 
 
@@ -58,6 +41,10 @@ PORT = 5555
 # Stress Test Configuration
 # ==========================================================
 
+# 每一轮要求 Python 尝试达到的目标发送频率。
+#
+# 单位：
+# Frame / second。
 TEST_RATES_HZ = [
     1000,
     2000,
@@ -65,10 +52,14 @@ TEST_RATES_HZ = [
     10000,
 ]
 
+# 每一个目标频率下发送的 Frame 数量。
 FRAMES_PER_RATE = 1000
 
+# 全部 Frame 发送完成后，
+# 继续等待剩余 ACK 的时间，单位 second。
 ACK_DRAIN_TIMEOUT = 2.0
 
+# 不同 Rate Test 之间的间隔，单位 second。
 RATE_TEST_GAP = 0.5
 
 
@@ -80,12 +71,25 @@ def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
     """
-    使用 sequence 构造唯一 Payload。
+    使用 sequence 构造可区分的 JOINT_STATE Frame。
 
-    收到 ACK 后通过原始 Payload
-    判断具体对应哪一帧。
+    Args:
+        sequence:
+            当前测试 Frame Sequence。
+
+    Returns:
+        Tuple：
+
+        (
+            complete_frame,
+            payload,
+        )
+
+    Note:
+        ACK Payload 与原 JOINT_STATE Payload 一致，
+        因此可以直接通过 Payload 判断
+        某一个发送 Frame 是否获得 ACK。
     """
-
     value = (
         sequence % 30000
     )
@@ -99,6 +103,10 @@ def build_joint_state_frame(
         value + 5,
     ]
 
+    # "<6h"：
+    #
+    # Little Endian
+    # 6 × signed int16。
     payload = struct.pack(
         "<6h",
         *joints,
@@ -122,12 +130,22 @@ def receive_current_data(
     received_payloads: set[bytes],
 ) -> None:
     """
-    非阻塞读取当前已经到达 Socket 的数据。
+    非阻塞消费当前已经到达 Socket 的 ACK。
 
-    压力测试发送过程中同时消费 ACK，
-    避免主机 TCP RX Buffer 持续积压。
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        received_payloads:
+            已收到的 ACK Payload Set。
+
+    Note:
+        压力测试发送过程中同步消费 ACK，
+        避免 Host TCP RX Buffer 持续积压。
     """
-
     while True:
         readable, _, _ = select.select(
             [sock],
@@ -160,8 +178,7 @@ def receive_current_data(
             )
 
             if (
-                command
-                == CMD_JOINT_STATE_ACK
+                command == CMD_JOINT_STATE_ACK
                 and payload is not None
             ):
                 received_payloads.add(
@@ -181,13 +198,28 @@ def drain_remaining_acks(
     timeout: float,
 ) -> None:
     """
-    全部测试帧发送完成以后，
-    等待仍然存在于链路中的 ACK。
+    在发送结束后继续等待仍在链路中的 ACK。
 
-    如果全部预期 ACK 已经收到，
-    提前结束。
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        received_payloads:
+            当前已经收到的 ACK Payload。
+
+        expected_payloads:
+            当前 Rate Test 所有预期 Payload。
+
+        timeout:
+            最大 Drain 时间，单位 second。
+
+    Note:
+        如果全部预期 ACK 已收到，
+        则提前返回。
     """
-
     deadline = (
         time.perf_counter()
         + timeout
@@ -197,10 +229,7 @@ def drain_remaining_acks(
         time.perf_counter()
         < deadline
     ):
-        if (
-            expected_payloads
-            <= received_payloads
-        ):
+        if expected_payloads <= received_payloads:
             return
 
         remaining = (
@@ -242,8 +271,7 @@ def drain_remaining_acks(
             )
 
             if (
-                command
-                == CMD_JOINT_STATE_ACK
+                command == CMD_JOINT_STATE_ACK
                 and payload is not None
             ):
                 received_payloads.add(
@@ -260,26 +288,40 @@ def run_rate_test(
     rx_buffer: bytearray,
     rate_hz: int,
     sequence_start: int,
-):
+) -> tuple[int, int, float, float, float]:
     """
-    在指定目标频率下发送 FRAMES_PER_RATE 帧。
+    在指定目标频率下发送 FRAMES_PER_RATE 个 Frame。
 
-    返回：
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
 
-        success_count
-        lost_count
-        success_rate
-        send_elapsed
-        actual_rate_hz
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        rate_hz:
+            目标发送频率，单位 Frame / second。
+
+        sequence_start:
+            当前测试使用的起始 Sequence。
+
+    Returns:
+        Tuple：
+
+        (
+            success_count,
+            lost_count,
+            success_rate,
+            send_elapsed,
+            actual_rate_hz,
+        )
     """
-
     interval = (
         1.0
         / rate_hz
     )
 
     expected_payloads = set()
-
     received_payloads = set()
 
     send_start_time = (
@@ -308,10 +350,12 @@ def run_rate_test(
             payload
         )
 
-        # --------------------------------------------------
-        # 等待目标发送时刻
-        # --------------------------------------------------
-
+        # 等待下一个目标发送时刻。
+        #
+        # 剩余时间大于 1 ms 时，
+        # 先 sleep 到距离目标约 0.5 ms，
+        # 最后一小段使用循环等待，
+        # 减少 Windows sleep 粗粒度带来的误差。
         while True:
             now = (
                 time.perf_counter()
@@ -331,10 +375,6 @@ def run_rate_test(
                     - 0.0005
                 )
 
-        # --------------------------------------------------
-        # Send
-        # --------------------------------------------------
-
         sock.sendall(
             frame
         )
@@ -343,10 +383,8 @@ def run_rate_test(
             interval
         )
 
-        # --------------------------------------------------
-        # 同时消费已经返回的 ACK
-        # --------------------------------------------------
-
+        # 发送期间同步消费已经返回的 ACK，
+        # 避免 TCP RX Queue 堆积。
         receive_current_data(
             sock,
             rx_buffer,
@@ -380,8 +418,7 @@ def run_rate_test(
 
     matched_payloads = (
         expected_payloads
-        &
-        received_payloads
+        & received_payloads
     )
 
     success_count = len(
@@ -413,6 +450,9 @@ def run_rate_test(
 # ==========================================================
 
 def main() -> None:
+    """
+    连接 QEMU UART 并依次执行全部 Rate Test。
+    """
     print(
         "正在连接 QEMU UART："
         f"{HOST}:{PORT}"
@@ -425,6 +465,8 @@ def main() -> None:
         )
     )
 
+    # 关闭 Nagle Algorithm，
+    # 尽量降低 TCP 自动聚合带来的额外变量。
     sock.setsockopt(
         socket.IPPROTO_TCP,
         socket.TCP_NODELAY,
@@ -452,6 +494,8 @@ def main() -> None:
     try:
         results = []
 
+        # 不同 Rate Test 使用不同 Sequence 区域，
+        # 避免旧 ACK 与当前 Payload 重复。
         sequence_start = 5000
 
         for rate_hz in TEST_RATES_HZ:

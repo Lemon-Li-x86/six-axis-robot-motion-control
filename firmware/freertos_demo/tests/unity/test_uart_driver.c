@@ -1,3 +1,18 @@
+/*
+ * 文件：test_uart_driver.c
+ *
+ * 用途：
+ * 使用 Unity 和 Host Register Backend
+ * 验证 UART Driver 的：
+ *
+ * 1. 初始化；
+ * 2. 参数检查；
+ * 3. Interrupt Driven TX；
+ * 4. TX Buffer 容量边界；
+ * 5. RX Interrupt；
+ * 6. RX Drop Counter。
+ */
+
 #include <stdint.h>
 
 #include "unity.h"
@@ -6,6 +21,18 @@
 #include "uart_driver_test_backend.h"
 #include "error_code.h"
 
+
+/* =========================================================
+ * Test Register Bit Definitions
+ * ========================================================= */
+
+/*
+ * 以下 Bit 与 uart_driver.c 中的
+ * CMSDK UART CTRL / Interrupt 定义一致。
+ *
+ * Test Code 独立定义这些值，
+ * 避免依赖 Driver 私有宏。
+ */
 
 #define TEST_UART_CTRL_TX_ENABLE \
     (1UL << 0)
@@ -26,16 +53,33 @@
     (1UL << 1)
 
 
-static uint32_t
-    rx_callback_count = 0U;
+/* =========================================================
+ * Test State
+ * ========================================================= */
+
+static uint32_t rx_callback_count = 0U;
 
 
+/* =========================================================
+ * Test Helpers
+ * ========================================================= */
+
+/**
+ * @brief 模拟 UART RX Event Callback。
+ *
+ * 每执行一次将 Callback Counter 加 1，
+ * 用于验证 RX ISR 是否触发上层通知。
+ */
 static void test_rx_callback(void)
 {
     rx_callback_count++;
 }
 
 
+/**
+ * @brief 为每个 UART Unit Test
+ *        重置 Host Backend 并初始化 Driver。
+ */
 static void initialize_uart(void)
 {
     uart_driver_test_backend_reset();
@@ -49,10 +93,26 @@ static void initialize_uart(void)
 }
 
 
+/* =========================================================
+ * Initialization Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 UART Driver 初始化后的
+ *        UART Register 和内部状态。
+ */
 void test_uart_init_configures_hardware(void)
 {
     initialize_uart();
 
+    /*
+     * 当前 CMSDK APB UART 配置：
+     *
+     * BAUDDIV = 16。
+     *
+     * 该值满足 CMSDK UART
+     * BAUDDIV >= 16 的硬件要求。
+     */
     TEST_ASSERT_EQUAL_UINT32(
         16U,
         uart_driver_test_uart0_bauddiv
@@ -68,6 +128,10 @@ void test_uart_init_configures_hardware(void)
         uart_driver_test_uart0_ctrl
     );
 
+    /*
+     * 初始化阶段只开启 UART TX / RX 功能，
+     * RX / TX Interrupt 尚未开启。
+     */
     TEST_ASSERT_BITS_LOW(
         TEST_UART_CTRL_TX_INTERRUPT_ENABLE,
         uart_driver_test_uart0_ctrl
@@ -90,6 +154,14 @@ void test_uart_init_configures_hardware(void)
 }
 
 
+/* =========================================================
+ * Argument Validation Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 uart_driver_write()
+ *        对 NULL 和 0 Length 返回正确错误码。
+ */
 void test_uart_write_rejects_invalid_arguments(void)
 {
     uint8_t dummy = 0x55U;
@@ -114,6 +186,14 @@ void test_uart_write_rejects_invalid_arguments(void)
 }
 
 
+/* =========================================================
+ * TX Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 TX IRQ 可以依次发送
+ *        TX Ring Buffer 中的所有 Byte。
+ */
 void test_uart_tx_interrupt_drains_buffer(void)
 {
     const uint8_t data[] =
@@ -134,8 +214,9 @@ void test_uart_tx_interrupt_drains_buffer(void)
     );
 
     /*
-     * uart_driver_write() 应立即 kick-start
-     * 第一个字节。
+     * uart_driver_write() 在 TX 空闲时
+     * 会立即写出第一个 Byte，
+     * 用于 kick-start Interrupt Driven TX。
      */
     TEST_ASSERT_EQUAL_HEX8(
         0x11U,
@@ -153,7 +234,9 @@ void test_uart_tx_interrupt_drains_buffer(void)
     );
 
     /*
-     * 模拟第一个字节发送完成。
+     * 模拟第一个 Byte 发送完成。
+     *
+     * ISR 应继续发送 0x22。
      */
     uart_driver_test_uart0_intstatus =
         TEST_UART_INTERRUPT_TX;
@@ -171,7 +254,9 @@ void test_uart_tx_interrupt_drains_buffer(void)
     );
 
     /*
-     * 第二个字节完成。
+     * 模拟第二个 Byte 发送完成。
+     *
+     * ISR 应继续发送 0x33。
      */
     uart_driver_test_uart0_intstatus =
         TEST_UART_INTERRUPT_TX;
@@ -189,10 +274,10 @@ void test_uart_tx_interrupt_drains_buffer(void)
     );
 
     /*
-     * 第三个字节完成。
+     * 模拟第三个 Byte 发送完成。
      *
-     * Ring Buffer 此时为空，
-     * Driver 应结束 TX。
+     * TX Ring Buffer 已空，
+     * Driver 应结束 TX 并关闭 TX Interrupt。
      */
     uart_driver_test_uart0_intstatus =
         TEST_UART_INTERRUPT_TX;
@@ -211,6 +296,10 @@ void test_uart_tx_interrupt_drains_buffer(void)
 }
 
 
+/**
+ * @brief 验证超过 TX Ring Buffer
+ *        可用容量的数据被整包拒绝。
+ */
 void test_uart_tx_rejects_frame_larger_than_buffer(void)
 {
     uint8_t data[128];
@@ -220,14 +309,16 @@ void test_uart_tx_rejects_frame_larger_than_buffer(void)
 
     for (i = 0U; i < sizeof(data); i++)
     {
-        data[i] =
-            (uint8_t)i;
+        data[i] = (uint8_t)i;
     }
 
     /*
-     * Ring Buffer 实际容量为 127 Byte。
+     * Ring Buffer Physical Capacity = 128 Byte。
      *
-     * 128 Byte 必须整包拒绝，
+     * 因 head == tail 表示 Empty，
+     * Usable Capacity = 127 Byte。
+     *
+     * 因此 128 Byte 必须整体返回 BUFFER_FULL，
      * 不允许发生部分写入。
      */
     TEST_ASSERT_EQUAL_INT(
@@ -245,6 +336,14 @@ void test_uart_tx_rejects_frame_larger_than_buffer(void)
 }
 
 
+/* =========================================================
+ * RX Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 RX Interrupt 可以接收一个 Byte、
+ *        写入 RX Buffer 并触发 Callback。
+ */
 void test_uart_rx_interrupt_receives_byte(void)
 {
     uint8_t received = 0U;
@@ -266,7 +365,9 @@ void test_uart_rx_interrupt_receives_byte(void)
     );
 
     /*
-     * 模拟 UART 收到一个 Byte。
+     * 模拟 UART Hardware 收到：
+     *
+     * 0x5A。
      */
     uart_driver_test_uart0_data =
         0x5AU;
@@ -276,6 +377,9 @@ void test_uart_rx_interrupt_receives_byte(void)
 
     UART0_RX_IRQHandler();
 
+    /*
+     * RX ISR 应触发一次上层 Event Callback。
+     */
     TEST_ASSERT_EQUAL_UINT32(
         1U,
         rx_callback_count
@@ -298,6 +402,10 @@ void test_uart_rx_interrupt_receives_byte(void)
         uart_driver_get_rx_drop_count()
     );
 
+    /*
+     * 唯一 Byte 已被消费，
+     * 第二次读取应返回 Empty。
+     */
     TEST_ASSERT_EQUAL_UINT8(
         0U,
         uart_driver_read_byte(
@@ -307,6 +415,10 @@ void test_uart_rx_interrupt_receives_byte(void)
 }
 
 
+/**
+ * @brief 验证 RX Ring Buffer 满后
+ *        新输入 Byte 会增加 Drop Counter。
+ */
 void test_uart_rx_overflow_increments_drop_count(void)
 {
     uint32_t i;
@@ -319,7 +431,9 @@ void test_uart_rx_overflow_increments_drop_count(void)
     );
 
     /*
-     * RX Ring Buffer 可容纳 127 Byte。
+     * RX Ring Buffer 可用容量为 127 Byte。
+     *
+     * 前 127 Byte 应全部成功进入 Buffer。
      */
     for (i = 0U; i < 127U; i++)
     {
@@ -338,8 +452,10 @@ void test_uart_rx_overflow_increments_drop_count(void)
     );
 
     /*
-     * 第 128 Byte 无空间，
-     * 应记录一次 Drop。
+     * 第 128 Byte 已无可用空间。
+     *
+     * ISR 不覆盖已有数据，
+     * 而是记录一次 RX Drop。
      */
     uart_driver_test_uart0_data =
         0xAAU;

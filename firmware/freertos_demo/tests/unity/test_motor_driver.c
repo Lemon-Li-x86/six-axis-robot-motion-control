@@ -1,3 +1,18 @@
+/*
+ * 文件：test_motor_driver.c
+ *
+ * 用途：
+ * 使用 Unity 验证 Motor Driver 的：
+ *
+ * 1. 初始化状态；
+ * 2. Canonical Angle 规范化；
+ * 3. 首次 Feedback；
+ * 4. ±180° Wrap Correction；
+ * 5. Continuous Position；
+ * 6. Velocity；
+ * 7. Null Pointer 错误处理。
+ */
+
 #include <stdint.h>
 
 #include "unity.h"
@@ -7,6 +22,14 @@
 #include "error_code.h"
 
 
+/* =========================================================
+ * Initialization Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 Motor Driver 初始化后
+ *        六轴目标位置为 0 且尚无 Feedback。
+ */
 void test_motor_init_sets_zero_targets(void)
 {
     robot_joint_angles_t targets;
@@ -39,8 +62,26 @@ void test_motor_init_sets_zero_targets(void)
 }
 
 
+/* =========================================================
+ * Target Position Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证目标关节角被规范化到
+ *        [-180°, 180°)。
+ */
 void test_motor_target_normalization(void)
 {
+    /*
+     * 单位：
+     * 0.01 degree。
+     *
+     * 重点覆盖：
+     *
+     * +180° -> -180°
+     * +190° -> -170°
+     * -190° -> +170°
+     */
     robot_joint_angles_t input =
     {
         .value =
@@ -107,6 +148,14 @@ void test_motor_target_normalization(void)
 }
 
 
+/* =========================================================
+ * Feedback Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证第一组 Feedback 建立位置状态，
+ *        但速度保持为 0。
+ */
 void test_motor_first_feedback_has_zero_velocity(void)
 {
     robot_joint_angles_t feedback =
@@ -130,6 +179,13 @@ void test_motor_first_feedback_has_zero_velocity(void)
 
     motor_driver_init();
 
+    /*
+     * delta_time_s = 0.1 s。
+     *
+     * 由于这是第一组 Feedback，
+     * 尚不存在上一组位置用于计算速度，
+     * 所以所有速度应为 0。
+     */
     TEST_ASSERT_EQUAL_INT(
         ROBOT_STATUS_OK,
         motor_driver_update_feedback(
@@ -185,6 +241,14 @@ void test_motor_first_feedback_has_zero_velocity(void)
 }
 
 
+/* =========================================================
+ * Angle Wrap Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证 +179° -> -179°
+ *        被识别为正向 +2° 连续运动。
+ */
 void test_motor_wrap_forward(void)
 {
     robot_joint_angles_t first =
@@ -218,6 +282,16 @@ void test_motor_wrap_forward(void)
 
     motor_driver_init();
 
+    /*
+     * 179° -> -179°
+     *
+     * Canonical Angle 看起来跳变 -358°，
+     * 实际最短运动为 +2°。
+     *
+     * 0.1 s 内移动 +2°：
+     *
+     * velocity = +20 degree / second。
+     */
     motor_driver_update_feedback(
         &first,
         0.1F
@@ -255,6 +329,10 @@ void test_motor_wrap_forward(void)
 }
 
 
+/**
+ * @brief 验证 -179° -> +179°
+ *        被识别为反向 -2° 连续运动。
+ */
 void test_motor_wrap_backward(void)
 {
     robot_joint_angles_t first =
@@ -288,6 +366,15 @@ void test_motor_wrap_backward(void)
 
     motor_driver_init();
 
+    /*
+     * -179° -> +179°
+     *
+     * 实际最短运动为 -2°。
+     *
+     * 0.1 s 内移动 -2°：
+     *
+     * velocity = -20 degree / second。
+     */
     motor_driver_update_feedback(
         &first,
         0.1F
@@ -319,6 +406,14 @@ void test_motor_wrap_backward(void)
 }
 
 
+/* =========================================================
+ * Error Handling Tests
+ * ========================================================= */
+
+/**
+ * @brief 验证所有主要 Motor Driver API
+ *        对 NULL Pointer 返回统一错误码。
+ */
 void test_motor_null_pointer_errors(void)
 {
     motor_driver_init();

@@ -1,3 +1,11 @@
+"""
+文件：fk_cross_validation.py
+
+用途：
+使用 PyBullet UR5 URDF
+交叉验证 Cortex-M4 C 端 Forward Kinematics。
+"""
+
 import math
 from pathlib import Path
 
@@ -5,12 +13,14 @@ import pybullet as p
 
 
 # ==========================================================
-# 1. UR5 Model Path
+# UR5 Model Path
 # ==========================================================
 
 current_file = Path(__file__).resolve()
 
-pybullet_ur5_dir = current_file.parent.parent
+pybullet_ur5_dir = (
+    current_file.parent.parent
+)
 
 ur5_path = (
     pybullet_ur5_dir
@@ -22,9 +32,11 @@ ur5_path = (
 
 
 # ==========================================================
-# 2. Test Configuration
+# Test Configuration
 # ==========================================================
 
+# UR5 六个主动 Revolute Joint，
+# 顺序必须与固件 robot_joint_angles_t 一致。
 UR5_JOINT_NAMES = [
     "shoulder_pan_joint",
     "shoulder_lift_joint",
@@ -34,27 +46,32 @@ UR5_JOINT_NAMES = [
     "wrist_3_joint",
 ]
 
-
+# Rotation Matrix Element 最大允许绝对误差。
 ROTATION_TOLERANCE = 0.001
 
+# Translation 最大允许绝对误差，单位 mm。
 TRANSLATION_TOLERANCE_MM = 0.05
 
 
 # ==========================================================
-# 3. Expected Results
+# Expected Results
+# ==========================================================
+
+# 与 Cortex-M4 C 端 FK Self Test
+# 使用相同测试姿态和 Expected Result。
 #
-# 与 Cortex-M4 C 端 FK Self Test 使用相同测试姿态。
-#
-# Matrix:
+# Transform：
 #
 # [ R00 R01 R02 Tx ]
 # [ R10 R11 R12 Ty ]
 # [ R20 R21 R22 Tz ]
 # [  0   0   0   1 ]
 #
-# Translation unit: mm
-# ==========================================================
-
+# Rotation：
+# dimensionless。
+#
+# Translation：
+# mm。
 TEST_CASES = [
     {
         "name": "Zero Configuration",
@@ -119,23 +136,28 @@ TEST_CASES = [
 
 
 # ==========================================================
-# 4. Load PyBullet
+# PyBullet Setup
 # ==========================================================
 
+# DIRECT Mode：
+#
+# 不创建 GUI，
+# 适合自动化几何验证。
 physics_client = p.connect(
     p.DIRECT
 )
 
-
 robot_id = p.loadURDF(
     str(ur5_path),
 
+    # World Frame 与 UR5 Base Origin 重合。
     basePosition=[
         0.0,
         0.0,
         0.0,
     ],
 
+    # Identity Quaternion。
     baseOrientation=[
         0.0,
         0.0,
@@ -143,37 +165,32 @@ robot_id = p.loadURDF(
         1.0,
     ],
 
-    useFixedBase=True
+    useFixedBase=True,
 )
 
 
 # ==========================================================
-# 5. Joint Map
+# Joint Map
 # ==========================================================
 
 joint_map = {}
-
 
 joint_count = p.getNumJoints(
     robot_id
 )
 
-
 for joint_index in range(
     joint_count
 ):
-
     joint_info = p.getJointInfo(
         robot_id,
         joint_index
     )
 
-
     joint_name = (
         joint_info[1]
         .decode("utf-8")
     )
-
 
     joint_map[
         joint_name
@@ -182,36 +199,37 @@ for joint_index in range(
 
 controlled_joint_indices = [
     joint_map[name]
-    for name
-    in UR5_JOINT_NAMES
+    for name in UR5_JOINT_NAMES
 ]
 
-
+# ee_fixed_joint 对应当前公共 ee_link。
 ee_link_index = joint_map[
     "ee_fixed_joint"
 ]
 
 
 # ==========================================================
-# 6. Set Exact Joint Configuration
+# Joint Configuration
 # ==========================================================
 
 def set_joint_configuration(
-    joints_deg
-):
+    joints_deg,
+) -> None:
     """
-    直接设置关节状态。
+    直接设置六轴 Joint State。
 
-    不使用：
-    POSITION_CONTROL
+    Args:
+        joints_deg:
+            六个关节角，单位 degree。
 
-    不执行：
-    stepSimulation()
+    Note:
+        本函数使用 resetJointState()，
+        不使用 POSITION_CONTROL，
+        也不执行 stepSimulation()。
 
-    因此这里验证的是纯几何 FK，
-    与重力、电机控制、PID 无关。
+        因此当前测试验证的是纯几何 FK，
+        与重力、Motor、PID 和 Dynamics 无关。
     """
-
     for (
         joint_index,
         angle_deg
@@ -219,58 +237,65 @@ def set_joint_configuration(
         controlled_joint_indices,
         joints_deg
     ):
-
         p.resetJointState(
             bodyUniqueId=robot_id,
-
             jointIndex=joint_index,
-
             targetValue=math.radians(
                 angle_deg
-            )
+            ),
         )
 
 
 # ==========================================================
-# 7. Read PyBullet FK
+# PyBullet Forward Kinematics
 # ==========================================================
 
 def get_ee_transform():
     """
-    获取 ee_link 相对于 World Frame 的位姿。
+    获取 ee_link 相对于 World Frame 的齐次变换矩阵。
 
-    当前：
-    basePosition = [0, 0, 0]
-    baseOrientation = Identity
-    useFixedBase = True
+    Returns:
+        4 × 4 Transform。
 
-    因此当前测试中：
+        Rotation：
+        dimensionless。
 
-    World Frame
-    =
-    base_link Frame
+        Translation：
+        mm。
 
-    Translation 返回单位从 m 转为 mm。
+    Note:
+        当前配置：
+
+        basePosition = [0, 0, 0]
+        baseOrientation = Identity
+        useFixedBase = True
+
+        因此：
+
+        World Frame
+        =
+        UR5 Base Frame。
+
+        PyBullet Position 原始单位为 meter，
+        返回前转换为 mm。
     """
-
     link_state = p.getLinkState(
         robot_id,
         ee_link_index,
-        computeForwardKinematics=True
+        computeForwardKinematics=True,
     )
 
-
+    # World Position，单位 meter。
     position_m = link_state[4]
 
+    # World Orientation Quaternion。
     quaternion = link_state[5]
-
 
     rotation_flat = (
         p.getMatrixFromQuaternion(
             quaternion
         )
     )
-
 
     transform = [
         [
@@ -302,104 +327,114 @@ def get_ee_transform():
         ],
     ]
 
-
     return transform
 
 
 # ==========================================================
-# 8. Matrix Compare
+# Transform Comparison
 # ==========================================================
 
 def compare_transforms(
     actual,
-    expected
+    expected,
 ):
+    """
+    比较两个 4 × 4 Transform。
+
+    Args:
+        actual:
+            PyBullet FK Transform。
+
+        expected:
+            Cortex-M4 C FK Expected Transform。
+
+    Returns:
+        Tuple：
+
+        (
+            passed,
+            max_rotation_error,
+            max_translation_error_mm,
+        )
+
+    Note:
+        Translation Column：
+
+        row 0..2
+        column 3
+
+        使用 TRANSLATION_TOLERANCE_MM。
+
+        其余 Matrix Element
+        使用 ROTATION_TOLERANCE。
+    """
     max_rotation_error = 0.0
-
     max_translation_error_mm = 0.0
-
 
     passed = True
 
-
     for row in range(4):
-
         for column in range(4):
-
             error = abs(
                 actual[row][column]
-                -
-                expected[row][column]
+                - expected[row][column]
             )
-
 
             if (
                 column == 3
-                and
-                row < 3
+                and row < 3
             ):
-
                 max_translation_error_mm = max(
                     max_translation_error_mm,
                     error
                 )
 
-
-                if (
-                    error
-                    >
-                    TRANSLATION_TOLERANCE_MM
-                ):
+                if error > TRANSLATION_TOLERANCE_MM:
                     passed = False
 
             else:
-
                 max_rotation_error = max(
                     max_rotation_error,
                     error
                 )
 
-
-                if (
-                    error
-                    >
-                    ROTATION_TOLERANCE
-                ):
+                if error > ROTATION_TOLERANCE:
                     passed = False
-
 
     return (
         passed,
         max_rotation_error,
-        max_translation_error_mm
+        max_translation_error_mm,
     )
 
 
 # ==========================================================
-# 9. Matrix Printer
+# Matrix Output
 # ==========================================================
 
 def print_matrix(
-    matrix
-):
+    matrix,
+) -> None:
+    """
+    以固定小数格式打印 4 × 4 Matrix。
 
+    Args:
+        matrix:
+            待打印二维 Matrix。
+    """
     for row in matrix:
-
         print(
             "  ["
-            +
-            ", ".join(
+            + ", ".join(
                 f"{value:11.6f}"
-                for value
-                in row
+                for value in row
             )
-            +
-            "]"
+            + "]"
         )
 
 
 # ==========================================================
-# 10. Run Tests
+# Cross Validation
 # ==========================================================
 
 print()
@@ -422,41 +457,34 @@ all_passed = True
 
 
 for test_case in TEST_CASES:
-
     print(
         "Test:",
         test_case["name"]
     )
-
 
     print(
         "Joint angles:",
         test_case["joints_deg"]
     )
 
-
     set_joint_configuration(
         test_case["joints_deg"]
     )
 
-
     actual = get_ee_transform()
-
 
     expected = (
         test_case["expected"]
     )
 
-
     (
         passed,
         max_rotation_error,
-        max_translation_error_mm
+        max_translation_error_mm,
     ) = compare_transforms(
         actual,
         expected
     )
-
 
     print()
     print(
@@ -467,7 +495,6 @@ for test_case in TEST_CASES:
         actual
     )
 
-
     print()
     print(
         "C FK expected:"
@@ -477,7 +504,6 @@ for test_case in TEST_CASES:
         expected
     )
 
-
     print()
 
     print(
@@ -485,27 +511,22 @@ for test_case in TEST_CASES:
         f"{max_rotation_error:.8f}"
     )
 
-
     print(
         "Max translation error:",
         f"{max_translation_error_mm:.6f} mm"
     )
 
-
     if passed:
-
         print(
             "Result: PASS"
         )
 
     else:
-
         print(
             "Result: FAIL"
         )
 
         all_passed = False
-
 
     print()
     print(
@@ -515,17 +536,15 @@ for test_case in TEST_CASES:
 
 
 # ==========================================================
-# 11. Final Result
+# Final Result
 # ==========================================================
 
 if all_passed:
-
     print(
         "FINAL RESULT: ALL FK TESTS PASSED"
     )
 
 else:
-
     print(
         "FINAL RESULT: FK CROSS VALIDATION FAILED"
     )

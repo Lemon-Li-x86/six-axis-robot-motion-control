@@ -7,9 +7,14 @@
 
 默认测试条件：
 
-持续时间：30 min
-目标发送频率：100 Hz
-理论发送帧数：约 180,000 frames
+持续时间：
+30 min
+
+目标发送频率：
+100 Hz
+
+理论发送 Frame 数：
+约 180,000
 
 测试内容：
 
@@ -19,12 +24,7 @@
 4. 统计 ACK Timeout；
 5. 查询测试前后 UART RX Drop Count；
 6. 统计实际运行时长和平均发送频率；
-7. 将最终测试结果保存为 JSON。
-
-协议编解码统一由 protocol_codec.py 提供。
-
-本测试属于 QEMU + TCP + FreeRTOS 仿真环境测试，
-不能直接等同于真实 Cortex-M4 硬件 UART 性能。
+7. 将最终结果保存为 JSON。
 """
 
 import argparse
@@ -48,16 +48,35 @@ from protocol_codec import (
 )
 
 
-DEFAULT_HOST = "127.0.0.1"
+# ==========================================================
+# Default Configuration
+# ==========================================================
 
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5555
 
+# 默认测试持续时间：
+#
+# 30 min
+# =
+# 1800 second。
 DEFAULT_DURATION_S = 30.0 * 60.0
 
+# 默认目标发送频率：
+#
+# 100 Frame / second。
 DEFAULT_RATE_HZ = 100.0
 
+# 单帧 ACK 最大等待时间：
+#
+# 0.05 second
+# =
+# 50 ms。
 DEFAULT_ACK_TIMEOUT_S = 0.05
 
+# 长时间测试状态打印周期：
+#
+# 60 second。
 DEFAULT_PROGRESS_INTERVAL_S = 60.0
 
 
@@ -69,12 +88,36 @@ def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
     """
-    使用 sequence 构造唯一 JOINT_STATE Payload。
+    使用 sequence 构造可区分的 JOINT_STATE Frame。
 
-    Payload 使用原始 int16 / 0.01° 单位，
-    便于 ACK 与发送数据逐帧匹配。
+    Args:
+        sequence:
+            当前测试 Frame Sequence。
+
+    Returns:
+        Tuple：
+
+        (
+            complete_frame,
+            payload,
+        )
+
+    Note:
+        Payload 使用原始 signed int16，
+        单位为 0.01 degree。
+
+        每个 Frame 使用不同 Payload，
+        便于与 JOINT_STATE_ACK 逐帧匹配。
     """
-
+    # 将 Base Value 控制在约：
+    #
+    # [-15000, 14999]
+    #
+    # 即约：
+    #
+    # [-150°, +149.99°]
+    #
+    # 避免 int16 范围溢出。
     base_value = (
         sequence % 30000
     ) - 15000
@@ -88,6 +131,9 @@ def build_joint_state_frame(
         base_value + 5,
     ]
 
+    # Little Endian：
+    #
+    # 6 × signed int16。
     payload = struct.pack(
         "<6h",
         *joints,
@@ -111,12 +157,22 @@ def settle_socket(
     timeout: float = 0.2,
 ) -> None:
     """
-    消费当前已经存在于 TCP 链路中的数据。
+    消费当前 TCP 链路中已经存在的数据。
 
-    用于测试阶段切换前，
-    避免旧 Frame 干扰后续统计。
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        timeout:
+            清理时间窗口，单位 second。
+
+    Note:
+        用于测试阶段切换前，
+        防止旧 Frame 干扰后续统计。
     """
-
     deadline = (
         time.perf_counter()
         + timeout
@@ -162,19 +218,34 @@ def query_rx_drop_count(
 ) -> int:
     """
     查询 UART Driver RX Drop Byte Count。
-    """
 
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+    Returns:
+        MCU 当前累计 RX Drop Byte Count。
+
+    Raises:
+        RuntimeError:
+            连续三次查询都没有获得
+            Diagnostics Response。
+    """
     request = (
         build_diagnostics_request()
     )
 
-    # 如果链路刚经历较高负载，
-    # 允许最多尝试 3 次查询。
+    # 链路刚经历较高负载时，
+    # 允许最多尝试三次 Diagnostics 查询。
     for _ in range(3):
         sock.sendall(
             request
         )
 
+        # 每次查询最多等待 1 second。
         deadline = (
             time.perf_counter()
             + 1.0
@@ -223,8 +294,7 @@ def query_rx_drop_count(
                 )
 
                 if (
-                    command
-                    == CMD_DIAGNOSTICS_RESPONSE
+                    command == CMD_DIAGNOSTICS_RESPONSE
                     and payload is not None
                 ):
                     value = (
@@ -252,10 +322,32 @@ def wait_for_matching_ack(
     timeout: float,
 ) -> bool:
     """
-    等待与当前 JOINT_STATE Payload
-    完全一致的 ACK。
-    """
+    等待与当前 JOINT_STATE Payload 完全一致的 ACK。
 
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        expected_payload:
+            当前发送 Frame 的原始 Payload。
+
+        timeout:
+            ACK 最大等待时间，单位 second。
+
+    Returns:
+        True：
+        在 Timeout 前收到匹配 ACK。
+
+        False：
+        超时仍未收到匹配 ACK。
+
+    Raises:
+        ConnectionError:
+            QEMU UART TCP 连接断开。
+    """
     deadline = (
         time.perf_counter()
         + timeout
@@ -306,10 +398,8 @@ def wait_for_matching_ack(
             )
 
             if (
-                command
-                == CMD_JOINT_STATE_ACK
-                and payload
-                == expected_payload
+                command == CMD_JOINT_STATE_ACK
+                and payload == expected_payload
             ):
                 return True
 
@@ -323,6 +413,21 @@ def wait_for_matching_ack(
 def save_result(
     result: dict,
 ) -> Path:
+    """
+    将 Soak Test 结果保存为 JSON。
+
+    Args:
+        result:
+            测试结果 Dictionary。
+
+    Returns:
+        最终 JSON 文件路径。
+
+    Note:
+        输出目录固定为：
+
+        docs/testing/results/
+    """
     current_file = (
         Path(__file__).resolve()
     )
@@ -383,6 +488,32 @@ def run_soak_test(
     ack_timeout_s: float,
     progress_interval_s: float,
 ) -> None:
+    """
+    执行完整 UART Communication Soak Test。
+
+    Args:
+        host:
+            QEMU UART TCP Host。
+
+        port:
+            QEMU UART TCP Port。
+
+        duration_s:
+            目标测试持续时间，单位 second。
+
+        rate_hz:
+            目标发送频率，单位 Frame / second。
+
+        ack_timeout_s:
+            单帧 ACK 最大等待时间，单位 second。
+
+        progress_interval_s:
+            状态输出间隔，单位 second。
+
+    Raises:
+        ValueError:
+            duration_s 或 rate_hz 不大于 0。
+    """
     if duration_s <= 0.0:
         raise ValueError(
             "duration 必须大于 0"
@@ -410,6 +541,8 @@ def run_soak_test(
         )
     )
 
+    # 禁用 Nagle Algorithm，
+    # 减少 TCP 自动聚合对周期发送的影响。
     sock.setsockopt(
         socket.IPPROTO_TCP,
         socket.TCP_NODELAY,
@@ -429,17 +562,13 @@ def run_soak_test(
             rx_buffer,
         )
 
-        drop_before = (
-            query_rx_drop_count(
-                sock,
-                rx_buffer,
-            )
+        drop_before = query_rx_drop_count(
+            sock,
+            rx_buffer,
         )
 
         sent_count = 0
-
         ack_count = 0
-
         timeout_count = 0
 
         start_time = (
@@ -536,11 +665,15 @@ def run_soak_test(
                 time.perf_counter()
             )
 
+            # 如果程序已经比目标 Schedule
+            # 落后超过一个完整 Period，
+            # 则重新从当前时间建立下一次发送点。
+            #
+            # 这样避免为了追赶旧 Schedule
+            # 瞬间连续发送大量补偿 Frame。
             if (
                 current_time
-                >
-                next_send_time
-                + period_s
+                > next_send_time + period_s
             ):
                 next_send_time = (
                     current_time
@@ -593,19 +726,22 @@ def run_soak_test(
             - start_time
         )
 
+        # 主循环结束后再消费少量残留数据，
+        # 避免随后 Diagnostics Request
+        # 被旧 Frame 干扰。
         settle_socket(
             sock,
             rx_buffer,
             timeout=0.2,
         )
 
-        drop_after = (
-            query_rx_drop_count(
-                sock,
-                rx_buffer,
-            )
+        drop_after = query_rx_drop_count(
+            sock,
+            rx_buffer,
         )
 
+        # MCU Counter 为 uint32_t，
+        # 使用无符号 32 bit 差值处理潜在 Wrap。
         drop_delta = (
             drop_after
             - drop_before
@@ -746,6 +882,14 @@ def run_soak_test(
 # ==========================================================
 
 def parse_arguments():
+    """
+    解析 Soak Test 命令行参数。
+
+    Returns:
+        argparse.Namespace：
+        包含 Host、Port、Duration、Rate、
+        ACK Timeout 和 Progress Interval。
+    """
     parser = argparse.ArgumentParser(
         description=(
             "QEMU Cortex-M4 UART "
@@ -812,6 +956,9 @@ def parse_arguments():
 # ==========================================================
 
 def main() -> None:
+    """
+    解析参数并启动 Communication Soak Test。
+    """
     arguments = (
         parse_arguments()
     )

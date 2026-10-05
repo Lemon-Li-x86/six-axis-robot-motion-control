@@ -1,61 +1,83 @@
+"""
+文件：qemu_uart_receiver.py
+
+用途：
+通过 TCP 连接 QEMU UART0，
+接收并解析 Cortex-M4 发送的六轴目标角 Frame。
+
+本脚本位于 PyBullet 仿真目录，
+主要用于验证 QEMU UART 输出和
+Python 仿真侧协议解析链路。
+"""
+
 import socket
 import struct
 import time
 
 
 # ==========================================================
-# TCP 配置
-#
-# QEMU 会把 Cortex-M4 的 UART0 映射到这个 TCP 端口。
+# TCP Configuration
 # ==========================================================
 
+# QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
 PORT = 5555
 
+# QEMU 尚未启动时的重连周期，单位 second。
+RECONNECT_DELAY_S = 0.5
+
+# 单次 TCP recv() 最大读取长度，单位 Byte。
+SOCKET_RECV_SIZE = 1024
+
 
 # ==========================================================
-# 协议定义
+# Protocol Definition
 # ==========================================================
 
 FRAME_HEADER = b"\xAA\x55"
 
 CMD_SET_JOINT_TARGETS = 0x01
 
+JOINT_COUNT = 6
+
+# 每个关节使用 signed int16。
+JOINT_PAYLOAD_LEN = JOINT_COUNT * 2
+
+# UART Raw Joint Angle：
+# 1 unit = 0.01 degree。
+JOINT_ANGLE_SCALE = 100.0
+
 
 # ==========================================================
-# 解析一帧数据
+# Frame Parser
 # ==========================================================
 
 def parse_frame(frame: bytes) -> None:
+    """
+    校验并解析一个 SET_JOINT_TARGETS Frame。
 
-    # ----------------------------------------------
-    # 1. 基本字段
-    # ----------------------------------------------
+    Args:
+        frame: 完整 UART 协议帧。
 
+    Note:
+        Checksum 不包含 AA 55 Header，
+        只计算 Command + Length + Payload。
+    """
     command = frame[2]
     payload_length = frame[3]
 
     payload = frame[
-        4 : 4 + payload_length
+        4:4 + payload_length
     ]
 
     received_checksum = frame[-1]
 
-
-    # ----------------------------------------------
-    # 2. 计算 checksum
-    #
-    # 不包含 AA 55，
-    # 对 Command + Length + Payload 求和并取低 8 位。
-    # ----------------------------------------------
-
     calculated_checksum = (
-        sum(frame[2:-1]) & 0xFF
+        sum(frame[2:-1])
+        & 0xFF
     )
 
-
     if received_checksum != calculated_checksum:
-
         print(
             "校验失败:",
             f"received=0x{received_checksum:02X}",
@@ -64,15 +86,8 @@ def parse_frame(frame: bytes) -> None:
 
         return
 
-
-    # ----------------------------------------------
-    # 3. 解析 SET_JOINT_TARGETS
-    # ----------------------------------------------
-
     if command == CMD_SET_JOINT_TARGETS:
-
-        if payload_length != 12:
-
+        if payload_length != JOINT_PAYLOAD_LEN:
             print(
                 "Payload 长度错误:",
                 payload_length
@@ -80,58 +95,50 @@ def parse_frame(frame: bytes) -> None:
 
             return
 
-
-        # <  表示 little-endian
-        # h  表示 signed int16
-        # 6h 表示六个 int16
+        # "<"  = Little Endian
+        # "6h" = 6 × signed int16
         raw_angles = struct.unpack(
             "<6h",
             payload
         )
 
-
-        # 协议单位为 0.01°
         angles_deg = [
-            value / 100.0
+            value / JOINT_ANGLE_SCALE
             for value in raw_angles
         ]
-
 
         print(
             "收到六轴目标角:",
             angles_deg
         )
 
-
     else:
-
         print(
             f"未知命令: 0x{command:02X}"
         )
 
 
 # ==========================================================
-# 主程序
+# TCP Receiver
 # ==========================================================
 
-def main():
+def main() -> None:
+    """
+    持续连接 QEMU UART TCP Server 并解析数据流。
 
+    TCP 可能出现拆包和粘包，
+    因此所有数据先进入 bytearray Buffer，
+    再按协议 Frame Length 提取。
+    """
     sock = socket.socket(
         socket.AF_INET,
         socket.SOCK_STREAM
     )
 
+    print("等待连接 QEMU UART...")
 
-    print(
-        f"等待连接 QEMU UART..."
-    )
-
-
-    # QEMU 可能还没启动，因此循环尝试连接
     while True:
-
         try:
-
             sock.connect(
                 (HOST, PORT)
             )
@@ -139,85 +146,58 @@ def main():
             break
 
         except ConnectionRefusedError:
-
-            time.sleep(0.5)
-
+            time.sleep(
+                RECONNECT_DELAY_S
+            )
 
     print(
-        f"已连接到 QEMU UART：{HOST}:{PORT}"
+        f"已连接到 QEMU UART："
+        f"{HOST}:{PORT}"
     )
 
-
-    # 用于处理 TCP 拆包 / 粘包
     buffer = bytearray()
 
-
     try:
-
         while True:
-
-            data = sock.recv(1024)
+            data = sock.recv(
+                SOCKET_RECV_SIZE
+            )
 
             if not data:
-
                 print(
                     "QEMU 已断开连接。"
                 )
 
                 break
 
-
             buffer.extend(data)
 
-
-            # ------------------------------------------
-            # 一个 recv() 可能收到：
+            # 一个 recv() 可能包含：
             #
-            # 半帧
-            # 一帧
-            # 多帧
-            #
-            # 所以必须使用缓冲区持续解析。
-            # ------------------------------------------
-
+            # 1. 半个 Frame；
+            # 2. 一个完整 Frame；
+            # 3. 多个连续 Frame。
             while True:
-
-                # 找帧头 AA 55
                 start = buffer.find(
                     FRAME_HEADER
                 )
 
-
                 if start < 0:
-
-                    # 没找到有效帧头，
-                    # 清空当前无效数据。
+                    # 当前 Buffer 中没有有效 Header。
                     buffer.clear()
                     break
 
-
-                # 丢弃帧头前面的无效数据
                 if start > 0:
-
+                    # 丢弃 Header 之前的无效数据。
                     del buffer[:start]
 
-
                 # 至少需要：
-                # AA 55 CMD LEN
+                # Header(2) + Command(1) + Length(1)。
                 if len(buffer) < 4:
                     break
 
-
                 payload_length = buffer[3]
 
-
-                # 总长度：
-                #
-                # Header 2
-                # Command 1
-                # Length 1
-                # Payload N
-                # Checksum 1
                 total_length = (
                     2
                     + 1
@@ -226,36 +206,29 @@ def main():
                     + 1
                 )
 
-
                 if len(buffer) < total_length:
                     break
 
-
-                # 取出完整一帧
                 frame = bytes(
                     buffer[:total_length]
                 )
 
                 del buffer[:total_length]
 
-
                 print(
                     "RX:",
                     frame.hex(" ").upper()
                 )
 
-
-                parse_frame(frame)
-
+                parse_frame(
+                    frame
+                )
 
     except KeyboardInterrupt:
-
         print()
         print("接收程序停止。")
 
-
     finally:
-
         sock.close()
 
 

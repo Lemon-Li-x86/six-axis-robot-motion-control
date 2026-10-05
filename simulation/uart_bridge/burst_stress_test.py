@@ -3,35 +3,7 @@
 
 用途：
 对当前 QEMU Cortex-M4 UART 接收链路
-进行 Burst 压力测试。
-
-测试方式：
-
-1. 构造大量完整 JOINT_STATE 帧；
-2. 将所有帧拼接成一个大 bytes；
-3. 使用一次 sendall() 尽可能快地写入 QEMU TCP UART；
-4. 统计最终收到多少匹配的 JOINT_STATE_ACK；
-5. 测试前后查询 MCU Diagnostics；
-6. 计算 UART Driver Ring Buffer 新增丢字节数量。
-
-协议编解码统一由 protocol_codec.py 提供。
-
-重点观察：
-
-ACK Lost
-RX Drop Bytes
-
-RX Drop Bytes 表示 UART ISR
-因 Ring Buffer 已满无法写入而丢失的字节数量。
-
-它不是丢帧数。
-
-本测试属于：
-
-QEMU + TCP + FreeRTOS
-
-仿真环境压力测试，
-不等同于真实 Cortex-M4 硬件吞吐能力。
+执行 Burst 压力测试。
 """
 
 import select
@@ -52,11 +24,11 @@ from protocol_codec import (
 
 
 # ==========================================================
-# TCP
+# TCP Configuration
 # ==========================================================
 
+# QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
-
 PORT = 5555
 
 
@@ -64,6 +36,11 @@ PORT = 5555
 # Burst Configuration
 # ==========================================================
 
+# 每轮一次性发送的 Frame 数量。
+#
+# 从较小 Burst 开始逐级提高，
+# 用于观察 ACK Loss 和 RX Drop
+# 在不同突发规模下的变化。
 BURST_FRAME_COUNTS = [
     10,
     100,
@@ -72,8 +49,11 @@ BURST_FRAME_COUNTS = [
     5000,
 ]
 
+# 一次 Burst 发送完成后，
+# 等待剩余 ACK 的最长时间，单位 second。
 ACK_TIMEOUT = 10.0
 
+# 不同 Burst Test 之间的间隔，单位 second。
 TEST_GAP = 0.5
 
 
@@ -85,9 +65,30 @@ def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
     """
-    使用 sequence 构造唯一 JOINT_STATE Payload。
-    """
+    使用 sequence 构造可区分的 JOINT_STATE Frame。
 
+    Args:
+        sequence:
+            测试序号。
+
+    Returns:
+        Tuple：
+
+        (
+            complete_frame,
+            payload,
+        )
+
+    Note:
+        Payload 使用：
+
+        6 × signed int16
+
+        Wire Format 为 Little Endian。
+
+        不同 sequence 产生不同 Payload，
+        便于将 ACK 与发送 Frame 匹配。
+    """
     value = (
         sequence % 30000
     )
@@ -123,6 +124,23 @@ def settle_socket(
     rx_buffer: bytearray,
     timeout: float = 0.2,
 ) -> None:
+    """
+    消费测试开始前已经存在于 TCP 链路中的数据。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        timeout:
+            清理时间窗口，单位 second。
+
+    Note:
+        本函数只消费旧 Frame，
+        防止上一阶段残余响应影响当前 Burst 统计。
+    """
     deadline = (
         time.perf_counter()
         + timeout
@@ -166,6 +184,30 @@ def query_rx_drop_count(
     sock: socket.socket,
     rx_buffer: bytearray,
 ) -> int:
+    """
+    查询 MCU UART Driver RX Drop Byte Count。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+    Returns:
+        MCU 当前累计 RX Drop Byte Count。
+
+    Raises:
+        RuntimeError:
+            连续三次查询都没有获得合法
+            Diagnostics Response。
+
+    Note:
+        每次查询最多等待 1 second。
+
+        高负载后允许最多尝试三次，
+        避免旧 ACK 或链路积压影响 Diagnostics 查询。
+    """
     request = (
         build_diagnostics_request()
     )
@@ -223,8 +265,7 @@ def query_rx_drop_count(
                 )
 
                 if (
-                    command
-                    == CMD_DIAGNOSTICS_RESPONSE
+                    command == CMD_DIAGNOSTICS_RESPONSE
                     and payload is not None
                 ):
                     value = (
@@ -250,6 +291,28 @@ def collect_burst_acks(
     rx_buffer: bytearray,
     expected_payloads: set[bytes],
 ) -> set[bytes]:
+    """
+    收集当前 Burst 对应的 JOINT_STATE_ACK。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        expected_payloads:
+            当前 Burst 所有预期 ACK Payload。
+
+    Returns:
+        实际收到的 ACK Payload Set。
+
+    Note:
+        ACK 收集最长持续 ACK_TIMEOUT second。
+
+        如果全部 Expected Payload
+        已经收到，则提前结束。
+    """
     received_payloads = set()
 
     deadline = (
@@ -261,10 +324,7 @@ def collect_burst_acks(
         time.perf_counter()
         < deadline
     ):
-        if (
-            expected_payloads
-            <= received_payloads
-        ):
+        if expected_payloads <= received_payloads:
             break
 
         remaining = (
@@ -285,6 +345,8 @@ def collect_burst_acks(
         if not readable:
             continue
 
+        # Burst 后返回数据可能较多，
+        # 因此这里使用较大的单次读取 Buffer。
         data = sock.recv(
             16384
         )
@@ -306,8 +368,7 @@ def collect_burst_acks(
             )
 
             if (
-                command
-                == CMD_JOINT_STATE_ACK
+                command == CMD_JOINT_STATE_ACK
                 and payload is not None
             ):
                 received_payloads.add(
@@ -326,21 +387,39 @@ def run_burst_test(
     rx_buffer: bytearray,
     frame_count: int,
     sequence_start: int,
-):
+) -> dict:
+    """
+    执行一次指定规模的 Burst Test。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议接收 Buffer。
+
+        frame_count:
+            当前 Burst 包含的 Frame 数量。
+
+        sequence_start:
+            当前测试的起始 Sequence。
+
+    Returns:
+        包含 Burst Size、发送耗时、
+        ACK 成功数、丢失数和 RX Drop
+        等指标的 Dictionary。
+    """
     settle_socket(
         sock,
         rx_buffer,
     )
 
-    drop_before = (
-        query_rx_drop_count(
-            sock,
-            rx_buffer,
-        )
+    drop_before = query_rx_drop_count(
+        sock,
+        rx_buffer,
     )
 
     frames = []
-
     expected_payloads = set()
 
     for index in range(
@@ -361,6 +440,10 @@ def run_burst_test(
             payload
         )
 
+    # 将所有协议帧合并成一次 TCP sendall()。
+    #
+    # 目的是尽可能制造突发输入，
+    # 而不是按照固定周期逐帧发送。
     burst_data = b"".join(
         frames
     )
@@ -404,8 +487,7 @@ def run_burst_test(
 
     matched = (
         expected_payloads
-        &
-        received_payloads
+        & received_payloads
     )
 
     success_count = len(
@@ -423,15 +505,15 @@ def run_burst_test(
         * 100.0
     )
 
-    drop_after = (
-        query_rx_drop_count(
-            sock,
-            rx_buffer,
-        )
+    drop_after = query_rx_drop_count(
+        sock,
+        rx_buffer,
     )
 
-    # uint32_t Counter 理论上可能 Wrap，
-    # 因此按照 32 bit 无符号差值计算。
+    # MCU Counter 为 uint32_t。
+    #
+    # 即使理论上发生 32 bit Wrap，
+    # 这里仍可以得到正确无符号差值。
     drop_delta = (
         drop_after
         - drop_before
@@ -456,6 +538,9 @@ def run_burst_test(
 # ==========================================================
 
 def main() -> None:
+    """
+    连接 QEMU UART 并依次执行所有 Burst Test。
+    """
     print(
         "正在连接 QEMU UART："
         f"{HOST}:{PORT}"
@@ -468,6 +553,8 @@ def main() -> None:
         )
     )
 
+    # 禁止 Nagle Algorithm，
+    # 避免额外 TCP 聚合影响测试行为。
     sock.setsockopt(
         socket.IPPROTO_TCP,
         socket.TCP_NODELAY,
@@ -493,6 +580,8 @@ def main() -> None:
         )
         print()
 
+        # 各测试使用不同 Sequence 区域，
+        # 减少不同 Burst 之间 Payload 重复。
         sequence_start = 10000
 
         results = []

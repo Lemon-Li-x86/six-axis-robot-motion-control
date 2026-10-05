@@ -2,21 +2,11 @@
 文件：parameter_config_test.py
 
 用途：
-验证 Parameter Configuration 通信链路。
+验证 Runtime Parameter Configuration 通信链路。
 
-测试内容：
-1. 测量默认 ProtocolTX 基线周期；
-2. 设置 ProtocolTX Period = 200 ms；
-3. 验证 MCU 返回 PARAMETER_ACK；
-4. 验证新周期约为基线的 20%；
-5. 恢复 ProtocolTX Period = 1000 ms；
-6. 验证周期恢复到原基线。
+当前测试参数：
 
-注意：
-QEMU Guest 时间与 Host Wall Clock
-不要求严格 1:1。
-
-因此本测试以相对周期变化为主要判据。
+ProtocolTX Period
 """
 
 import select
@@ -35,10 +25,29 @@ from protocol_codec import (
 )
 
 
+# ==========================================================
+# TCP Configuration
+# ==========================================================
+
 HOST = "127.0.0.1"
 PORT = 5555
 
+# Parameter ACK 最大等待时间，单位 second。
 ACK_TIMEOUT_S = 2.0
+
+
+# ==========================================================
+# Test Configuration
+# ==========================================================
+
+# 默认 ProtocolTX Period。
+DEFAULT_PROTOCOL_TX_PERIOD_MS = 1000
+
+# 测试期间使用的快速发送周期。
+FAST_PROTOCOL_TX_PERIOD_MS = 200
+
+# 周期比例允许 ±15% 相对误差。
+RATIO_TOLERANCE = 0.15
 
 
 # ==========================================================
@@ -50,32 +59,63 @@ def receive_frames(
     rx_buffer: bytearray,
     timeout_s: float,
 ) -> list[bytes]:
+    """
+    在指定时间窗口内接收所有完整 Protocol Frame。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议 Buffer。
+
+        timeout_s:
+            最大接收时间，单位 second。
+
+    Returns:
+        当前窗口内提取出的完整 Frame List。
+    """
     frames = []
 
-    deadline = time.monotonic() + timeout_s
+    deadline = (
+        time.monotonic()
+        + timeout_s
+    )
 
     while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
+        remaining = (
+            deadline
+            - time.monotonic()
+        )
 
         readable, _, _ = select.select(
             [sock],
             [],
             [],
-            min(remaining, 0.05),
+            min(
+                remaining,
+                0.05,
+            ),
         )
 
         if not readable:
             continue
 
-        data = sock.recv(4096)
+        data = sock.recv(
+            4096
+        )
 
         if not data:
             break
 
-        rx_buffer.extend(data)
+        rx_buffer.extend(
+            data
+        )
 
         frames.extend(
-            extract_frames(rx_buffer)
+            extract_frames(
+                rx_buffer
+            )
         )
 
     return frames
@@ -91,10 +131,42 @@ def wait_for_parameter_ack(
     expected_parameter_id: int,
     timeout_s: float,
 ):
-    deadline = time.monotonic() + timeout_s
+    """
+    等待指定 Parameter ID 的 PARAMETER_ACK。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议 Buffer。
+
+        expected_parameter_id:
+            预期 Parameter ID。
+
+        timeout_s:
+            最大等待时间，单位 second。
+
+    Returns:
+        成功时：
+
+        (
+            status,
+            effective_value,
+        )
+
+        Timeout 或无合法 ACK 时返回 None。
+    """
+    deadline = (
+        time.monotonic()
+        + timeout_s
+    )
 
     while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
+        remaining = (
+            deadline
+            - time.monotonic()
+        )
 
         readable, _, _ = select.select(
             [sock],
@@ -106,19 +178,25 @@ def wait_for_parameter_ack(
         if not readable:
             break
 
-        data = sock.recv(4096)
+        data = sock.recv(
+            4096
+        )
 
         if not data:
             break
 
-        rx_buffer.extend(data)
+        rx_buffer.extend(
+            data
+        )
 
         frames = extract_frames(
             rx_buffer
         )
 
         for frame in frames:
-            command, payload = parse_frame(frame)
+            command, payload = parse_frame(
+                frame
+            )
 
             if command != CMD_PARAMETER_ACK:
                 continue
@@ -130,10 +208,17 @@ def wait_for_parameter_ack(
             if result is None:
                 continue
 
-            parameter_id, status, effective_value = result
+            (
+                parameter_id,
+                status,
+                effective_value,
+            ) = result
 
             if parameter_id == expected_parameter_id:
-                return status, effective_value
+                return (
+                    status,
+                    effective_value,
+                )
 
     return None
 
@@ -143,6 +228,27 @@ def set_protocol_tx_period(
     rx_buffer: bytearray,
     period_ms: int,
 ) -> bool:
+    """
+    设置 MCU ProtocolTX Period 并验证 ACK。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议 Buffer。
+
+        period_ms:
+            目标 ProtocolTX Period，单位 ms。
+
+    Returns:
+        True：
+        MCU 接受配置且 Effective Value 正确。
+
+        False：
+        ACK Timeout、配置被拒绝或
+        Effective Value 不匹配。
+    """
     frame = build_set_parameter_frame(
         PARAM_PROTOCOL_TX_PERIOD_MS,
         period_ms,
@@ -153,7 +259,9 @@ def set_protocol_tx_period(
         f"{period_ms} ms"
     )
 
-    sock.sendall(frame)
+    sock.sendall(
+        frame
+    )
 
     result = wait_for_parameter_ack(
         sock,
@@ -166,6 +274,7 @@ def set_protocol_tx_period(
         print(
             "[FAIL] 未收到 0x85 PARAMETER_ACK"
         )
+
         return False
 
     status, effective_value = result
@@ -179,12 +288,14 @@ def set_protocol_tx_period(
         print(
             "[FAIL] MCU 拒绝参数配置"
         )
+
         return False
 
     if effective_value != period_ms:
         print(
             "[FAIL] ACK Effective Value 不匹配"
         )
+
         return False
 
     print(
@@ -204,15 +315,46 @@ def measure_protocol_tx_period(
     sample_count: int,
     timeout_s: float,
 ):
+    """
+    测量 MCU 周期发送 CMD_SET_JOINT_TARGETS 的 Host 间隔。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        rx_buffer:
+            持续使用的协议 Buffer。
+
+        sample_count:
+            需要记录的 Frame Timestamp 数量。
+
+        timeout_s:
+            最大采样时间，单位 second。
+
+    Returns:
+        相邻 Frame 间隔 List，单位 ms。
+
+        少于三个 Timestamp 时返回 None。
+
+    Note:
+        返回的是 Host Wall Clock 观测间隔，
+        主要用于比较配置前后的相对变化。
+    """
     timestamps = []
 
-    deadline = time.monotonic() + timeout_s
+    deadline = (
+        time.monotonic()
+        + timeout_s
+    )
 
     while (
         len(timestamps) < sample_count
         and time.monotonic() < deadline
     ):
-        remaining = deadline - time.monotonic()
+        remaining = (
+            deadline
+            - time.monotonic()
+        )
 
         readable, _, _ = select.select(
             [sock],
@@ -224,19 +366,25 @@ def measure_protocol_tx_period(
         if not readable:
             break
 
-        data = sock.recv(4096)
+        data = sock.recv(
+            4096
+        )
 
         if not data:
             break
 
-        rx_buffer.extend(data)
+        rx_buffer.extend(
+            data
+        )
 
         frames = extract_frames(
             rx_buffer
         )
 
         for frame in frames:
-            command, _ = parse_frame(frame)
+            command, _ = parse_frame(
+                frame
+            )
 
             if command == CMD_SET_JOINT_TARGETS:
                 timestamps.append(
@@ -265,8 +413,22 @@ def measure_protocol_tx_period(
 def get_stable_median(
     intervals: list[float],
 ) -> float:
-    # 参数切换时可能正处于旧的一次 Delay 中，
-    # 因此忽略前两个区间。
+    """
+    获取较稳定的 Period Median。
+
+    Args:
+        intervals:
+            相邻 Frame 间隔，单位 ms。
+
+    Returns:
+        Median Period，单位 ms。
+
+    Note:
+        参数刚切换时，
+        MCU 可能仍处于旧 Period 的 Delay 中。
+
+        因此优先忽略前两个 Interval。
+    """
     stable_intervals = intervals[2:]
 
     if not stable_intervals:
@@ -280,10 +442,20 @@ def get_stable_median(
 def print_intervals(
     intervals: list[float],
 ) -> None:
+    """
+    打印测得的 ProtocolTX Period List。
+
+    Args:
+        intervals:
+            Period List，单位 ms。
+    """
     print(
         "测得周期：",
         [
-            round(value, 1)
+            round(
+                value,
+                1
+            )
             for value in intervals
         ],
         "ms"
@@ -291,17 +463,23 @@ def print_intervals(
 
 
 # ==========================================================
-# Main
+# Entry
 # ==========================================================
 
-def main():
+def main() -> None:
+    """
+    执行完整 Parameter Configuration Test。
+    """
     print(
         f"正在连接 QEMU UART："
         f"{HOST}:{PORT}"
     )
 
     sock = socket.create_connection(
-        (HOST, PORT)
+        (
+            HOST,
+            PORT,
+        )
     )
 
     sock.setsockopt(
@@ -319,7 +497,7 @@ def main():
     total_count = 0
 
     try:
-        # 清理连接刚建立时已经在路上的数据。
+        # 清理连接建立前后已经在路上的旧数据。
         receive_frames(
             sock,
             rx_buffer,
@@ -328,7 +506,7 @@ def main():
 
         # ==================================================
         # Test 1
-        # 测量默认基线
+        # Default Baseline
         # ==================================================
 
         total_count += 1
@@ -374,7 +552,7 @@ def main():
 
         # ==================================================
         # Test 2
-        # 设置 200 ms
+        # Set 200 ms
         # ==================================================
 
         total_count += 1
@@ -386,7 +564,7 @@ def main():
         if set_protocol_tx_period(
             sock,
             rx_buffer,
-            200,
+            FAST_PROTOCOL_TX_PERIOD_MS,
         ):
             passed_count += 1
 
@@ -394,7 +572,7 @@ def main():
 
         # ==================================================
         # Test 3
-        # 验证相对比例
+        # Relative Period
         # ==================================================
 
         total_count += 1
@@ -414,6 +592,7 @@ def main():
             print(
                 "[FAIL] 无法测得配置后的周期"
             )
+
         else:
             print_intervals(
                 fast_intervals
@@ -429,8 +608,8 @@ def main():
             )
 
             expected_ratio = (
-                200.0
-                / 1000.0
+                FAST_PROTOCOL_TX_PERIOD_MS
+                / DEFAULT_PROTOCOL_TX_PERIOD_MS
             )
 
             print(
@@ -448,13 +627,14 @@ def main():
                 f"{expected_ratio:.3f}"
             )
 
-            # 允许 ±15% 相对误差。
             lower_bound = (
-                expected_ratio * 0.85
+                expected_ratio
+                * (1.0 - RATIO_TOLERANCE)
             )
 
             upper_bound = (
-                expected_ratio * 1.15
+                expected_ratio
+                * (1.0 + RATIO_TOLERANCE)
             )
 
             if (
@@ -467,6 +647,7 @@ def main():
                 )
 
                 passed_count += 1
+
             else:
                 print(
                     "[FAIL] 周期变化比例不符合配置"
@@ -476,7 +657,7 @@ def main():
 
         # ==================================================
         # Test 4
-        # 恢复 1000 ms
+        # Restore 1000 ms
         # ==================================================
 
         total_count += 1
@@ -488,7 +669,7 @@ def main():
         if set_protocol_tx_period(
             sock,
             rx_buffer,
-            1000,
+            DEFAULT_PROTOCOL_TX_PERIOD_MS,
         ):
             passed_count += 1
 
@@ -496,7 +677,7 @@ def main():
 
         # ==================================================
         # Test 5
-        # 验证恢复
+        # Verify Restore
         # ==================================================
 
         total_count += 1
@@ -516,6 +697,7 @@ def main():
             print(
                 "[FAIL] 无法测得恢复后的周期"
             )
+
         else:
             print_intervals(
                 restored_intervals
@@ -540,12 +722,27 @@ def main():
                 f"{restored_ratio:.3f}"
             )
 
-            if 0.85 <= restored_ratio <= 1.15:
+            lower_bound = (
+                1.0
+                - RATIO_TOLERANCE
+            )
+
+            upper_bound = (
+                1.0
+                + RATIO_TOLERANCE
+            )
+
+            if (
+                lower_bound
+                <= restored_ratio
+                <= upper_bound
+            ):
                 print(
                     "[PASS] ProtocolTX 周期恢复到原基线"
                 )
 
                 passed_count += 1
+
             else:
                 print(
                     "[FAIL] 恢复后的周期偏离原基线"

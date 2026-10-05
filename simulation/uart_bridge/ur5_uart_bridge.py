@@ -10,17 +10,19 @@
     <->
     PyBullet UR5
 
-本文件只负责：
+本模块负责：
 
-1. TCP 连接；
+1. QEMU UART TCP 连接；
 2. PyBullet UR5 生命周期；
-3. Protocol Frame 的 Application 处理；
-4. 目标关节角下发；
-5. 实际关节状态反馈。
+3. Protocol Frame Application Handling；
+4. 六轴目标位置下发；
+5. PyBullet 实际关节状态读取；
+6. 周期发送 JOINT_STATE。
 
 协议编解码统一由 protocol_codec.py 提供。
 
-角度规范化和连续角恢复统一由 angle_utils.py 提供。
+角度规范化和连续角恢复统一由
+angle_utils.py 提供。
 """
 
 import math
@@ -49,27 +51,38 @@ from protocol_codec import (
 
 
 # ==========================================================
-# TCP
+# TCP Configuration
 # ==========================================================
 
+# QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
-
 PORT = 5555
 
-
-# ==========================================================
-# Simulation
-# ==========================================================
-
-STATE_TX_INTERVAL_S = 0.2
-
-STATE_PRINT_INTERVAL_S = 1.0
-
-SIMULATION_STEP_HZ = 240.0
-
+# QEMU 尚未启动时的重连间隔，单位 second。
 SOCKET_RETRY_INTERVAL_S = 0.5
 
 
+# ==========================================================
+# Simulation Timing
+# ==========================================================
+
+# Python -> MCU Joint State 发送周期，单位 second。
+#
+# 0.2 s = 5 Hz。
+STATE_TX_INTERVAL_S = 0.2
+
+# Terminal 状态打印周期，单位 second。
+STATE_PRINT_INTERVAL_S = 1.0
+
+# PyBullet 基础仿真循环频率，单位 Hz。
+SIMULATION_STEP_HZ = 240.0
+
+
+# ==========================================================
+# UR5 Joint Configuration
+# ==========================================================
+
+# 顺序必须与 Cortex-M4 六轴 Joint Array 一致。
 UR5_JOINT_NAMES = [
     "shoulder_pan_joint",
     "shoulder_lift_joint",
@@ -79,7 +92,12 @@ UR5_JOINT_NAMES = [
     "wrist_3_joint",
 ]
 
-
+# PyBullet Position Control 最大 Force。
+#
+# 前三轴使用较大输出力，
+# Wrist 三轴使用较小输出力。
+#
+# 顺序与 UR5_JOINT_NAMES 一一对应。
 UR5_JOINT_FORCES = [
     150,
     150,
@@ -95,6 +113,12 @@ UR5_JOINT_FORCES = [
 # ==========================================================
 
 def get_ur5_path() -> Path:
+    """
+    获取项目内 UR5 URDF 的绝对路径。
+
+    Returns:
+        UR5 ur5.urdf Path。
+    """
     current_file = Path(
         __file__
     ).resolve()
@@ -121,6 +145,24 @@ def connect_qemu(
     host: str,
     port: int,
 ) -> socket.socket:
+    """
+    持续尝试连接 QEMU UART TCP Server。
+
+    Args:
+        host:
+            TCP Host。
+
+        port:
+            TCP Port。
+
+    Returns:
+        已建立连接的 socket。
+
+    Note:
+        QEMU 尚未监听时，
+        每 SOCKET_RETRY_INTERVAL_S
+        秒重新连接一次。
+    """
     print()
 
     print(
@@ -161,6 +203,26 @@ def connect_qemu(
 def start_pybullet(
     ur5_path: Path,
 ):
+    """
+    创建 PyBullet GUI 并加载 UR5。
+
+    Args:
+        ur5_path:
+            UR5 URDF 路径。
+
+    Returns:
+        Tuple：
+
+        (
+            robot_id,
+            controlled_joint_indices,
+        )
+
+    Raises:
+        RuntimeError:
+            PyBullet GUI 启动失败，
+            或 UR5 缺少需要控制的 Joint。
+    """
     physics_client = p.connect(
         p.GUI
     )
@@ -174,6 +236,7 @@ def start_pybullet(
         pybullet_data.getDataPath()
     )
 
+    # 地球标准重力加速度，单位 m/s^2。
     p.setGravity(
         0,
         0,
@@ -199,11 +262,14 @@ def start_pybullet(
         str(
             ur5_path
         ),
+
+        # UR5 Base 与 World Origin 重合。
         basePosition=[
             0,
             0,
             0,
         ],
+
         useFixedBase=True,
     )
 
@@ -278,6 +344,23 @@ def set_joint_targets(
     controlled_joint_indices: list[int],
     target_positions_deg: list[float],
 ) -> None:
+    """
+    将六轴连续目标角发送给 PyBullet Position Controller。
+
+    Args:
+        robot_id:
+            PyBullet UR5 Body ID。
+
+        controlled_joint_indices:
+            六个主动关节的 PyBullet Index。
+
+        target_positions_deg:
+            六轴连续目标角，单位 degree。
+
+    Note:
+        PyBullet Position Control 使用 radian，
+        因此发送前统一进行 degree -> radian 转换。
+    """
     target_positions_rad = [
         math.radians(
             angle_deg
@@ -298,6 +381,19 @@ def get_joint_positions_deg(
     robot_id: int,
     controlled_joint_indices: list[int],
 ) -> list[float]:
+    """
+    读取 PyBullet 六轴实际关节角。
+
+    Args:
+        robot_id:
+            PyBullet UR5 Body ID。
+
+        controlled_joint_indices:
+            六个主动关节 Index。
+
+    Returns:
+        六轴实际关节角，单位 degree。
+    """
     positions_deg = []
 
     for joint_index in controlled_joint_indices:
@@ -306,6 +402,8 @@ def get_joint_positions_deg(
             joint_index
         )
 
+        # getJointState()[0]
+        # 为当前 Joint Position，单位 radian。
         positions_deg.append(
             math.degrees(
                 joint_state[0]
@@ -323,6 +421,29 @@ def handle_received_frame(
     frame: bytes,
     target_positions_deg: list[float],
 ) -> list[float]:
+    """
+    处理 MCU -> Python 的 Joint Protocol Frame。
+
+    Args:
+        frame:
+            完整协议帧。
+
+        target_positions_deg:
+            当前 PyBullet 连续目标角，
+            单位 degree。
+
+    Returns:
+        更新后的连续目标角。
+
+    Note:
+        CMD_SET_JOINT_TARGETS 中携带的是
+        Canonical Angle。
+
+        为避免跨越 ±180° 时产生
+        约 360° 的错误跳变，
+        这里使用当前 Continuous Target
+        作为 reference 进行 unwrap。
+    """
     command, angles_deg = (
         parse_joint_frame(
             frame
@@ -330,8 +451,7 @@ def handle_received_frame(
     )
 
     if (
-        command
-        == CMD_SET_JOINT_TARGETS
+        command == CMD_SET_JOINT_TARGETS
         and angles_deg is not None
     ):
         print(
@@ -356,15 +476,15 @@ def handle_received_frame(
                     value,
                     2
                 )
-                for value in new_target_positions_deg
+                for value
+                in new_target_positions_deg
             ]
         )
 
         return new_target_positions_deg
 
     if (
-        command
-        == CMD_JOINT_STATE_ACK
+        command == CMD_JOINT_STATE_ACK
         and angles_deg is not None
     ):
         print(
@@ -384,6 +504,29 @@ def run_bridge(
     robot_id: int,
     controlled_joint_indices: list[int],
 ) -> None:
+    """
+    运行 QEMU UART <-> PyBullet 双向控制循环。
+
+    Args:
+        sock:
+            已连接 QEMU UART TCP Socket。
+
+        robot_id:
+            PyBullet UR5 Body ID。
+
+        controlled_joint_indices:
+            六轴主动关节 Index。
+
+    Note:
+        主循环依次执行：
+
+        A. 非阻塞检查 QEMU RX；
+        B. 提取完整 Protocol Frame；
+        C. 更新 UR5 Position Target；
+        D. 推进 PyBullet；
+        E. 周期发送 Joint State；
+        F. 控制仿真循环频率。
+    """
     target_positions_deg = [
         0.0
     ] * JOINT_COUNT
@@ -412,7 +555,7 @@ def run_bridge(
 
     while True:
         # --------------------------------------------------
-        # A. 接收 QEMU UART TCP 数据
+        # A. QEMU UART RX
         # --------------------------------------------------
 
         readable, _, _ = select.select(
@@ -423,6 +566,7 @@ def run_bridge(
         )
 
         if readable:
+            # 单次读取最多 1024 Byte。
             data = sock.recv(
                 1024
             )
@@ -439,7 +583,7 @@ def run_bridge(
             )
 
         # --------------------------------------------------
-        # B. 提取并处理完整协议帧
+        # B. Protocol Frame Extraction
         # --------------------------------------------------
 
         frames = extract_frames(
@@ -455,7 +599,7 @@ def run_bridge(
             )
 
         # --------------------------------------------------
-        # C. 控制 UR5
+        # C. UR5 Position Control
         # --------------------------------------------------
 
         set_joint_targets(
@@ -465,13 +609,13 @@ def run_bridge(
         )
 
         # --------------------------------------------------
-        # D. 推进物理仿真
+        # D. Physics Step
         # --------------------------------------------------
 
         p.stepSimulation()
 
         # --------------------------------------------------
-        # E. 周期返回 Joint State
+        # E. Joint State TX
         # --------------------------------------------------
 
         now = time.monotonic()
@@ -487,6 +631,10 @@ def run_bridge(
                 )
             )
 
+            # UART Wire Format 只发送 Canonical Angle，
+            # 连续多圈状态在发送前重新映射到：
+            #
+            # [-180°, 180°)。
             canonical_state_angles_deg = [
                 normalize_angle_deg(
                     angle_deg
@@ -526,7 +674,7 @@ def run_bridge(
                 last_state_print_time = now
 
         # --------------------------------------------------
-        # F. 约 240 Hz 仿真
+        # F. Simulation Rate
         # --------------------------------------------------
 
         time.sleep(
@@ -539,6 +687,9 @@ def run_bridge(
 # ==========================================================
 
 def main() -> None:
+    """
+    启动完整 QEMU UART <-> PyBullet Bridge。
+    """
     ur5_path = get_ur5_path()
 
     print(
