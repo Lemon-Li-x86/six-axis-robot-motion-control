@@ -4,6 +4,12 @@
  * 用途：
  * 定义 Kinematics Module 内部共享接口。
  *
+ * 本文件只允许：
+ *
+ * Kinematics Module Implementation
+ *
+ * 使用。
+ *
  * Public Application Code
  * 不应 include 本文件。
  */
@@ -38,20 +44,51 @@
  * Shared Math Helpers
  * ========================================================= */
 
-robot_real_t
-kinematics_abs_real(
+/**
+ * @brief 计算单精度浮点数绝对值。
+ *
+ * @param[in] value
+ * 输入值。
+ *
+ * @return
+ * value 的非负绝对值。
+ */
+robot_real_t kinematics_abs_real(
     robot_real_t value
 );
 
 
-robot_real_t
-kinematics_normalize_angle_rad(
+/**
+ * @brief 将 Radian Angle 规范化到 [-pi, pi)。
+ *
+ * @param[in] angle_rad
+ * 输入角度，单位 radian。
+ *
+ * @return
+ * Canonical Radian Angle，
+ * 范围 [-pi, pi)。
+ */
+robot_real_t kinematics_normalize_angle_rad(
     robot_real_t angle_rad
 );
 
 
-robot_real_t
-kinematics_sqrt_nonnegative(
+/**
+ * @brief 计算非负输入的平方根。
+ *
+ * @param[in] value
+ * 输入值。
+ *
+ * @return
+ * value > 0 时返回平方根。
+ *
+ * value <= 0 时返回 0。
+ *
+ * @note
+ * 本函数用于 Kinematics 内部几何计算。
+ * 数值算法实现细节位于 kinematics_common.c。
+ */
+robot_real_t kinematics_sqrt_nonnegative(
     robot_real_t value
 );
 
@@ -60,8 +97,46 @@ kinematics_sqrt_nonnegative(
  * Solution Helpers
  * ========================================================= */
 
-void
-kinematics_build_joint_solution(
+/**
+ * @brief 将六个 Radian Joint Angle
+ *        转换为公共 Canonical Joint Solution。
+ *
+ * @param[in] q1_rad
+ * Joint 1，单位 radian。
+ *
+ * @param[in] q2_rad
+ * Joint 2，单位 radian。
+ *
+ * @param[in] q3_rad
+ * Joint 3，单位 radian。
+ *
+ * @param[in] q4_rad
+ * Joint 4，单位 radian。
+ *
+ * @param[in] q5_rad
+ * Joint 5，单位 radian。
+ *
+ * @param[in] q6_rad
+ * Joint 6，单位 radian。
+ *
+ * @param[out] solution
+ * 输出公共 Joint Solution。
+ *
+ * 单位：
+ * 0.01 degree。
+ *
+ * 范围：
+ * [-180°, 180°)。
+ *
+ * @note
+ * 输出过程中会执行：
+ *
+ * 1. Radian Canonical Normalization；
+ * 2. Radian -> Degree；
+ * 3. 0.01 degree Quantization；
+ * 4. Integer Canonical Normalization。
+ */
+void kinematics_build_joint_solution(
     robot_real_t q1_rad,
     robot_real_t q2_rad,
     robot_real_t q3_rad,
@@ -72,8 +147,29 @@ kinematics_build_joint_solution(
 );
 
 
-robot_status_t
-kinematics_add_solution_if_unique(
+/**
+ * @brief 将 Candidate 添加到 IK Solution Set，
+ *        并删除量化后完全重复的解。
+ *
+ * @param[in,out] solutions
+ * 当前 IK Solution Set。
+ *
+ * @param[in] candidate
+ * 待加入的 Canonical Candidate。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * Candidate 已加入，
+ * 或 Candidate 与已有 Solution 完全重复。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * Pointer 参数为 NULL。
+ *
+ * ROBOT_STATUS_ERROR_OUT_OF_RANGE：
+ * Solution Set 已达到
+ * KINEMATICS_MAX_IK_SOLUTIONS。
+ */
+robot_status_t kinematics_add_solution_if_unique(
     kinematics_ik_solutions_t *solutions,
     const robot_joint_angles_t *candidate
 );
@@ -83,8 +179,43 @@ kinematics_add_solution_if_unique(
  * Coordinate Conversion
  * ========================================================= */
 
-robot_status_t
-kinematics_public_to_dh_transform(
+/**
+ * @brief 将公共 T_base_ee 转换为
+ *        Standard DH T_0_6。
+ *
+ * @param[in] model
+ * 当前 Robot Model。
+ *
+ * @param[in] public_transform
+ * 公共 T_base_ee。
+ *
+ * @param[out] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 转换成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * Pointer 参数为 NULL。
+ *
+ * 其他错误码：
+ * Matrix Operation 失败。
+ *
+ * @note
+ * 转换关系：
+ *
+ * T_0_6
+ *
+ * =
+ *
+ * base_frame_conversion_inverse
+ * ×
+ * T_base_ee
+ * ×
+ * tool_frame_conversion_inverse
+ */
+robot_status_t kinematics_public_to_dh_transform(
     const robot_model_t *model,
     const robot_transform_t *public_transform,
     robot_transform_t *dh_transform
@@ -95,16 +226,49 @@ kinematics_public_to_dh_transform(
  * UR5 Analytic IK Solver
  * ========================================================= */
 
-robot_status_t
-ur5_analytic_ik_solve_q1_candidates(
+/**
+ * @brief 求解 Standard DH Transform 对应的
+ *        两个 q1 Candidate。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[out] q1_candidates_rad
+ * 两个 q1 Candidate，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q1_candidates(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_candidates_rad[2]
 );
 
 
-robot_status_t
-ur5_analytic_ik_solve_q5_candidates(
+/**
+ * @brief 在指定 q1 Branch 下求解
+ *        两个 q5 Candidate。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[in] q1_rad
+ * q1，单位 radian。
+ *
+ * @param[out] q5_candidates_rad
+ * 两个 q5 Candidate，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q5_candidates(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
@@ -112,8 +276,28 @@ ur5_analytic_ik_solve_q5_candidates(
 );
 
 
-robot_status_t
-ur5_analytic_ik_solve_q6(
+/**
+ * @brief 在指定 q1 / q5 Branch 下求解 q6。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[in] q1_rad
+ * q1，单位 radian。
+ *
+ * @param[in] q5_rad
+ * q5，单位 radian。
+ *
+ * @param[out] q6_rad
+ * q6，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q6(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
@@ -122,8 +306,32 @@ ur5_analytic_ik_solve_q6(
 );
 
 
-robot_status_t
-ur5_analytic_ik_solve_q3_candidates(
+/**
+ * @brief 在指定 Shoulder / Wrist Branch 下
+ *        求解两个 q3 Candidate。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[in] q1_rad
+ * q1，单位 radian。
+ *
+ * @param[in] q5_rad
+ * q5，单位 radian。
+ *
+ * @param[in] q6_rad
+ * q6，单位 radian。
+ *
+ * @param[out] q3_candidates_rad
+ * 两个 q3 Candidate，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q3_candidates(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
@@ -133,8 +341,34 @@ ur5_analytic_ik_solve_q3_candidates(
 );
 
 
-robot_status_t
-ur5_analytic_ik_solve_q2(
+/**
+ * @brief 在指定 q1 / q5 / q6 / q3 Branch 下求解 q2。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[in] q1_rad
+ * q1，单位 radian。
+ *
+ * @param[in] q5_rad
+ * q5，单位 radian。
+ *
+ * @param[in] q6_rad
+ * q6，单位 radian。
+ *
+ * @param[in] q3_rad
+ * q3，单位 radian。
+ *
+ * @param[out] q2_rad
+ * q2，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q2(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
@@ -145,8 +379,37 @@ ur5_analytic_ik_solve_q2(
 );
 
 
-robot_status_t
-ur5_analytic_ik_solve_q4(
+/**
+ * @brief 根据其余已确定 Branch 求解 q4。
+ *
+ * @param[in] model
+ * UR5 Robot Model。
+ *
+ * @param[in] dh_transform
+ * Standard DH T_0_6。
+ *
+ * @param[in] q1_rad
+ * q1，单位 radian。
+ *
+ * @param[in] q2_rad
+ * q2，单位 radian。
+ *
+ * @param[in] q3_rad
+ * q3，单位 radian。
+ *
+ * @param[in] q5_rad
+ * q5，单位 radian。
+ *
+ * @param[in] q6_rad
+ * q6，单位 radian。
+ *
+ * @param[out] q4_rad
+ * q4，单位 radian。
+ *
+ * @return
+ * Solver Status。
+ */
+robot_status_t ur5_analytic_ik_solve_q4(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,

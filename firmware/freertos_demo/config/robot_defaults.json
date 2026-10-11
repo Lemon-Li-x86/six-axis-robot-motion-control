@@ -1,0 +1,40 @@
+
+{
+  "schema_version": 1,
+
+  "task_priority": {
+    "control": 4,
+    "protocol_rx": 3,
+    "trajectory": 2,
+    "protocol_tx": 1,
+    "monitor": 1
+  },
+
+  "task_period_ms": {
+    "control": 10,
+    "trajectory": 20,
+    "monitor": 100,
+    "protocol_tx": 1000
+  },
+
+  "task_stack_depth_words": {
+    "control": 256,
+    "protocol_rx": 256,
+    "trajectory": 256,
+    "protocol_tx": 256,
+    "monitor": 256
+  },
+
+  "timer_frequency_hz": 100,
+
+  "parser_benchmark_samples": 1000,
+
+  "initial_joint_targets_centideg": [
+    9000,
+    0,
+    0,
+    0,
+    0,
+    0
+  ]
+}

@@ -2,7 +2,7 @@
  * 文件：kinematics.h
  *
  * 用途：
- * 定义机器人运动学公共接口。
+ * 定义机器人运动学模块的公共接口。
  *
  * Kinematics Layer：
  *
@@ -11,7 +11,8 @@
  * 3. 不依赖 FreeRTOS；
  * 4. 不依赖 Motor Driver；
  * 5. 不负责 Trajectory；
- * 6. 不负责 Control。
+ * 6. 不负责 Motion Policy；
+ * 7. 不负责 Control。
  *
  * 当前使用 Active Robot Model。
  *
@@ -43,6 +44,16 @@
 #define KINEMATICS_MAX_IK_SOLUTIONS 8U
 
 
+/**
+ * @brief 保存一次逆运动学求解得到的候选解集合。
+ *
+ * count：
+ * 当前有效 Solution 数量。
+ *
+ * solutions：
+ * 最多保存 KINEMATICS_MAX_IK_SOLUTIONS
+ * 组 Canonical Joint Angles。
+ */
 typedef struct
 {
     uint8_t count;
@@ -55,24 +66,35 @@ typedef struct
 
 
 /**
- * @brief 计算 Forward Kinematics。
+ * @brief 计算机器人 Forward Kinematics。
  *
- * 输入：
- *
- * Canonical Joint Angles
- * [-180°, 180°)
+ * @param[in] joints
+ * 六轴 Canonical Joint Angles。
  *
  * 单位：
- *
  * 0.01 degree。
  *
- * 输出：
+ * 范围：
+ * [-180°, 180°)。
  *
- * T_base_ee
+ * @param[out] transform
+ * 计算得到的公共齐次变换矩阵 T_base_ee。
  *
- * 平移单位：
- *
+ * Translation 单位：
  * mm。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 计算成功。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * joints 或 transform 为 NULL。
+ *
+ * @note
+ * 输入和输出均使用项目公共坐标约定。
+ *
+ * Standard DH Frame 仅属于 Kinematics
+ * 模块内部实现细节。
  */
 robot_status_t kinematics_forward(
     const robot_joint_angles_t *joints,
@@ -81,51 +103,49 @@ robot_status_t kinematics_forward(
 
 
 /**
- * @brief 计算当前 UR5 模型的解析逆运动学。
+ * @brief 计算当前 Active Robot Model 的解析逆运动学。
  *
- * 返回：
+ * @param[in] transform
+ * 目标公共齐次变换矩阵 T_base_ee。
+ *
+ * Translation 单位：
+ * mm。
+ *
+ * @param[out] solutions
+ * 返回所有当前能够求得的几何逆解。
+ *
+ * 每组解均为 Canonical Joint Angles，
+ * 单位为 0.01 degree。
+ *
+ * @return
+ * ROBOT_STATUS_OK：
+ * 至少得到一组有效逆解。
+ *
+ * ROBOT_STATUS_ERROR_NULL_POINTER：
+ * transform 或 solutions 为 NULL。
+ *
+ * ROBOT_STATUS_ERROR_NO_SOLUTION：
+ * 当前目标不存在几何逆解。
+ *
+ * ROBOT_STATUS_ERROR_SINGULAR：
+ * 当前所有可达 Branch 均落入
+ * 尚未处理的奇异状态。
+ *
+ * 其他错误码：
+ * 底层矩阵运算或内部求解失败。
+ *
+ * @note
+ * 当前实现返回的候选解满足：
  *
  * 1. 几何有效；
  * 2. 非当前未处理奇异 Branch；
- * 3. Canonical；
- * 4. 0.01 degree 量化；
- * 5. 已去除量化后重复解；
- *
- * 的候选解集合。
- *
- * 本函数只负责回答：
- *
- * “有哪些几何逆解？”
- *
- * 不负责：
- *
- * 1. Joint Limit Policy；
- * 2. 当前机器人连续位置；
- * 3. Trajectory Continuity；
- * 4. 最优运动距离；
- * 5. Motion Planning。
+ * 3. 已规范化为 Canonical Angle；
+ * 4. 已量化为 0.01 degree；
+ * 5. 已删除量化后完全重复的 Solution。
  */
 robot_status_t kinematics_inverse(
     const robot_transform_t *transform,
     kinematics_ik_solutions_t *solutions
-);
-
-
-/**
- * @brief 旧接口预留。
- *
- * 当前仍保持 API 兼容，
- * 但 Solution Selection 不应继续在
- * Kinematics Layer 中实现。
- *
- * 后续应迁移到 Motion Layer，
- * 并基于 Continuous Joint Position
- * 和 Robot Model Limits 进行选择。
- */
-robot_status_t kinematics_select_best_solution(
-    const kinematics_ik_solutions_t *solutions,
-    const robot_joint_angles_t *reference,
-    robot_joint_angles_t *selected
 );
 
 

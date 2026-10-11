@@ -1,20 +1,39 @@
+
 /*
  * 文件：task_config.h
  *
  * 用途：
- * 集中定义机器人固件 FreeRTOS Task
- * 的优先级、周期和栈深度规划。
+ * 定义机器人固件的 FreeRTOS Task 配置接口。
  *
- * 当前只有通信任务已经运行。
+ * 配置来源：
  *
- * Control、Trajectory、Monitor Task
- * 在对应模块实现后再创建，
- * 但调度位置和优先级关系现在提前冻结。
+ * config/robot_defaults.json
+ *        |
+ *        v
+ * generate_firmware_defaults.py
+ *        |
+ *        v
+ * firmware_defaults_generated.h
+ *        |
+ *        v
+ * task_config.h
  *
- * FreeRTOS 任务优先级规则：
+ * 设计原则：
  *
- * 数值越大，
- * Task 优先级越高。
+ * 1. 默认参数只在 JSON 中维护；
+ * 2. 本文件不重复写死默认数值；
+ * 3. 保持现有 TASK_* 宏名称；
+ * 4. 避免上层 Task 直接依赖配置生成细节；
+ * 5. 新的 Control、Trajectory、Monitor Task
+ *    可以继续使用本接口。
+ *
+ * 注意：
+ *
+ * 当前只有 ProtocolRX 和 ProtocolTX
+ * 任务实际创建并运行。
+ *
+ * 其他任务参数属于预留配置，
+ * 并不意味着对应功能已经完成。
  */
 
 #ifndef TASK_CONFIG_H
@@ -22,48 +41,70 @@
 
 
 /* =========================================================
+ * Generated Configuration
+ * ========================================================= */
+
+/*
+ * 此头文件由 CMake 在编译前自动生成。
+ *
+ * 开发者不应手动修改生成结果。
+ */
+#include "firmware_defaults_generated.h"
+
+
+/* =========================================================
  * Task Priority
  * ========================================================= */
 
 /*
- * PID / Motion Control：
+ * FreeRTOS 任务优先级：
  *
- * 需要固定周期运行，
- * 因此设置为最高业务任务优先级。
+ * 数值越大，任务优先级越高。
+ *
+ * 当前 configMAX_PRIORITIES = 5，
+ * 因此优先级有效范围为 0~4。
+ *
+ * 参数范围在 Python 生成阶段验证。
  */
-#define TASK_PRIORITY_CONTROL 4U
+
+/*
+ * Control：
+ * 未来 PID / Motion Control Task。
+ */
+#define TASK_PRIORITY_CONTROL \
+    FW_DEFAULT_TASK_PRIORITY_CONTROL
 
 
 /*
- * UART RX / Protocol：
- *
- * 需要及时消费 Ring Buffer，
- * 防止接收数据堆积。
+ * ProtocolRX：
+ * UART 接收与协议解析。
  */
-#define TASK_PRIORITY_PROTOCOL_RX 3U
+#define TASK_PRIORITY_PROTOCOL_RX \
+    FW_DEFAULT_TASK_PRIORITY_PROTOCOL_RX
 
 
 /*
- * Trajectory Planning：
- *
- * 负责生成未来目标点，
- * 实时性低于闭环控制。
+ * Trajectory：
+ * 轨迹规划任务。
  */
-#define TASK_PRIORITY_TRAJECTORY 2U
+#define TASK_PRIORITY_TRAJECTORY \
+    FW_DEFAULT_TASK_PRIORITY_TRAJECTORY
 
 
 /*
- * Protocol TX：
- *
- * 状态或目标通信发送。
+ * ProtocolTX：
+ * 状态和目标发送任务。
  */
-#define TASK_PRIORITY_PROTOCOL_TX 1U
+#define TASK_PRIORITY_PROTOCOL_TX \
+    FW_DEFAULT_TASK_PRIORITY_PROTOCOL_TX
 
 
 /*
- * 状态监测与低优先级诊断。
+ * Monitor：
+ * 低优先级诊断和状态监测。
  */
-#define TASK_PRIORITY_MONITOR 1U
+#define TASK_PRIORITY_MONITOR \
+    FW_DEFAULT_TASK_PRIORITY_MONITOR
 
 
 /* =========================================================
@@ -71,37 +112,46 @@
  * ========================================================= */
 
 /*
- * PID Control：
+ * 单位：
+ * millisecond。
  *
- * 当前预留 10 ms。
- *
- * 后续可根据仿真与控制性能
- * 调整到更高控制频率。
+ * 对周期任务而言，实际调度精度还受到
+ * FreeRTOS Tick、优先级和系统负载影响。
  */
-#define TASK_PERIOD_CONTROL_MS 10U
+
+/*
+ * PID Control 周期。
+ */
+#define TASK_PERIOD_CONTROL_MS \
+    FW_DEFAULT_TASK_PERIOD_CONTROL_MS
 
 
 /*
- * Trajectory Planning：
- *
- * 当前预留 20 ms。
+ * Trajectory Planning 周期。
  */
-#define TASK_PERIOD_TRAJECTORY_MS 20U
+#define TASK_PERIOD_TRAJECTORY_MS \
+    FW_DEFAULT_TASK_PERIOD_TRAJECTORY_MS
 
 
 /*
- * Monitor：
- *
- * 当前预留 100 ms。
+ * Monitor 周期。
  */
-#define TASK_PERIOD_MONITOR_MS 100U
+#define TASK_PERIOD_MONITOR_MS \
+    FW_DEFAULT_TASK_PERIOD_MONITOR_MS
 
 
 /*
- * 当前 Protocol TX
- * 保持原有 1000 ms 测试周期。
+ * ProtocolTX 默认周期。
+ *
+ * 注意：
+ *
+ * 这是启动默认值。
+ *
+ * 固件运行后仍然允许通过
+ * Runtime Config 和通信协议修改。
  */
-#define TASK_PERIOD_PROTOCOL_TX_MS 1000U
+#define TASK_PERIOD_PROTOCOL_TX_MS \
+    FW_DEFAULT_TASK_PERIOD_PROTOCOL_TX_MS
 
 
 /* =========================================================
@@ -110,23 +160,52 @@
 
 /*
  * xTaskCreate() 的 Stack Depth
- * 单位不是 Byte，
- * 而是 StackType_t 元素数量。
+ * 单位是 StackType_t 元素数量，
+ * 不是 Byte。
  *
- * 当前只进行初始预留，
- * 后续使用 FreeRTOS Stack High Water Mark
- * 实测后再调整。
+ * 当前 ARM Cortex-M4 使用 32-bit StackType_t，
+ * 因此 256 words 通常对应 1024 bytes。
+ *
+ * JSON 中保存的是 words。
+ *
+ * 当前只定义初始预留值，
+ * 后续仍需通过 High Water Mark
+ * 实测栈使用量。
  */
 
-#define TASK_STACK_DEPTH_CONTROL 256U
-
-#define TASK_STACK_DEPTH_PROTOCOL_RX 256U
-
-#define TASK_STACK_DEPTH_TRAJECTORY 256U
-
-#define TASK_STACK_DEPTH_PROTOCOL_TX 256U
-
-#define TASK_STACK_DEPTH_MONITOR 256U
+/*
+ * Control Task Stack。
+ */
+#define TASK_STACK_DEPTH_CONTROL \
+    FW_DEFAULT_TASK_STACK_CONTROL_WORDS
 
 
-#endif
+/*
+ * ProtocolRX Task Stack。
+ */
+#define TASK_STACK_DEPTH_PROTOCOL_RX \
+    FW_DEFAULT_TASK_STACK_PROTOCOL_RX_WORDS
+
+
+/*
+ * Trajectory Task Stack。
+ */
+#define TASK_STACK_DEPTH_TRAJECTORY \
+    FW_DEFAULT_TASK_STACK_TRAJECTORY_WORDS
+
+
+/*
+ * ProtocolTX Task Stack。
+ */
+#define TASK_STACK_DEPTH_PROTOCOL_TX \
+    FW_DEFAULT_TASK_STACK_PROTOCOL_TX_WORDS
+
+
+/*
+ * Monitor Task Stack。
+ */
+#define TASK_STACK_DEPTH_MONITOR \
+    FW_DEFAULT_TASK_STACK_MONITOR_WORDS
+
+
+#endif /* TASK_CONFIG_H */

@@ -1,23 +1,122 @@
+
 # ==========================================================
 # 文件：firmware/freertos_demo/CMakeLists.txt
 #
 # 用途：
-# 配置 Cortex-M4 / FreeRTOS 固件工程。
+# 构建 Cortex-M4 / FreeRTOS 固件。
+#
+# 主要职责：
+# 1. 查找 ARM 固件依赖；
+# 2. 从 JSON 生成固件默认参数头文件；
+# 3. 编译 Driver、Protocol、Model、Kinematics；
+# 4. 编译 FreeRTOS Kernel；
+# 5. 链接 Cortex-M4 ELF 固件。
+#
+# 注意：
+# JSON 文件只在 Host 构建阶段使用。
+# Cortex-M4 固件不需要 Python 或 JSON 解析器。
 # ==========================================================
 
 
 # ==========================================================
-# FreeRTOS Kernel 路径
+# 1. Dependencies
 # ==========================================================
 
+# FreeRTOS Kernel 所在目录。
 set(
     FREERTOS_DIR
     "${CMAKE_SOURCE_DIR}/third_party/FreeRTOS-Kernel"
 )
 
+# Python 只运行在开发计算机上，
+# 用于生成编译时配置。
+find_package(
+    Python3
+    REQUIRED
+    COMPONENTS Interpreter
+)
+
 
 # ==========================================================
-# 固件源文件
+# 2. Firmware Configuration Generation
+# ==========================================================
+
+# JSON 默认参数文件。
+set(
+    FIRMWARE_CONFIG_JSON
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/robot_defaults.json"
+)
+
+# Python 配置生成脚本。
+set(
+    FIRMWARE_CONFIG_GENERATOR
+    "${CMAKE_SOURCE_DIR}/tools/generate_firmware_defaults.py"
+)
+
+# 所有自动生成的头文件统一放在 Build 目录。
+#
+# 不在源代码目录写入自动生成结果，
+# 避免生成文件混入 Git。
+set(
+    FIRMWARE_GENERATED_INCLUDE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+
+set(
+    FIRMWARE_GENERATED_HEADER
+    "${FIRMWARE_GENERATED_INCLUDE_DIR}/firmware_defaults_generated.h"
+)
+
+# 自定义生成规则。
+#
+# OUTPUT:
+#   生成的 .h 文件。
+#
+# COMMAND:
+#   运行 Python 脚本。
+#
+# DEPENDS:
+#   JSON 或脚本变化时，重新生成头文件。
+#
+# VERBATIM:
+#   让 CMake 正确处理参数与路径中的特殊字符。
+add_custom_command(
+    OUTPUT
+        "${FIRMWARE_GENERATED_HEADER}"
+
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${FIRMWARE_CONFIG_GENERATOR}"
+        --input
+        "${FIRMWARE_CONFIG_JSON}"
+        --output
+        "${FIRMWARE_GENERATED_HEADER}"
+
+    DEPENDS
+        "${FIRMWARE_CONFIG_JSON}"
+        "${FIRMWARE_CONFIG_GENERATOR}"
+
+    COMMENT
+        "Validating JSON and generating firmware defaults"
+
+    VERBATIM
+)
+
+# 独立配置生成目标。
+#
+# 可以单独执行：
+# cmake --build build/cmake-arm
+#       --target firmware_defaults_header
+add_custom_target(
+    firmware_defaults_header
+
+    DEPENDS
+        "${FIRMWARE_GENERATED_HEADER}"
+)
+
+
+# ==========================================================
+# 3. Firmware Source Files
 # ==========================================================
 
 add_executable(
@@ -127,7 +226,22 @@ add_executable(
 
 
 # ==========================================================
-# Include Paths
+# 4. Build Dependency
+# ==========================================================
+
+# 必须先完成配置生成，
+# 然后才允许编译固件。
+#
+# 避免并行构建时出现：
+# 编译器尝试读取尚未生成的头文件。
+add_dependencies(
+    freertos_demo
+    firmware_defaults_header
+)
+
+
+# ==========================================================
+# 5. Include Paths
 # ==========================================================
 
 target_include_directories(
@@ -137,77 +251,42 @@ target_include_directories(
 
     ${CMAKE_CURRENT_SOURCE_DIR}
 
+    # 自动生成的配置头文件。
+    "${FIRMWARE_GENERATED_INCLUDE_DIR}"
 
-    # ------------------------------------------------------
     # Common
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 
-
-    # ------------------------------------------------------
     # Robot Model
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/model
 
-
-    # ------------------------------------------------------
     # Drivers
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 
-
-    # ------------------------------------------------------
     # Communications
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 
-
-    # ------------------------------------------------------
     # Application
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/application
 
-
-    # ------------------------------------------------------
     # Diagnostics
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
 
-
-    # ------------------------------------------------------
     # Algorithms
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
-
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
 
-
-    # ------------------------------------------------------
     # Tests
-    # ------------------------------------------------------
-
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/kinematics
 
-
-    # ------------------------------------------------------
     # FreeRTOS
-    # ------------------------------------------------------
-
     ${FREERTOS_DIR}/include
-
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
 )
 
 
 # ==========================================================
-# Compile Options
+# 6. Compile Options
 # ==========================================================
 
 target_compile_options(
@@ -224,7 +303,7 @@ target_compile_options(
 
 
 # ==========================================================
-# Link Options
+# 7. Link Options
 # ==========================================================
 
 target_link_options(
@@ -242,7 +321,7 @@ target_link_options(
 
 
 # ==========================================================
-# Libraries
+# 8. Libraries
 # ==========================================================
 
 target_link_libraries(
@@ -256,7 +335,7 @@ target_link_libraries(
 
 
 # ==========================================================
-# Output
+# 9. Firmware Output
 # ==========================================================
 
 set_target_properties(
