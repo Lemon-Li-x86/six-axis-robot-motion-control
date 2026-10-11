@@ -345,3 +345,19 @@ set_target_properties(
 
     SUFFIX ".elf"
 )
+
+
+# ==========================================================
+# Kinematics Deduplication Unit Test
+# ==========================================================
+
+# 单独编译逆解去重测试。
+# 目标端执行由 kinematics_self_test_run() 统一管理。
+target_sources(
+    freertos_demo
+
+    PRIVATE
+
+    tests/kinematics/kinematics_dedup_test.c
+)
+
