@@ -361,3 +361,277 @@ target_sources(
     tests/kinematics/kinematics_dedup_test.c
 )
 
+# ==========================================================
+# QEMU Cortex-M4 Protocol / Ring Buffer Target Tests
+# ==========================================================
+
+# 独立于生产固件的测试 ELF。
+#
+# 采用真实 ARM Cortex-M4 编译器，
+# 直接链接生产使用的 Protocol 和 Ring Buffer。
+#
+# 当前不包含 IRQ / FreeRTOS 上下文测试，
+# 后续会扩展单独的中断集成测试。
+
+
+# ==========================================================
+# QEMU Cortex-M4 Protocol / Ring Buffer Tests
+# ==========================================================
+
+add_executable(
+    qemu_protocol_tests
+
+    # 测试固件独立启动代码。
+    tests/qemu_target/test_startup.s
+
+    # 目标端测试入口及测试用例。
+    tests/qemu_target/protocol_test_main.c
+
+    # 与生产固件相同的通信协议实现。
+    communications/protocol.c
+    communications/ring_buffer.c
+
+    # 裸机内存操作实现。
+    #
+    # 测试固件使用 -nostdlib，
+    # 不自动链接标准 C Runtime。
+    #
+    # 编译器可能在结构体初始化、内存复制时
+    # 自动生成 memcpy / memset 调用。
+    #
+    # 因此必须包含生产固件已有的 memory.c。
+    memory.c
+)
+
+
+target_include_directories(
+    qemu_protocol_tests
+
+    PRIVATE
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/communications
+)
+
+target_compile_options(
+    qemu_protocol_tests
+
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+
+    -ffreestanding
+    -fno-builtin
+
+    # 保留完整源码调试信息。
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_protocol_tests
+
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+
+    -nostdlib
+
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_protocol_tests
+
+    PRIVATE
+
+    gcc
+)
+
+set_target_properties(
+    qemu_protocol_tests
+
+    PROPERTIES
+
+    SUFFIX ".elf"
+)
+
+
+# ==========================================================
+# Cortex-M4 UART TX Boundary Test
+# ==========================================================
+
+add_executable(
+    qemu_uart_tx_tests
+
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/uart_tx_boundary_main.c
+
+    # 生产版驱动与缓冲区实现。
+    drivers/uart_driver.c
+    communications/ring_buffer.c
+
+    # -nostdlib 环境所需内存函数。
+    memory.c
+)
+
+target_include_directories(
+    qemu_uart_tx_tests
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+    ${CMAKE_CURRENT_SOURCE_DIR}/communications
+)
+
+target_compile_options(
+    qemu_uart_tx_tests
+    PRIVATE
+    -mcpu=cortex-m4
+    -mthumb
+    -ffreestanding
+    -fno-builtin
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_uart_tx_tests
+    PRIVATE
+    -mcpu=cortex-m4
+    -mthumb
+    -nostdlib
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_uart_tx_tests
+    PRIVATE
+    gcc
+)
+
+set_target_properties(
+    qemu_uart_tx_tests
+    PROPERTIES
+    SUFFIX ".elf"
+)
+
+
+
+# ==========================================================
+# Cortex-M4 Motor Driver Target Tests
+# ==========================================================
+
+add_executable(
+    qemu_motor_tests
+
+    # 复用独立测试启动文件。
+    tests/qemu_target/test_startup.s
+
+    # Motor Driver 目标端测试入口。
+    tests/qemu_target/motor_test_main.c
+
+    # 真实生产驱动。
+    drivers/motor_driver.c
+
+    # Freestanding 内存函数。
+    memory.c
+)
+
+target_include_directories(
+    qemu_motor_tests
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+)
+
+target_compile_options(
+    qemu_motor_tests
+    PRIVATE
+    -mcpu=cortex-m4
+    -mthumb
+    -ffreestanding
+    -fno-builtin
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_motor_tests
+    PRIVATE
+    -mcpu=cortex-m4
+    -mthumb
+    -nostdlib
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_motor_tests
+    PRIVATE
+    gcc
+)
+
+set_target_properties(
+    qemu_motor_tests
+    PROPERTIES
+    SUFFIX ".elf"
+)
+
+
+
+# ==========================================================
+# Cortex-M4 GPIO Shadow Backend Tests
+# ==========================================================
+
+add_executable(
+    qemu_gpio_tests
+
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/gpio_shadow_test_main.c
+
+    drivers/gpio_driver.c
+    memory.c
+)
+
+target_include_directories(
+    qemu_gpio_tests
+    PRIVATE
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+)
+
+target_compile_options(
+    qemu_gpio_tests
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -ffreestanding
+    -fno-builtin
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_gpio_tests
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -nostdlib
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_gpio_tests
+    PRIVATE
+    gcc
+)
+
+set_target_properties(
+    qemu_gpio_tests
+    PROPERTIES
+    SUFFIX ".elf"
+)
