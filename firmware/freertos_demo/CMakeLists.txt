@@ -635,3 +635,104 @@ set_target_properties(
     PROPERTIES
     SUFFIX ".elf"
 )
+
+
+# Cortex-M4 FK Batch Cross Validation
+
+add_executable(
+    qemu_fk_batch
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/fk_batch_test_main.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/math/matrix4.c
+    model/ur5_model.c
+    memory.c
+)
+
+target_include_directories(
+    qemu_fk_batch PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+)
+
+target_compile_options(
+    qemu_fk_batch PRIVATE
+    -mcpu=cortex-m4 -mthumb
+    -ffreestanding -fno-builtin
+    -O0 -g3
+)
+
+target_link_options(
+    qemu_fk_batch PRIVATE
+    -mcpu=cortex-m4 -mthumb
+    -nostdlib
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(qemu_fk_batch PRIVATE m gcc)
+
+set_target_properties(
+    qemu_fk_batch PROPERTIES SUFFIX ".elf"
+)
+
+
+# ==========================================================
+# Cortex-M4 IK Batch Diagnostic
+# ==========================================================
+
+add_executable(
+    qemu_ik_batch
+
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/ik_batch_test_main.c
+
+    model/ur5_model.c
+
+    algorithms/math/matrix4.c
+
+    algorithms/kinematics/kinematics_common.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/kinematics/kinematics_inverse.c
+    algorithms/kinematics/ur5_analytic_ik.c
+
+    memory.c
+)
+
+target_include_directories(
+    qemu_ik_batch PRIVATE
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+)
+
+target_compile_options(
+    qemu_ik_batch PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -ffreestanding
+    -fno-builtin
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_ik_batch PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -nostdlib
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_ik_batch PRIVATE m gcc
+)
+
+set_target_properties(
+    qemu_ik_batch PROPERTIES SUFFIX ".elf"
+)

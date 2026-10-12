@@ -406,168 +406,120 @@ ur5_analytic_ik_solve_q1_candidates(
  * q5 Wrist
  * ========================================================= */
 
-robot_status_t
-ur5_analytic_ik_solve_q5_candidates(
+robot_status_t ur5_analytic_ik_solve_q5_candidates(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
     robot_real_t q5_candidates_rad[2]
 )
 {
-    robot_real_t
-        p6_x;
+    robot_real_t p6_x;
+    robot_real_t p6_y;
 
-    robot_real_t
-        p6_y;
+    robot_real_t d4;
+    robot_real_t d6;
 
-    robot_real_t
-        d4;
+    robot_real_t sin_q1;
+    robot_real_t cos_q1;
 
-    robot_real_t
-        d6;
+    robot_real_t cos_q5;
+    robot_real_t sin_q5_absolute;
 
-    robot_real_t
-        sin_q1;
+    robot_real_t orientation_u;
+    robot_real_t orientation_v;
 
-    robot_real_t
-        cos_q1;
-
-    robot_real_t
-        cos_q5;
-
-    robot_real_t
-        sin_q5_squared;
-
-    robot_real_t
-        sin_q5_absolute;
-
-
+    /*
+     * 1. 参数检查
+     */
     if (
-        model
-        ==
-        NULL
-        ||
-        dh_transform
-        ==
-        NULL
-        ||
-        q5_candidates_rad
-        ==
-        NULL
+        model == NULL
+        || dh_transform == NULL
+        || q5_candidates_rad == NULL
     )
     {
-        return
-            ROBOT_STATUS_ERROR_NULL_POINTER;
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
+    /*
+     * 2. 获取 DH 模型参数及目标位置
+     */
+    p6_x = dh_transform->matrix[0][3];
+    p6_y = dh_transform->matrix[1][3];
 
-    p6_x =
-        dh_transform->matrix[0][3];
+    d4 = model->dh_d_mm[3];
+    d6 = model->dh_d_mm[5];
 
-    p6_y =
-        dh_transform->matrix[1][3];
+    sin_q1 = sinf(q1_rad);
+    cos_q1 = cosf(q1_rad);
 
-
-    d4 =
-        model->dh_d_mm[3];
-
-    d6 =
-        model->dh_d_mm[5];
-
-
-    sin_q1 =
-        sinf(
-            q1_rad
-        );
-
-    cos_q1 =
-        cosf(
-            q1_rad
-        );
-
-
+    /*
+     * 3. 使用原有几何公式计算 cos(q5)
+     */
     cos_q5 =
         (
-            p6_x
-            *
-            sin_q1
-            -
-            p6_y
-            *
-            cos_q1
-            -
-            d4
-        )
-        /
-        d6;
+            p6_x * sin_q1
+            - p6_y * cos_q1
+            - d4
+        ) / d6;
 
-
+    /*
+     * 4. 保留原有可达性判断
+     */
     if (
-        cos_q5
-        >
-        1.0F
-        +
-        KINEMATICS_TRIG_DOMAIN_EPSILON
+        cos_q5 > 1.0F + KINEMATICS_TRIG_DOMAIN_EPSILON
         ||
-        cos_q5
-        <
-        -1.0F
-        -
-        KINEMATICS_TRIG_DOMAIN_EPSILON
+        cos_q5 < -1.0F - KINEMATICS_TRIG_DOMAIN_EPSILON
     )
     {
-        return
-            ROBOT_STATUS_ERROR_NO_SOLUTION;
+        return ROBOT_STATUS_ERROR_NO_SOLUTION;
     }
 
-
-    if (
-        cos_q5
-        >
-        1.0F
-    )
+    /*
+     * 5. 限制 cos(q5) 至合法范围
+     */
+    if (cos_q5 > 1.0F)
     {
-        cos_q5 =
-            1.0F;
+        cos_q5 = 1.0F;
     }
 
-
-    if (
-        cos_q5
-        <
-        -1.0F
-    )
+    if (cos_q5 < -1.0F)
     {
-        cos_q5 =
-            -1.0F;
+        cos_q5 = -1.0F;
     }
 
+    /*
+     * 6. 从旋转矩阵恢复 |sin(q5)|
+     *
+     * 避免原来的:
+     *
+     * sqrt(1 - cos(q5) * cos(q5))
+     *
+     * 在 q5 接近零时出现消减误差。
+     *
+     * UR5 Standard DH:
+     *
+     * u = sin(q5) * cos(q6)
+     * v = sin(q5) * sin(q6)
+     *
+     * sqrt(u*u + v*v) = |sin(q5)|
+     */
+    orientation_u =
+        dh_transform->matrix[0][0] * sin_q1
+        - dh_transform->matrix[1][0] * cos_q1;
 
-    sin_q5_squared =
-        1.0F
-        -
-        cos_q5
-        *
-        cos_q5;
-
-
-    if (
-        sin_q5_squared
-        <
-        0.0F
-    )
-    {
-        sin_q5_squared =
-            0.0F;
-    }
-
+    orientation_v =
+        -dh_transform->matrix[0][1] * sin_q1
+        + dh_transform->matrix[1][1] * cos_q1;
 
     sin_q5_absolute =
         kinematics_sqrt_nonnegative(
-            sin_q5_squared
+            orientation_u * orientation_u
+            + orientation_v * orientation_v
         );
 
-
+    /*
+     * 7. 生成正负两条腕部分支
+     */
     q5_candidates_rad[0] =
         kinematics_normalize_angle_rad(
             atan2f(
@@ -575,7 +527,6 @@ ur5_analytic_ik_solve_q5_candidates(
                 cos_q5
             )
         );
-
 
     q5_candidates_rad[1] =
         kinematics_normalize_angle_rad(
@@ -585,9 +536,7 @@ ur5_analytic_ik_solve_q5_candidates(
             )
         );
 
-
-    return
-        ROBOT_STATUS_OK;
+    return ROBOT_STATUS_OK;
 }
 
 
