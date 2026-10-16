@@ -222,6 +222,7 @@ static void task_protocol_rx(void *parameters)
 robot_status_t protocol_tasks_start(void)
 {
     BaseType_t result;
+    TaskHandle_t protocol_tx_task_handle = NULL;
 
     /*
      * Create periodic target-transmission task.
@@ -232,7 +233,7 @@ robot_status_t protocol_tasks_start(void)
         TASK_STACK_DEPTH_PROTOCOL_TX,
         NULL,
         TASK_PRIORITY_PROTOCOL_TX,
-        NULL
+        &protocol_tx_task_handle
     );
 
     if (result != pdPASS)
@@ -254,6 +255,12 @@ robot_status_t protocol_tasks_start(void)
 
     if (result != pdPASS)
     {
+        /*
+         * Both tasks are created before vTaskStartScheduler().
+         * Roll back the successfully created TX task if RX creation fails.
+         */
+        vTaskDelete(protocol_tx_task_handle);
+        protocol_rx_task_handle = NULL;
         return ROBOT_STATUS_ERROR_INTERNAL;
     }
 
