@@ -31,3 +31,12 @@ and the test report before proceeding.
 The test report has a fixed capacity of 40 assertions. Check that the
 recorded total does not exceed this capacity when adding new cases;
 otherwise the report records overflow as a failure.
+
+## Motor driver regression
+
+The same host CMake project also builds `motor_driver_host_test`, reusing
+all 11 QEMU motor boundary cases from `tests/qemu_target/motor_test_main.c`.
+The `MOTOR_DRIVER_HOST_TEST` macro only selects an exit code instead of
+entering the QEMU GDB completion loop; the production motor driver remains
+unchanged. `ctest --test-dir build/motion-host --output-on-failure` runs both
+motion-limits and motor-driver tests.
