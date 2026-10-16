@@ -277,6 +277,22 @@ static robot_status_t get_diagnostics_value(
             break;
     }
 
+    /* Unknown selectors must not trigger an unnecessary metrics snapshot. */
+    switch (selector)
+    {
+        case DIAGNOSTICS_METRIC_PARSER_SAMPLE_COUNT:
+        case DIAGNOSTICS_METRIC_PARSER_MIN_TICKS:
+        case DIAGNOSTICS_METRIC_PARSER_AVERAGE_TICKS:
+        case DIAGNOSTICS_METRIC_PARSER_MAX_TICKS:
+        case DIAGNOSTICS_METRIC_TASK_WAKEUP_SAMPLE_COUNT:
+        case DIAGNOSTICS_METRIC_TASK_WAKEUP_MIN_TICKS:
+        case DIAGNOSTICS_METRIC_TASK_WAKEUP_AVERAGE_TICKS:
+        case DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS:
+            break;
+        default:
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    }
+
     status =
         performance_monitor_get_metrics(&metrics);
 
