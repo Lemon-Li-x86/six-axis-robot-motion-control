@@ -2,7 +2,13 @@
 
 六轴工业机器人嵌入式运动控制固件开发与仿真验证。
 
-当前已完成第1阶段基础环境搭建与通信链路验证。
+
+当前已完成 Cortex-M4 / FreeRTOS 基础运行环境、UART 双向通信链路，以及 UR5 正运动学、解析逆运动学和关节限位算法的主要实现。
+
+当前 Motion Limits 已加入固件构建并配置独立 QEMU 测试目标，但尚未完整接入实际运动指令链路。
+
+轨迹规划、PID 闭环控制以及独立的 Trajectory / Control Task 属于后续开发内容。
+
 
 ## 第1阶段运行方法
 
@@ -10,8 +16,20 @@
 
 在项目根目录执行：
 
-```powershell
-cmake --build build/cmake-arm
+
+配置 ARM / QEMU 工程
+```text
+cmake --preset arm-qemu
+```
+
+构建正式固件
+```text
+cmake --build --preset firmware
+```
+
+如需构建所有 QEMU 测试目标
+```text
+cmake --build --preset arm-qemu
 ```
 
 然后启动 QEMU UART TCP：
@@ -22,12 +40,6 @@ qemu-system-arm `
     -kernel build/cmake-arm/firmware/freertos_demo/freertos_demo.elf `
     -serial tcp:127.0.0.1:5555,server=on,wait=off `
     -monitor none
-```
-
-也可以在 VS Code 中直接运行任务：
-
-```text
-Run FreeRTOS UART TCP
 ```
 
 QEMU 启动后会监听：
@@ -62,7 +74,7 @@ python simulation\uart_bridge\ur5_uart_bridge.py
 当前测试目标为：
 
 ```text
-Joint 1 = 60°
+Joint 1 = 90°
 Joint 2~6 = 0°
 ```
 

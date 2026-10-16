@@ -18,3 +18,19 @@ third_party/Unity/
 __pycache__/
 *.pyc
 *.pyo
+
+
+# Temporary test results
+# Keep reviewed test baselines separately.
+/docs/testing/results/*.json
+/docs/testing/results/*.csv
+/docs/testing/results/*.log
+
+# Local development artifacts
+*.log
+*.tmp
+*.swp
+*~
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

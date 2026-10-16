@@ -1,0 +1,33 @@
+
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "arm-qemu",
+      "displayName": "ARM Cortex-M4 / QEMU",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cmake-arm",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "arm-qemu",
+      "configurePreset": "arm-qemu"
+    },
+    {
+      "name": "firmware",
+      "configurePreset": "arm-qemu",
+      "targets": [
+        "freertos_demo"
+      ]
+    }
+  ]
+}
