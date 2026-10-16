@@ -113,11 +113,19 @@ static void task_protocol_tx(void *parameters)
          * TX period can be changed at runtime
          * through the SET_PARAMETER command.
          */
-        vTaskDelay(
-            pdMS_TO_TICKS(
+        {
+            TickType_t delay_ticks = pdMS_TO_TICKS(
                 runtime_config_get_protocol_tx_period_ms()
-            )
-        );
+            );
+
+            /* Avoid a zero-tick busy loop after ms-to-tick rounding. */
+            if (delay_ticks == 0U)
+            {
+                delay_ticks = 1U;
+            }
+
+            vTaskDelay(delay_ticks);
+        }
     }
 }
 
