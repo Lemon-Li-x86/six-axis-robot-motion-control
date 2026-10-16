@@ -10,9 +10,9 @@
 轨迹规划、PID 闭环控制以及独立的 Trajectory / Control Task 属于后续开发内容。
 
 
-## 快速回归：运动限位（本机 C 编译器）
+## 快速回归：运动限位与电机驱动（本机 C 编译器）
 
-不依赖 ARM 工具链、QEMU 或 Unity，复用现有 Motion Limits 测试用例：
+不依赖 ARM 工具链、QEMU 或 Unity，复用现有 Motion Limits 与 Motor Driver 测试用例：
 
 ```powershell
 cmake -S firmware/freertos_demo/tests/host -B build/motion-host
