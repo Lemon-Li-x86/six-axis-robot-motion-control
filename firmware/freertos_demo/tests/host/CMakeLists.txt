@@ -35,3 +35,33 @@ endif()
 
 enable_testing()
 add_test(NAME motion_limits_host COMMAND motion_limits_host_test)
+
+# Run the production motor driver against the existing 11 QEMU boundary cases.
+# The host macro only changes the test runner's exit path.
+add_executable(motor_driver_host_test
+    ../qemu_target/motor_test_main.c
+    ${FIRMWARE_ROOT}/drivers/motor_driver.c
+)
+
+target_include_directories(motor_driver_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/drivers
+)
+
+target_compile_definitions(motor_driver_host_test PRIVATE
+    MOTOR_DRIVER_HOST_TEST=1
+)
+
+set_target_properties(motor_driver_host_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(motor_driver_host_test PRIVATE
+        -Wall -Wextra -Wpedantic
+    )
+endif()
+
+add_test(NAME motor_driver_host COMMAND motor_driver_host_test)
