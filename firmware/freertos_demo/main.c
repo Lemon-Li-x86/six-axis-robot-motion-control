@@ -3,32 +3,20 @@
  * 文件：main.c
  *
  * 用途：
- * 六轴机器人 Cortex-M4 / FreeRTOS 固件入口。
+ * Cortex-M4 / FreeRTOS 六轴机器人固件入口。
  *
- * main.c 负责系统生命周期：
+ * 职责：
+ * 1. 初始化板级环境和驱动；
+ * 2. 初始化运行时配置与通信服务；
+ * 3. 初始化性能监测；
+ * 4. 按构建选项执行启动诊断；
+ * 5. 初始化 Motor Driver 和关节目标；
+ * 6. 创建任务并启动 FreeRTOS。
  *
- * 1. Board 初始化；
- * 2. Driver 初始化；
- * 3. Runtime Configuration 初始化；
- * 4. UART TX Manager 初始化；
- * 5. Performance Monitor 初始化；
- * 6. 启动前 Performance Benchmark；
- * 7. 启动前 Kinematics Self Test；
- * 8. Motor Driver 初始化；
- * 9. 设置初始关节目标；
- * 10. 创建 Application Tasks；
- * 11. 启动 FreeRTOS Scheduler。
+ * 固件默认参数由 CMake 在构建时根据
+ * config/robot_defaults.json 生成。
  *
- * 默认配置来源：
- *
- * config/robot_defaults.json
- *       |
- *       v
- * firmware_defaults_generated.h
- *
- * 注意：
- * main.c 不负责解析 JSON。
- * 所有配置参数在编译阶段已经转换为 C 宏。
+ * 此文件不解析 JSON，也不实现具体运动算法。
  */
 
 #include "FreeRTOS.h"
@@ -50,15 +38,21 @@
 
 #include "performance_monitor.h"
 
+/*
+ * 仅在启用 Kinematics Self-Test 时引入测试接口。
+ * 对应选项由 CMake 定义，取值为 0 或 1。
+ */
+#if ROBOT_ENABLE_KINEMATICS_SELF_TEST
 #include "kinematics_self_test.h"
+#endif
 
 /*
- * 自动生成的固件默认配置。
+ * 自动生成的固件默认参数。
  *
  * 包含：
- * 1. Timer 频率；
- * 2. Benchmark 样本数量；
- * 3. 初始六轴关节目标。
+ * - Timer frequency
+ * - Parser benchmark sample count
+ * - Initial joint targets
  */
 #include "firmware_defaults_generated.h"
 
@@ -67,53 +61,39 @@
  * Firmware Entry
  * ========================================================= */
 
-/**
- * @brief Cortex-M4 固件入口。
- *
- * @return 正常运行时不会返回。
- */
 int main(void)
 {
     /*
-     * 初始关节目标角度。
+     * 初始六轴关节目标。
+     *
+     * 单位：0.01 degree。
      *
      * 数据来源：
-     * robot_defaults.json
+     * config/robot_defaults.json
      *
-     * 单位：
-     * 0.01 degree。
+     * 当前使用 Canonical Joint Angle，
+     * 范围为 [-180°, 180°)。
      *
-     * 例如：
-     * 6000 = +60.00°。
-     *
-     * 当前仍使用 Canonical Joint Angle：
-     * [-180°, 180°)。
+     * 不在本文件硬编码具体目标角度。
      */
-    const robot_joint_angles_t
-        initial_joint_targets =
+    const robot_joint_angles_t initial_joint_targets =
+    {
+        .value =
         {
-            .value =
-            {
-                FW_DEFAULT_JOINT_1_TARGET_CENTIDEG,
-                FW_DEFAULT_JOINT_2_TARGET_CENTIDEG,
-                FW_DEFAULT_JOINT_3_TARGET_CENTIDEG,
-                FW_DEFAULT_JOINT_4_TARGET_CENTIDEG,
-                FW_DEFAULT_JOINT_5_TARGET_CENTIDEG,
-                FW_DEFAULT_JOINT_6_TARGET_CENTIDEG
-            }
-        };
+            FW_DEFAULT_JOINT_1_TARGET_CENTIDEG,
+            FW_DEFAULT_JOINT_2_TARGET_CENTIDEG,
+            FW_DEFAULT_JOINT_3_TARGET_CENTIDEG,
+            FW_DEFAULT_JOINT_4_TARGET_CENTIDEG,
+            FW_DEFAULT_JOINT_5_TARGET_CENTIDEG,
+            FW_DEFAULT_JOINT_6_TARGET_CENTIDEG
+        }
+    };
 
 
     /* =====================================================
      * 1. Board Initialization
      * ===================================================== */
 
-    /*
-     * 初始化系统时钟与板级 GPIO。
-     *
-     * 当前 QEMU MPS2-AN386 的系统时钟
-     * 由模拟平台提供。
-     */
     board_clock_init();
 
     board_gpio_init();
@@ -125,8 +105,8 @@ int main(void)
 
     /*
      * 初始化 UART。
-     *
-     * 后续 ProtocolRX Task 会开启 RX IRQ。
+     * RX Interrupt 将在 ProtocolRX Task
+     * 实际运行后开启。
      */
     uart_driver_init();
 
@@ -138,10 +118,7 @@ int main(void)
     /*
      * 初始化 GPIO Driver。
      */
-    if (
-        gpio_driver_init()
-        != ROBOT_STATUS_OK
-    )
+    if (gpio_driver_init() != ROBOT_STATUS_OK)
     {
         while (1)
         {
@@ -154,25 +131,10 @@ int main(void)
      * ===================================================== */
 
     /*
-     * Timer 周期中断验证。
+     * Timer 频率由生成配置指定。
      *
-     * 频率来自 JSON：
-     *
-     * timer_frequency_hz
-     *
-     * 当前默认：
-     * 100 Hz = 10 ms。
-     *
-     * Driver ISR 负责：
-     *
-     * 1. 响应 Timer IRQ；
-     * 2. 清除中断状态；
-     * 3. 累加 IRQ Counter。
-     *
-     * 当前没有注册业务 Callback。
-     *
-     * 后续 Control / Trajectory 模块
-     * 可以复用定时器驱动接口。
+     * 当前仅执行定时中断及计数，
+     * 尚未绑定 Control / Trajectory 业务回调。
      */
     if (
         timer_driver_start_periodic(
@@ -193,21 +155,12 @@ int main(void)
      * ===================================================== */
 
     /*
-     * 初始化运行时参数。
+     * 初始化可动态调整的运行参数。
      *
-     * 当前包括 ProtocolTX Period。
-     *
-     * 默认值来自：
-     *
-     * JSON
-     * -> Generated Header
-     * -> task_config.h
-     * -> runtime_config.c
+     * 当前主要包括：
+     * ProtocolTX Period。
      */
-    if (
-        runtime_config_init()
-        != ROBOT_STATUS_OK
-    )
+    if (runtime_config_init() != ROBOT_STATUS_OK)
     {
         while (1)
         {
@@ -220,15 +173,10 @@ int main(void)
      * ===================================================== */
 
     /*
-     * 初始化 UART 发送管理器。
-     *
-     * 保证多个业务任务发送完整协议帧时，
-     * 不会发生帧字节交错。
+     * 保证多个业务 Task 发送协议帧时，
+     * 帧内字节不会相互交错。
      */
-    if (
-        uart_tx_manager_init()
-        != ROBOT_STATUS_OK
-    )
+    if (uart_tx_manager_init() != ROBOT_STATUS_OK)
     {
         while (1)
         {
@@ -240,22 +188,29 @@ int main(void)
      * 6. Performance Monitor
      * ===================================================== */
 
+    /*
+     * 性能监测模块始终初始化。
+     *
+     * 即使关闭启动 Parser Benchmark，
+     * 运行期的 UART ISR -> Task
+     * 唤醒延迟统计仍可使用。
+     */
     performance_monitor_init();
 
 
+    /* =====================================================
+     * 7. Optional Parser Benchmark
+     * ===================================================== */
+
+#if ROBOT_ENABLE_PARSER_BENCHMARK
+
     /*
-     * 启动前执行 Protocol Parser Benchmark。
+     * 在 Scheduler 启动前执行协议解析性能测试。
      *
-     * 样本数量来自 JSON：
+     * 测试次数来自生成配置。
      *
-     * parser_benchmark_samples
-     *
-     * 当前默认值：
-     * 1000 samples。
-     *
-     * 后续应将该测试改为
-     * Development Build 可选功能，
-     * 避免正式固件每次启动强制执行。
+     * Benchmark 失败时停止启动，
+     * 保持现有开发验证行为。
      */
     if (
         performance_monitor_run_parser_benchmark(
@@ -269,28 +224,29 @@ int main(void)
         }
     }
 
+#endif
+
 
     /* =====================================================
-     * 7. Kinematics Self Test
+     * 8. Optional Kinematics Self-Test
      * ===================================================== */
 
+#if ROBOT_ENABLE_KINEMATICS_SELF_TEST
+
     /*
-     * Scheduler 启动前执行运动学自检。
+     * 执行完整运动学自测。
      *
-     * 当前测试覆盖：
+     * 包括：
+     * - Forward Kinematics
+     * - Analytic IK Solver
+     * - Solution Deduplication
+     * - Public IK Integration
+     * - Singularity / Boundary Tests
      *
-     * 1. Forward Kinematics；
-     * 2. Analytic IK Formula Chain；
-     * 3. Public IK Solution Assembly；
-     * 4. Canonical Angle；
-     * 5. Duplicate Solution Detection；
-     * 6. Wrist Singularity。
+     * 失败时停止启动。
      *
-     * 如果出现错误，固件停止启动。
-     *
-     * 注意：
-     * 当前测试并不代表已完成
-     * Python Robotics Toolbox 独立精度对标。
+     * 当 CMake 关闭此选项时，
+     * 测试代码不会链接进入正式固件。
      */
     if (
         kinematics_self_test_run()
@@ -302,15 +258,14 @@ int main(void)
         }
     }
 
+#endif
+
 
     /* =====================================================
-     * 8. Motor Driver Initialization
+     * 9. Motor Driver Initialization
      * ===================================================== */
 
-    if (
-        motor_driver_init()
-        != ROBOT_STATUS_OK
-    )
+    if (motor_driver_init() != ROBOT_STATUS_OK)
     {
         while (1)
         {
@@ -319,18 +274,16 @@ int main(void)
 
 
     /* =====================================================
-     * 9. Initial Joint Targets
+     * 10. Initial Joint Targets
      * ===================================================== */
 
     /*
-     * 向 Motor Driver 设置初始目标。
+     * 设置由 JSON 生成的初始关节目标。
      *
-     * 目标角度已从 JSON 编译进入固件，
-     * 不再在 main.c 中重复写死。
+     * 当前仅更新 Motor Driver 中的目标状态。
      *
-     * 当前仅设置目标状态，
-     * 后续由 ProtocolTX 将目标发送至
-     * Python / PyBullet 仿真端。
+     * 后续 ProtocolTX Task 将目标角度
+     * 发送给 Python / PyBullet 仿真端。
      */
     if (
         motor_driver_set_target_positions(
@@ -346,29 +299,22 @@ int main(void)
 
 
     /* =====================================================
-     * 10. Application Tasks
+     * 11. Application Tasks
      * ===================================================== */
 
     /*
-     * 当前创建：
-     *
-     * 1. ProtocolTX；
-     * 2. ProtocolRX。
+     * 当前实际创建：
+     * - ProtocolTX Task
+     * - ProtocolRX Task
      *
      * ProtocolRX 使用事件驱动：
      *
      * UART RX ISR
-     * ->
-     * Task Notification
-     * ->
-     * Protocol Parser
-     * ->
-     * Application Dispatch。
+     *     -> Task Notification
+     *     -> Protocol Parser
+     *     -> Application Dispatch
      */
-    if (
-        protocol_tasks_start()
-        != ROBOT_STATUS_OK
-    )
+    if (protocol_tasks_start() != ROBOT_STATUS_OK)
     {
         while (1)
         {
@@ -377,17 +323,17 @@ int main(void)
 
 
     /* =====================================================
-     * 11. FreeRTOS Scheduler
+     * 12. FreeRTOS Scheduler
      * ===================================================== */
 
     vTaskStartScheduler();
 
 
     /*
-     * 正常情况下 Scheduler 不会返回。
+     * 正常情况下 Scheduler 不应返回。
      *
-     * 如果返回，可能意味着调度器无法启动。
-     * 停留在此处，避免程序错误继续运行。
+     * 如果返回，停止执行，避免固件
+     * 进入不可预期状态。
      */
     while (1)
     {
