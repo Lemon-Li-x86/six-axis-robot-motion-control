@@ -1,0 +1,22 @@
+name: Native motion regression
+
+on:
+  push:
+    branches:
+      - main
+      - refactor/architecture-cleanup-20261016
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  motion-limits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure native test
+        run: cmake -S firmware/freertos_demo/tests/host -B build/motion-host -DCMAKE_BUILD_TYPE=Debug
+      - name: Build native test
+        run: cmake --build build/motion-host --parallel
+      - name: Run regression
+        run: ctest --test-dir build/motion-host --output-on-failure
