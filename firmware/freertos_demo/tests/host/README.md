@@ -27,3 +27,7 @@ separate build project under `tests/unity`.
 
 If a build fails, do not mark it as passed: capture the compiler output
 and the test report before proceeding.
+
+The test report has a fixed capacity of 40 assertions. Check that the
+recorded total does not exceed this capacity when adding new cases;
+otherwise the report records overflow as a failure.
