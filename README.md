@@ -10,6 +10,18 @@
 轨迹规划、PID 闭环控制以及独立的 Trajectory / Control Task 属于后续开发内容。
 
 
+## 快速回归：运动限位（本机 C 编译器）
+
+不依赖 ARM 工具链、QEMU 或 Unity，复用现有 Motion Limits 测试用例：
+
+```powershell
+cmake -S firmware/freertos_demo/tests/host -B build/motion-host
+cmake --build build/motion-host
+ctest --test-dir build/motion-host --output-on-failure
+```
+
+此测试不能替代 ARM 构建及 QEMU/PyBullet 端到端验证。
+
 ## 第1阶段运行方法
 
 ### 1. 启动 Cortex-M4 / FreeRTOS 通信端
@@ -71,34 +83,22 @@ python simulation\uart_bridge\ur5_uart_bridge.py
 
 ### 3. 预期结果
 
-当前测试目标为：
-
-```text
-Joint 1 = 90°
-Joint 2~6 = 0°
-```
-
-终端应出现：
-
-```text
-RX 0x01 目标角:
-[60.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-```
-
-PyBullet 中 UR5 第一轴将运动到约 60°。
+初始目标角由 `firmware/freertos_demo/config/robot_defaults.json` 的
+`initial_joint_targets_centideg` 决定，单位为 0.01°。下方日志仅为示意，
+不表示当前配置或启动瞬间已经达到目标。
 
 随后可以看到状态反馈：
 
 ```text
 TX 0x81 实际角度:
-[60.0, ...]
+[目标附近的反馈角度, ...]
 ```
 
 以及 Cortex-M4 返回的确认：
 
 ```text
 RX 0x82 MCU 已确认状态:
-[60.0, ...]
+[目标附近的反馈角度, ...]
 ```
 
 同时出现：
