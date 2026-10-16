@@ -619,7 +619,10 @@ int main(void)
     record_result(9U, test_nonpositive_delta_time());
     record_result(10U, test_multiple_wrap_updates());
 
+#ifdef MOTOR_DRIVER_HOST_TEST
+    return (g_motor_test_report.failed == 0U) ? 0 : 1;
+#else
     qemu_motor_test_done();
-
     return 0;
+#endif
 }
