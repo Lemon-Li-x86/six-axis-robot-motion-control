@@ -736,3 +736,76 @@ target_link_libraries(
 set_target_properties(
     qemu_ik_batch PROPERTIES SUFFIX ".elf"
 )
+
+
+# ==========================================================
+# Cortex-M4 UR5 Robot Model Limits Tests
+# ==========================================================
+
+# 独立测试固件，不链接到生产固件 freertos_demo。
+# 测试结果保存在 RAM 中，通过 GDB 读取。
+add_executable(
+    qemu_model_limits_tests
+
+    # 复用已有的 Cortex-M4 测试启动代码。
+    tests/qemu_target/test_startup.s
+
+    # 独立测试入口。
+    tests/model/robot_model_limits_test.c
+
+    # 使用生产固件的真实 UR5 模型。
+    model/ur5_model.c
+
+    # 裸机内存函数。
+    memory.c
+)
+
+target_include_directories(
+    qemu_model_limits_tests
+
+    PRIVATE
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+)
+
+target_compile_options(
+    qemu_model_limits_tests
+
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -ffreestanding
+    -fno-builtin
+    -O0
+    -g3
+)
+
+target_link_options(
+    qemu_model_limits_tests
+
+    PRIVATE
+
+    -mcpu=cortex-m4
+    -mthumb
+    -nostdlib
+
+    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+)
+
+target_link_libraries(
+    qemu_model_limits_tests
+
+    PRIVATE
+
+    gcc
+)
+
+set_target_properties(
+    qemu_model_limits_tests
+
+    PROPERTIES
+
+    SUFFIX ".elf"
+)

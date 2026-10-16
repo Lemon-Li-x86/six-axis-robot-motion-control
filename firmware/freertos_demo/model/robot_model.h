@@ -1,8 +1,9 @@
+
 /*
  * 文件：robot_model.h
  *
  * 用途：
- * 定义机器人本体的静态几何模型。
+ * 定义机器人本体的静态几何与关节限位模型。
  *
  * Robot Model 描述机器人“是什么”，
  * 而不是机器人“现在处于什么状态”。
@@ -11,14 +12,14 @@
  *
  * 1. Standard DH 参数；
  * 2. Public Base Frame 与 DH Base Frame 的转换；
- * 3. DH Tool Frame 与 Public End Frame 的转换。
+ * 3. DH Tool Frame 与 Public End Frame 的转换；
+ * 4. Joint Position Limits。
  *
  * 后续可以继续扩展：
  *
- * 1. Joint Limit；
- * 2. Maximum Velocity；
- * 3. Maximum Acceleration；
- * 4. 其他机器人固有参数。
+ * 1. Maximum Velocity；
+ * 2. Maximum Acceleration；
+ * 3. 其他机器人固有参数。
  *
  * 不应在本模块中保存：
  *
@@ -84,6 +85,35 @@ typedef struct
 
     robot_transform_t
         tool_frame_conversion_inverse;
+
+
+    /* =========================================================
+     * Joint Position Limits
+     * ========================================================= */
+
+    /*
+     * 六轴关节的连续位置下限和上限。
+     *
+     * 数据类型：
+     * robot_joint_positions_t。
+     *
+     * 单位：
+     * 0.01 degree。
+     *
+     * 最小值和最大值均为包含边界。
+     *
+     * 注意：
+     * 本限位使用 Continuous Joint Position，
+     * 而非 [-180°, 180°) 的 Canonical Angle。
+     *
+     * IK 返回的 Canonical Angle
+     * 需先展开为连续位置，再判断是否越界。
+     */
+    robot_joint_positions_t
+        joint_min_positions;
+
+    robot_joint_positions_t
+        joint_max_positions;
 
 } robot_model_t;
 
