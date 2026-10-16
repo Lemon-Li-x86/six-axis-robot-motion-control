@@ -1,4 +1,4 @@
-name: Native motion regression
+name: Native firmware regression
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  motion-limits:
+  native-regression:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
