@@ -3,18 +3,17 @@
 # 文件：firmware/freertos_demo/CMakeLists.txt
 #
 # 用途：
-# 构建 Cortex-M4 / FreeRTOS 固件。
+# 构建 Cortex-M4 / FreeRTOS 固件和独立 QEMU 测试固件。
 #
 # 主要职责：
-# 1. 查找 ARM 固件依赖；
-# 2. 从 JSON 生成固件默认参数头文件；
-# 3. 编译 Driver、Protocol、Model、Kinematics；
-# 4. 编译 FreeRTOS Kernel；
-# 5. 链接 Cortex-M4 ELF 固件。
+# 1. 查找构建依赖，生成固件默认参数头文件；
+# 2. 定义 FreeRTOS 主固件的源码和编译参数；
+# 3. 定义 QEMU 独立测试目标；
+# 4. 统一 Cortex-M4 测试目标的公共编译和链接参数。
 #
 # 注意：
-# JSON 文件只在 Host 构建阶段使用。
-# Cortex-M4 固件不需要 Python 或 JSON 解析器。
+# JSON 仅在 Host 构建阶段解析。
+# QEMU 测试目标使用独立 main()，不得加入 freertos_demo。
 # ==========================================================
 
 
@@ -28,8 +27,7 @@ set(
     "${CMAKE_SOURCE_DIR}/third_party/FreeRTOS-Kernel"
 )
 
-# Python 只运行在开发计算机上，
-# 用于生成编译时配置。
+# Python 仅在 Host 上生成配置头文件。
 find_package(
     Python3
     REQUIRED
@@ -41,22 +39,17 @@ find_package(
 # 2. Firmware Configuration Generation
 # ==========================================================
 
-# JSON 默认参数文件。
 set(
     FIRMWARE_CONFIG_JSON
     "${CMAKE_CURRENT_SOURCE_DIR}/config/robot_defaults.json"
 )
 
-# Python 配置生成脚本。
 set(
     FIRMWARE_CONFIG_GENERATOR
     "${CMAKE_SOURCE_DIR}/tools/generate_firmware_defaults.py"
 )
 
-# 所有自动生成的头文件统一放在 Build 目录。
-#
-# 不在源代码目录写入自动生成结果，
-# 避免生成文件混入 Git。
+# 生成文件放在构建目录，避免写入源码仓库。
 set(
     FIRMWARE_GENERATED_INCLUDE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -67,19 +60,6 @@ set(
     "${FIRMWARE_GENERATED_INCLUDE_DIR}/firmware_defaults_generated.h"
 )
 
-# 自定义生成规则。
-#
-# OUTPUT:
-#   生成的 .h 文件。
-#
-# COMMAND:
-#   运行 Python 脚本。
-#
-# DEPENDS:
-#   JSON 或脚本变化时，重新生成头文件。
-#
-# VERBATIM:
-#   让 CMake 正确处理参数与路径中的特殊字符。
 add_custom_command(
     OUTPUT
         "${FIRMWARE_GENERATED_HEADER}"
@@ -102,11 +82,6 @@ add_custom_command(
     VERBATIM
 )
 
-# 独立配置生成目标。
-#
-# 可以单独执行：
-# cmake --build build/cmake-arm
-#       --target firmware_defaults_header
 add_custom_target(
     firmware_defaults_header
 
@@ -116,7 +91,7 @@ add_custom_target(
 
 
 # ==========================================================
-# 3. Firmware Source Files
+# 3. FreeRTOS Firmware Sources
 # ==========================================================
 
 add_executable(
@@ -125,124 +100,95 @@ add_executable(
     # ------------------------------------------------------
     # System / BSP
     # ------------------------------------------------------
-
     startup.s
     main.c
     board.c
     memory.c
 
-
     # ------------------------------------------------------
     # Robot Model
     # ------------------------------------------------------
-
     model/ur5_model.c
-
 
     # ------------------------------------------------------
     # Driver Layer
     # ------------------------------------------------------
-
     drivers/uart_driver.c
     drivers/motor_driver.c
     drivers/timer_driver.c
     drivers/gpio_driver.c
 
-
     # ------------------------------------------------------
     # Communication Layer
     # ------------------------------------------------------
-
     communications/protocol.c
     communications/ring_buffer.c
-
 
     # ------------------------------------------------------
     # Application Layer
     # ------------------------------------------------------
-
     application/uart_tx_manager.c
     application/protocol_tasks.c
     application/runtime_config.c
 
-
     # ------------------------------------------------------
     # Diagnostics
     # ------------------------------------------------------
-
     diagnostics/performance_monitor.c
-
 
     # ------------------------------------------------------
     # Algorithm / Math
     # ------------------------------------------------------
-
     algorithms/math/matrix4.c
-
 
     # ------------------------------------------------------
     # Algorithm / Kinematics
     # ------------------------------------------------------
-
     algorithms/kinematics/kinematics_common.c
     algorithms/kinematics/kinematics_forward.c
     algorithms/kinematics/ur5_analytic_ik.c
     algorithms/kinematics/kinematics_inverse.c
 
-
     # ------------------------------------------------------
     # Tests / Kinematics
     # ------------------------------------------------------
-
+    # 当前阶段通过主固件的 Self-Test 入口执行。
+    # 后续生产版本可再将 Self-Test 独立为构建选项。
     tests/kinematics/kinematics_test_support.c
     tests/kinematics/kinematics_fk_test.c
     tests/kinematics/kinematics_ik_solver_test.c
     tests/kinematics/kinematics_ik_test.c
     tests/kinematics/kinematics_self_test.c
-
+    tests/kinematics/kinematics_dedup_test.c
 
     # ------------------------------------------------------
     # FreeRTOS Kernel
     # ------------------------------------------------------
-
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/list.c
     ${FREERTOS_DIR}/queue.c
 
-
     # ------------------------------------------------------
     # Cortex-M FreeRTOS Port
     # ------------------------------------------------------
-
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3/port.c
-
 
     # ------------------------------------------------------
     # FreeRTOS Memory Management
     # ------------------------------------------------------
-
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
 )
 
 
 # ==========================================================
-# 4. Build Dependency
+# 4. FreeRTOS Firmware Build Settings
 # ==========================================================
 
-# 必须先完成配置生成，
-# 然后才允许编译固件。
-#
-# 避免并行构建时出现：
-# 编译器尝试读取尚未生成的头文件。
+# 参数生成必须先于固件编译完成。
 add_dependencies(
     freertos_demo
     firmware_defaults_header
 )
-
-
-# ==========================================================
-# 5. Include Paths
-# ==========================================================
 
 target_include_directories(
     freertos_demo
@@ -250,44 +196,21 @@ target_include_directories(
     PRIVATE
 
     ${CMAKE_CURRENT_SOURCE_DIR}
-
-    # 自动生成的配置头文件。
     "${FIRMWARE_GENERATED_INCLUDE_DIR}"
 
-    # Common
     ${CMAKE_CURRENT_SOURCE_DIR}/common
-
-    # Robot Model
     ${CMAKE_CURRENT_SOURCE_DIR}/model
-
-    # Drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
-
-    # Communications
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
-
-    # Application
     ${CMAKE_CURRENT_SOURCE_DIR}/application
-
-    # Diagnostics
     ${CMAKE_CURRENT_SOURCE_DIR}/diagnostics
-
-    # Algorithms
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
-
-    # Tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/kinematics
 
-    # FreeRTOS
     ${FREERTOS_DIR}/include
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
 )
-
-
-# ==========================================================
-# 6. Compile Options
-# ==========================================================
 
 target_compile_options(
     freertos_demo
@@ -296,15 +219,9 @@ target_compile_options(
 
     -mcpu=cortex-m4
     -mthumb
-
     -ffreestanding
     -fno-builtin
 )
-
-
-# ==========================================================
-# 7. Link Options
-# ==========================================================
 
 target_link_options(
     freertos_demo
@@ -313,16 +230,9 @@ target_link_options(
 
     -mcpu=cortex-m4
     -mthumb
-
     -nostdlib
-
     "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
 )
-
-
-# ==========================================================
-# 8. Libraries
-# ==========================================================
 
 target_link_libraries(
     freertos_demo
@@ -333,11 +243,6 @@ target_link_libraries(
     gcc
 )
 
-
-# ==========================================================
-# 9. Firmware Output
-# ==========================================================
-
 set_target_properties(
     freertos_demo
 
@@ -348,119 +253,90 @@ set_target_properties(
 
 
 # ==========================================================
-# Kinematics Deduplication Unit Test
+# 5. QEMU Test Common Settings
 # ==========================================================
 
-# 单独编译逆解去重测试。
-# 目标端执行由 kinematics_self_test_run() 统一管理。
-target_sources(
-    freertos_demo
-
-    PRIVATE
-
-    tests/kinematics/kinematics_dedup_test.c
-)
-
-# ==========================================================
-# QEMU Cortex-M4 Protocol / Ring Buffer Target Tests
-# ==========================================================
-
-# 独立于生产固件的测试 ELF。
+# @brief 为已有 QEMU 测试目标配置公共编译和链接选项。
 #
-# 采用真实 ARM Cortex-M4 编译器，
-# 直接链接生产使用的 Protocol 和 Ring Buffer。
+# 使用方式：
+# configure_qemu_target(qemu_xxx_tests)
+# configure_qemu_target(qemu_xxx_batch m)
 #
-# 当前不包含 IRQ / FreeRTOS 上下文测试，
-# 后续会扩展单独的中断集成测试。
+# 注意：
+# 测试入口和生产源码在 add_executable() 中单独声明；
+# 本函数不添加 main()，不修改源码归属。
+# ARGN 为目标额外需要的链接库，例如 m。
+function(configure_qemu_target target_name)
+    target_compile_options(
+        ${target_name}
+
+        PRIVATE
+
+        -mcpu=cortex-m4
+        -mthumb
+        -ffreestanding
+        -fno-builtin
+        -O0
+        -g3
+    )
+
+    target_link_options(
+        ${target_name}
+
+        PRIVATE
+
+        -mcpu=cortex-m4
+        -mthumb
+        -nostdlib
+        "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+    )
+
+    # m 必须排在 gcc 之前，保持原有库链接顺序。
+    target_link_libraries(
+        ${target_name}
+
+        PRIVATE
+
+        ${ARGN}
+        gcc
+    )
+
+    set_target_properties(
+        ${target_name}
+
+        PROPERTIES
+
+        SUFFIX ".elf"
+    )
+endfunction()
 
 
 # ==========================================================
-# QEMU Cortex-M4 Protocol / Ring Buffer Tests
+# 6. QEMU Protocol / Ring Buffer Tests
 # ==========================================================
 
 add_executable(
     qemu_protocol_tests
 
-    # 测试固件独立启动代码。
     tests/qemu_target/test_startup.s
-
-    # 目标端测试入口及测试用例。
     tests/qemu_target/protocol_test_main.c
-
-    # 与生产固件相同的通信协议实现。
     communications/protocol.c
     communications/ring_buffer.c
-
-    # 裸机内存操作实现。
-    #
-    # 测试固件使用 -nostdlib，
-    # 不自动链接标准 C Runtime。
-    #
-    # 编译器可能在结构体初始化、内存复制时
-    # 自动生成 memcpy / memset 调用。
-    #
-    # 因此必须包含生产固件已有的 memory.c。
     memory.c
 )
 
-
 target_include_directories(
     qemu_protocol_tests
-
     PRIVATE
-
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 )
 
-target_compile_options(
-    qemu_protocol_tests
-
-    PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-
-    -ffreestanding
-    -fno-builtin
-
-    # 保留完整源码调试信息。
-    -O0
-    -g3
-)
-
-target_link_options(
-    qemu_protocol_tests
-
-    PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-
-    -nostdlib
-
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(
-    qemu_protocol_tests
-
-    PRIVATE
-
-    gcc
-)
-
-set_target_properties(
-    qemu_protocol_tests
-
-    PROPERTIES
-
-    SUFFIX ".elf"
-)
+configure_qemu_target(qemu_protocol_tests)
 
 
 # ==========================================================
-# Cortex-M4 UART TX Boundary Test
+# 7. QEMU UART TX Boundary Tests
 # ==========================================================
 
 add_executable(
@@ -468,12 +344,8 @@ add_executable(
 
     tests/qemu_target/test_startup.s
     tests/qemu_target/uart_tx_boundary_main.c
-
-    # 生产版驱动与缓冲区实现。
     drivers/uart_driver.c
     communications/ring_buffer.c
-
-    # -nostdlib 环境所需内存函数。
     memory.c
 )
 
@@ -485,57 +357,19 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
 )
 
-target_compile_options(
-    qemu_uart_tx_tests
-    PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -ffreestanding
-    -fno-builtin
-    -O0
-    -g3
-)
-
-target_link_options(
-    qemu_uart_tx_tests
-    PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -nostdlib
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(
-    qemu_uart_tx_tests
-    PRIVATE
-    gcc
-)
-
-set_target_properties(
-    qemu_uart_tx_tests
-    PROPERTIES
-    SUFFIX ".elf"
-)
-
+configure_qemu_target(qemu_uart_tx_tests)
 
 
 # ==========================================================
-# Cortex-M4 Motor Driver Target Tests
+# 8. QEMU Motor Driver Tests
 # ==========================================================
 
 add_executable(
     qemu_motor_tests
 
-    # 复用独立测试启动文件。
     tests/qemu_target/test_startup.s
-
-    # Motor Driver 目标端测试入口。
     tests/qemu_target/motor_test_main.c
-
-    # 真实生产驱动。
     drivers/motor_driver.c
-
-    # Freestanding 内存函数。
     memory.c
 )
 
@@ -546,42 +380,11 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 )
 
-target_compile_options(
-    qemu_motor_tests
-    PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -ffreestanding
-    -fno-builtin
-    -O0
-    -g3
-)
-
-target_link_options(
-    qemu_motor_tests
-    PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -nostdlib
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(
-    qemu_motor_tests
-    PRIVATE
-    gcc
-)
-
-set_target_properties(
-    qemu_motor_tests
-    PROPERTIES
-    SUFFIX ".elf"
-)
-
+configure_qemu_target(qemu_motor_tests)
 
 
 # ==========================================================
-# Cortex-M4 GPIO Shadow Backend Tests
+# 9. QEMU GPIO Shadow Backend Tests
 # ==========================================================
 
 add_executable(
@@ -589,7 +392,6 @@ add_executable(
 
     tests/qemu_target/test_startup.s
     tests/qemu_target/gpio_shadow_test_main.c
-
     drivers/gpio_driver.c
     memory.c
 )
@@ -597,50 +399,20 @@ add_executable(
 target_include_directories(
     qemu_gpio_tests
     PRIVATE
-
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
 )
 
-target_compile_options(
-    qemu_gpio_tests
-    PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -ffreestanding
-    -fno-builtin
-    -O0
-    -g3
-)
-
-target_link_options(
-    qemu_gpio_tests
-    PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -nostdlib
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(
-    qemu_gpio_tests
-    PRIVATE
-    gcc
-)
-
-set_target_properties(
-    qemu_gpio_tests
-    PROPERTIES
-    SUFFIX ".elf"
-)
+configure_qemu_target(qemu_gpio_tests)
 
 
-# Cortex-M4 FK Batch Cross Validation
+# ==========================================================
+# 10. QEMU FK Batch Cross Validation
+# ==========================================================
 
 add_executable(
     qemu_fk_batch
+
     tests/qemu_target/test_startup.s
     tests/qemu_target/fk_batch_test_main.c
     algorithms/kinematics/kinematics_forward.c
@@ -650,36 +422,19 @@ add_executable(
 )
 
 target_include_directories(
-    qemu_fk_batch PRIVATE
+    qemu_fk_batch
+    PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/model
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
 )
 
-target_compile_options(
-    qemu_fk_batch PRIVATE
-    -mcpu=cortex-m4 -mthumb
-    -ffreestanding -fno-builtin
-    -O0 -g3
-)
-
-target_link_options(
-    qemu_fk_batch PRIVATE
-    -mcpu=cortex-m4 -mthumb
-    -nostdlib
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(qemu_fk_batch PRIVATE m gcc)
-
-set_target_properties(
-    qemu_fk_batch PROPERTIES SUFFIX ".elf"
-)
+configure_qemu_target(qemu_fk_batch m)
 
 
 # ==========================================================
-# Cortex-M4 IK Batch Diagnostic
+# 11. QEMU IK Batch Diagnostic
 # ==========================================================
 
 add_executable(
@@ -687,125 +442,119 @@ add_executable(
 
     tests/qemu_target/test_startup.s
     tests/qemu_target/ik_batch_test_main.c
-
     model/ur5_model.c
-
     algorithms/math/matrix4.c
-
     algorithms/kinematics/kinematics_common.c
     algorithms/kinematics/kinematics_forward.c
     algorithms/kinematics/kinematics_inverse.c
     algorithms/kinematics/ur5_analytic_ik.c
-
     memory.c
 )
 
 target_include_directories(
-    qemu_ik_batch PRIVATE
-
+    qemu_ik_batch
+    PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/model
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
 )
 
-target_compile_options(
-    qemu_ik_batch PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -ffreestanding
-    -fno-builtin
-    -O0
-    -g3
-)
-
-target_link_options(
-    qemu_ik_batch PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -nostdlib
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
-)
-
-target_link_libraries(
-    qemu_ik_batch PRIVATE m gcc
-)
-
-set_target_properties(
-    qemu_ik_batch PROPERTIES SUFFIX ".elf"
-)
+configure_qemu_target(qemu_ik_batch m)
 
 
 # ==========================================================
-# Cortex-M4 UR5 Robot Model Limits Tests
+# 12. QEMU Robot Model Limits Tests
 # ==========================================================
 
-# 独立测试固件，不链接到生产固件 freertos_demo。
-# 测试结果保存在 RAM 中，通过 GDB 读取。
+# 此测试使用独立的 main()，不应链接进 freertos_demo。
 add_executable(
     qemu_model_limits_tests
 
-    # 复用已有的 Cortex-M4 测试启动代码。
     tests/qemu_target/test_startup.s
-
-    # 独立测试入口。
     tests/model/robot_model_limits_test.c
-
-    # 使用生产固件的真实 UR5 模型。
     model/ur5_model.c
-
-    # 裸机内存函数。
     memory.c
 )
 
 target_include_directories(
     qemu_model_limits_tests
-
     PRIVATE
-
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/model
 )
 
-target_compile_options(
-    qemu_model_limits_tests
+configure_qemu_target(qemu_model_limits_tests)
 
+# ==========================================================
+# Stage 3 - Motion Limits
+# ==========================================================
+
+# 生产固件使用的限位算法。
+target_sources(
+    freertos_demo
     PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -ffreestanding
-    -fno-builtin
-    -O0
-    -g3
+    algorithms/motion/motion_limits.c
 )
 
-target_link_options(
-    qemu_model_limits_tests
-
+target_include_directories(
+    freertos_demo
     PRIVATE
-
-    -mcpu=cortex-m4
-    -mthumb
-    -nostdlib
-
-    "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/motion
 )
 
-target_link_libraries(
-    qemu_model_limits_tests
 
+# ==========================================================
+# Cortex-M4 Motion Limits Tests
+# ==========================================================
+
+# 独立 QEMU 测试，不与正式固件的 main() 链接。
+add_executable(
+    qemu_motion_limits_tests
+
+    tests/qemu_target/test_startup.s
+    tests/motion/motion_limits_test_main.c
+
+    algorithms/motion/motion_limits.c
+    model/ur5_model.c
+    memory.c
+)
+
+target_include_directories(
+    qemu_motion_limits_tests
     PRIVATE
-
-    gcc
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/motion
 )
 
-set_target_properties(
-    qemu_model_limits_tests
+# 兼容此前整理版 CMake 和原始分散目标配置。
+if(COMMAND configure_qemu_target)
+    configure_qemu_target(qemu_motion_limits_tests)
+else()
+    target_compile_options(
+        qemu_motion_limits_tests PRIVATE
+        -mcpu=cortex-m4
+        -mthumb
+        -ffreestanding
+        -fno-builtin
+        -O0
+        -g3
+    )
 
-    PROPERTIES
+    target_link_options(
+        qemu_motion_limits_tests PRIVATE
+        -mcpu=cortex-m4
+        -mthumb
+        -nostdlib
+        "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
+    )
 
-    SUFFIX ".elf"
-)
+    target_link_libraries(
+        qemu_motion_limits_tests PRIVATE gcc
+    )
+
+    set_target_properties(
+        qemu_motion_limits_tests PROPERTIES SUFFIX ".elf"
+    )
+endif()
