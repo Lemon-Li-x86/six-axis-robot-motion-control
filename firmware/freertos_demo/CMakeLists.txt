@@ -84,6 +84,7 @@ add_executable(freertos_demo
     application/uart_tx_manager.c
     application/protocol_tasks.c
     application/runtime_config.c
+    application/motor_state.c
 
     # Application / command services
     application/services/protocol_commands.c
