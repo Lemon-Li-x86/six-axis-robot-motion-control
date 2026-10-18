@@ -590,7 +590,12 @@ static void record_result(
 /*
  * 在此函数上设置 GDB 断点，
  * 即可查看全部目标端测试结果。
+ *
+ * Windows Host Test 不编译此函数，
+ * 避免 MSVC 无法识别 GCC 汇编语法。
  */
+#ifndef MOTOR_DRIVER_HOST_TEST
+
 __attribute__((noinline))
 void qemu_motor_test_done(void)
 {
@@ -599,6 +604,8 @@ void qemu_motor_test_done(void)
         __asm volatile ("nop");
     }
 }
+
+#endif
 
 
 int main(void)

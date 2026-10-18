@@ -1,3 +1,4 @@
+
 /*
  * 文件：motion_limits_test_main.c
  *
@@ -10,8 +11,11 @@
  * 4. 第三关节的特殊限位；
  * 5. 输入异常和失败时输出不变。
  *
- * 不使用标准输出函数。
- * 测试结果通过 GDB 从全局变量读取。
+ * QEMU 测试结果通过 GDB 从全局变量读取。
+ *
+ * 本文件同时支持：
+ * - ARM GCC / QEMU
+ * - Windows MSVC Host Test
  */
 
 #include <stddef.h>
@@ -163,14 +167,53 @@ static void run_check_tests(void)
         == ROBOT_STATUS_OK
     );
 
-    record_test_result(test_one_position(0U, 36000, ROBOT_STATUS_OK));
-    record_test_result(test_one_position(0U, -36000, ROBOT_STATUS_OK));
-    record_test_result(test_one_position(2U, 18000, ROBOT_STATUS_OK));
-    record_test_result(test_one_position(2U, -18000, ROBOT_STATUS_OK));
-    record_test_result(test_one_position(0U, 36001, ROBOT_STATUS_ERROR_OUT_OF_RANGE));
-    record_test_result(test_one_position(0U, -36001, ROBOT_STATUS_ERROR_OUT_OF_RANGE));
-    record_test_result(test_one_position(2U, 18001, ROBOT_STATUS_ERROR_OUT_OF_RANGE));
-    record_test_result(test_one_position(2U, -18001, ROBOT_STATUS_ERROR_OUT_OF_RANGE));
+    record_test_result(
+        test_one_position(0U, 36000, ROBOT_STATUS_OK)
+    );
+
+    record_test_result(
+        test_one_position(0U, -36000, ROBOT_STATUS_OK)
+    );
+
+    record_test_result(
+        test_one_position(2U, 18000, ROBOT_STATUS_OK)
+    );
+
+    record_test_result(
+        test_one_position(2U, -18000, ROBOT_STATUS_OK)
+    );
+
+    record_test_result(
+        test_one_position(
+            0U,
+            36001,
+            ROBOT_STATUS_ERROR_OUT_OF_RANGE
+        )
+    );
+
+    record_test_result(
+        test_one_position(
+            0U,
+            -36001,
+            ROBOT_STATUS_ERROR_OUT_OF_RANGE
+        )
+    );
+
+    record_test_result(
+        test_one_position(
+            2U,
+            18001,
+            ROBOT_STATUS_ERROR_OUT_OF_RANGE
+        )
+    );
+
+    record_test_result(
+        test_one_position(
+            2U,
+            -18001,
+            ROBOT_STATUS_ERROR_OUT_OF_RANGE
+        )
+    );
 }
 
 
@@ -183,23 +226,35 @@ static void run_unwrap_tests(void)
     uint32_t all_zero;
 
     record_test_result(
-        motion_limits_unwrap_nearest(NULL, &current, &actual)
-        == ROBOT_STATUS_ERROR_NULL_POINTER
+        motion_limits_unwrap_nearest(
+            NULL,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_ERROR_NULL_POINTER
     );
 
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, NULL, &actual)
-        == ROBOT_STATUS_ERROR_NULL_POINTER
+        motion_limits_unwrap_nearest(
+            &canonical,
+            NULL,
+            &actual
+        ) == ROBOT_STATUS_ERROR_NULL_POINTER
     );
 
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, &current, NULL)
-        == ROBOT_STATUS_ERROR_NULL_POINTER
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            NULL
+        ) == ROBOT_STATUS_ERROR_NULL_POINTER
     );
 
     all_zero = (
-        motion_limits_unwrap_nearest(&canonical, &current, &actual)
-        == ROBOT_STATUS_OK
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_OK
     ) ? 1U : 0U;
 
     for (i = 0U; i < ROBOT_JOINT_COUNT; i++)
@@ -213,48 +268,87 @@ static void run_unwrap_tests(void)
     record_test_result(all_zero);
 
     /* +/-180° 规范化回绕。 */
-    record_test_result(test_one_unwrap(0U, 17500, -17000, 19000));
-    record_test_result(test_one_unwrap(0U, -17500, 17000, -19000));
+    record_test_result(
+        test_one_unwrap(0U, 17500, -17000, 19000)
+    );
+
+    record_test_result(
+        test_one_unwrap(0U, -17500, 17000, -19000)
+    );
 
     /* 关节已经转过接近完整一圈。 */
-    record_test_result(test_one_unwrap(0U, 35000, -1000, 35000));
-    record_test_result(test_one_unwrap(0U, -35000, 1000, -35000));
+    record_test_result(
+        test_one_unwrap(0U, 35000, -1000, 35000)
+    );
 
-    /* J3 仅允许 +/-180°：最近等效角越限时退回合法解。 */
-    record_test_result(test_one_unwrap(2U, -17500, 17000, 17000));
-    record_test_result(test_one_unwrap(2U, 17500, -17000, -17000));
+    record_test_result(
+        test_one_unwrap(0U, -35000, 1000, -35000)
+    );
+
+    /*
+     * J3 仅允许 +/-180°：
+     * 最近等效角越限时退回合法解。
+     */
+    record_test_result(
+        test_one_unwrap(2U, -17500, 17000, 17000)
+    );
+
+    record_test_result(
+        test_one_unwrap(2U, 17500, -17000, -17000)
+    );
 
     /* 半圈平局：优先较大的连续角。 */
-    record_test_result(test_one_unwrap(2U, 0, -18000, 18000));
-    record_test_result(test_one_unwrap(2U, -18000, -18000, -18000));
+    record_test_result(
+        test_one_unwrap(2U, 0, -18000, 18000)
+    );
+
+    record_test_result(
+        test_one_unwrap(2U, -18000, -18000, -18000)
+    );
 
     /* 不接受非 Canonical 输入。 */
     canonical.value[0] = 18000;
+
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, &current, &actual)
-        == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
     );
 
     canonical.value[0] = -18001;
+
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, &current, &actual)
-        == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
     );
 
     canonical.value[0] = 0;
     current.value[2] = 18001;
+
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, &current, &actual)
-        == ROBOT_STATUS_ERROR_OUT_OF_RANGE
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_ERROR_OUT_OF_RANGE
     );
 
     /* 出错时保持调用者已写入的输出不变。 */
     current.value[2] = 0;
     canonical.value[0] = 18000;
     actual.value[0] = 12345;
+
     record_test_result(
-        motion_limits_unwrap_nearest(&canonical, &current, &actual)
-            == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
+        motion_limits_unwrap_nearest(
+            &canonical,
+            &current,
+            &actual
+        ) == ROBOT_STATUS_ERROR_INVALID_ARGUMENT
         && actual.value[0] == 12345
     );
 
@@ -282,11 +376,22 @@ static void run_unwrap_tests(void)
     }
 
     /* 正负完整一圈边界与无跨界情形。 */
-    record_test_result(test_one_unwrap(0U, 36000, 0, 36000));
-    record_test_result(test_one_unwrap(0U, -36000, 0, -36000));
-    record_test_result(test_one_unwrap(0U, 6500, 6500, 6500));
+    record_test_result(
+        test_one_unwrap(0U, 36000, 0, 36000)
+    );
 
-    /* 后面的关节非法时，前面关节的临时结果不得泄漏。 */
+    record_test_result(
+        test_one_unwrap(0U, -36000, 0, -36000)
+    );
+
+    record_test_result(
+        test_one_unwrap(0U, 6500, 6500, 6500)
+    );
+
+    /*
+     * 后面的关节非法时，
+     * 前面关节的临时结果不得泄漏。
+     */
     {
         robot_joint_positions_t late_current = {{0}};
         robot_joint_positions_t late_output = {{0}};
@@ -313,7 +418,20 @@ static void run_unwrap_tests(void)
  * GDB Completion Breakpoint
  * ========================================================= */
 
+/*
+ * GCC 专用 noinline 属性只在 ARM 测试中使用。
+ *
+ * Windows Host Test 使用 MSVC 编译时，
+ * 不编译 GCC 专用属性和内联汇编。
+ *
+ * 保留函数定义，使 Host Test 和 QEMU Test
+ * 能够共用同一个 main()。
+ */
+
+#ifndef MOTION_LIMITS_HOST_TEST
 __attribute__((noinline))
+#endif
+
 void qemu_motion_limits_done(void)
 {
 #ifndef MOTION_LIMITS_HOST_TEST
@@ -338,7 +456,11 @@ int main(void)
     g_motion_limits_test_report.passed = 0U;
     g_motion_limits_test_report.failed = 0U;
 
-    for (i = 0U; i < MOTION_LIMITS_TEST_CAPACITY; i++)
+    for (
+        i = 0U;
+        i < MOTION_LIMITS_TEST_CAPACITY;
+        i++
+    )
     {
         g_motion_limits_test_report.results[i] = 0U;
     }
@@ -347,11 +469,18 @@ int main(void)
     run_unwrap_tests();
 
     g_motion_limits_finished = 1U;
+
     qemu_motion_limits_done();
 
 #ifdef MOTION_LIMITS_HOST_TEST
-    return (g_motion_limits_test_report.failed == 0U) ? 0 : 1;
+
+    return (
+        g_motion_limits_test_report.failed == 0U
+    ) ? 0 : 1;
+
 #else
+
     return 0;
+
 #endif
 }
