@@ -43,6 +43,7 @@ robot_status_t motor_state_get_targets(robot_joint_angles_t *targets);
  * Clock wrap is supported for elapsed intervals less than half the
  * uint32_t tick range; callers must check freshness every control cycle.
  * max_age_ticks must be positive and <= INT32_MAX.
+ * No automatic actuator stop or fault recovery exists yet.
  */
 uint8_t motor_state_feedback_is_fresh(
     const motor_state_observation_t *observation,
