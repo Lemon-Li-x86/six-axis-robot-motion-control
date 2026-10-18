@@ -18,7 +18,7 @@
 #include "uart_tx_manager.h"
 
 #include "uart_driver.h"
-#include "motor_driver.h"
+#include "motor_state.h"
 #include "timer_driver.h"
 
 #include "performance_monitor.h"
@@ -58,7 +58,7 @@ static void handle_joint_state(
 )
 {
     robot_joint_angles_t received_joint_states;
-    robot_joint_angles_t stored_joint_states;
+    motor_state_observation_t stored_feedback;
 
     uint8_t ack_frame[PROTOCOL_JOINT_FRAME_LEN];
 
@@ -111,9 +111,10 @@ static void handle_joint_state(
      * unwrapped positions and estimated velocities.
      */
     if (
-        motor_driver_update_feedback(
+        motor_state_update_feedback(
             &received_joint_states,
-            delta_time_s
+            delta_time_s,
+            current_tick
         ) != ROBOT_STATUS_OK
     )
     {
@@ -134,8 +135,8 @@ static void handle_joint_state(
      * state, not the raw received payload.
      */
     if (
-        motor_driver_get_positions(
-            &stored_joint_states
+        motor_state_get_feedback(
+            &stored_feedback
         ) != ROBOT_STATUS_OK
     )
     {
@@ -144,7 +145,7 @@ static void handle_joint_state(
 
     if (
         protocol_build_joint_state_ack_frame(
-            &stored_joint_states,
+            &stored_feedback.feedback.canonical_positions,
             ack_frame
         ) != ROBOT_STATUS_OK
     )
