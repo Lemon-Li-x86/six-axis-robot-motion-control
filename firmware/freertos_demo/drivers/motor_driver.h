@@ -124,6 +124,14 @@ robot_status_t motor_driver_get_target_positions(
  * 仍然更新位置，
  * 但当前速度统一置为 0。
  *
+ * 六轴作为一组反馈样本验证后提交。
+ * 如果连续位置累积超出 int32_t 范围，
+ * 返回 ROBOT_STATUS_ERROR_OUT_OF_RANGE，
+ * 之前的整组六轴位置与速度均保持不变。
+ *
+ * 注意：整组提交并不自动保证不同 FreeRTOS 任务之间
+ * 的原子快照；接入并发 Control Task 时仍须设计同步。
+ *
  * @return
  * ROBOT_STATUS_OK：
  * 更新成功。
