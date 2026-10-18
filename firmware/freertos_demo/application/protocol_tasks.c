@@ -29,7 +29,7 @@
 #include "protocol_commands.h"
 
 #include "uart_driver.h"
-#include "motor_driver.h"
+#include "motor_state.h"
 
 #include "protocol.h"
 #include "robot_types.h"
@@ -90,7 +90,7 @@ static void task_protocol_tx(void *parameters)
          * Read the current canonical joint targets.
          */
         if (
-            motor_driver_get_target_positions(
+            motor_state_get_targets(
                 &joint_targets
             ) == ROBOT_STATUS_OK
         )
