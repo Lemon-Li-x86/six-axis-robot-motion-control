@@ -65,3 +65,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 add_test(NAME motor_driver_host COMMAND motor_driver_host_test)
+
+# Exercise long-running canonical feedback wrap near the int32 position limits.
+add_executable(motor_feedback_safety_host_test
+    motor_feedback_safety_test.c
+    ${FIRMWARE_ROOT}/drivers/motor_driver.c
+)
+target_include_directories(motor_feedback_safety_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/drivers
+)
+set_target_properties(motor_feedback_safety_host_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(motor_feedback_safety_host_test PRIVATE
+        -Wall -Wextra -Wpedantic
+    )
+endif()
+add_test(NAME motor_feedback_safety_host COMMAND motor_feedback_safety_host_test)
