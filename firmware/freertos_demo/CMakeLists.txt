@@ -134,6 +134,7 @@ add_executable(freertos_demo
 
     # Algorithms / motion
     algorithms/motion/motion_limits.c
+    algorithms/motion/ik_solution_selector.c
 
     # FreeRTOS kernel and Cortex-M port
     ${FREERTOS_SOURCE_DIR}/tasks.c
