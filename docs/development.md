@@ -66,7 +66,30 @@ cmake --build --preset arm-qemu
 当前 CMake 定义了独立 QEMU 测试固件目标，但**目标存在、构建成功、
 测试实际运行**是三件事，必须分别验收。
 
-## 6. Git 工作方式
+## 6. Cleanup 回归门槛
+
+工作分支的 GitHub Actions 现有两道独立检查：
+
+- `native-regression`：在 Ubuntu 上运行三个 CTest 本机回归目标。
+- `arm-firmware-build`：安装 ARM GCC 与 Ninja，克隆固定标签
+  `FreeRTOS-Kernel V11.1.0`，执行 `cmake --preset arm-qemu` 和全目标构建。
+
+通过 ARM ELF 构建**不等于**已经在 QEMU 执行测试固件，
+也不等于 PyBullet/UART 端到端联调成功。真实闭环控制的故障处理
+与物理硬件验证须在 Control Task 实装时独立验收。
+
+当前唯一 Motor Driver 反馈写入任务是 ProtocolRX。
+任务运行期间，反馈更新、快照及目标读写统一经过
+`application/motor_state.c` 的同一 Mutex。
+`motor_driver.c` 保持 RTOS 无关；初始化阶段、Scheduler 启动前，
+`main.c` 可以直接初始化驱动和初始目标。
+接入 Control Task 时不得绕过 `motor_state` 访问状态。
+
+反馈超时判定函数只报告新鲜度，没有启停执行器的副作用。
+为防止误用，未经超时阈值、停机策略和恢复测试，不允许将其
+宣称为已实现的机器人运行安全机制。
+
+## 7. Git 工作方式
 
 重构期间保留原始备份分支，只在工作分支修改，`main` 不直接改。
 每次提交尽量保持单一主题：`build`、`refactor`、`test`、`docs`、
