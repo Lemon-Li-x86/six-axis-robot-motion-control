@@ -20,3 +20,20 @@ jobs:
         run: cmake --build build/motion-host --parallel
       - name: Run regression
         run: ctest --test-dir build/motion-host --output-on-failure
+
+  arm-firmware-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install ARM compiler and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi ninja-build
+      - name: Fetch FreeRTOS Kernel
+        run: |
+          git clone --depth 1 --branch V11.1.0 https://github.com/FreeRTOS/FreeRTOS-Kernel.git third_party/FreeRTOS-Kernel
+      - name: Configure firmware
+        run: cmake --preset arm-qemu
+      - name: Build firmware and QEMU targets
+        run: cmake --build --preset arm-qemu --parallel 2
