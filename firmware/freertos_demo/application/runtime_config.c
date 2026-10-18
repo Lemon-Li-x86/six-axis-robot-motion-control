@@ -23,7 +23,9 @@
  * 当前 Cortex-M4 为 32 bit 平台。
  *
  * runtime_protocol_tx_period_ms 为对齐的 uint32_t，
- * 当前仅存在单一读写者模型，因此暂不额外引入 Mutex。
+ * ProtocolRX 任务负责写入，ProtocolTX 任务负责读取。
+ * 在当前单核 Cortex-M4 上，天然对齐的 32-bit 读写不会撕裂；
+ * volatile 保证编译器每次访问该对象，但不是跨核同步原语。
  *
  * 参数范围由 runtime_config.h 定义：
  *

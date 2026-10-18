@@ -21,6 +21,27 @@
 #include "error_code.h"
 
 
+/*
+ * 一次成功接收的六轴 Feedback。
+ *
+ * canonical_positions：六轴规范角（0.01 degree）。
+ * unwrapped_positions：六轴连续角（0.01 degree）。
+ * velocities：六轴速度（degree / second）。
+ * sample_sequence：成功提交的反馈序号，初始化为 0，
+ * 每次成功更新 +1，uint32_t 自然回绕。
+ *
+ * 序号与反馈值属于同一组逻辑样本。
+ */
+typedef struct
+{
+    robot_joint_angles_t canonical_positions;
+    robot_joint_positions_t unwrapped_positions;
+    robot_joint_velocities_t velocities;
+    uint32_t sample_sequence;
+} motor_feedback_snapshot_t;
+
+
+
 /**
  * @brief 初始化六轴 Motor Driver。
  *
@@ -123,6 +144,14 @@ robot_status_t motor_driver_get_target_positions(
  * 当 delta_time_s <= 0 时，
  * 仍然更新位置，
  * 但当前速度统一置为 0。
+ *
+ * 六轴作为一组反馈样本验证后提交。
+ * 如果连续位置累积超出 int32_t 范围，
+ * 返回 ROBOT_STATUS_ERROR_OUT_OF_RANGE，
+ * 之前的整组六轴位置与速度均保持不变。
+ *
+ * 注意：整组提交并不自动保证不同 FreeRTOS 任务之间
+ * 的原子快照；接入并发 Control Task 时仍须设计同步。
  *
  * @return
  * ROBOT_STATUS_OK：
@@ -240,6 +269,24 @@ robot_status_t motor_driver_get_velocities(
     robot_joint_velocities_t *velocities
 );
 
+
+
+/**
+ * @brief 一次读取全部六轴反馈及其序号。
+ *
+ * 仅在至少成功接收过一组反馈后返回 ROBOT_STATUS_OK。
+ * NULL 或尚未就绪时不修改调用者的输出对象。
+ *
+ * 当前固件的反馈唯一写入者是 ProtocolRX Task。
+ * 此接口提供统一的逻辑样本结构，但并不承担 FreeRTOS
+ * 跨任务同步。未来 Control Task 并发访问时，写入和
+ * 读取必须受同一同步策略保护，不能只靠结构体赋值。
+ *
+ * @param[out] snapshot 成功时返回当前完整反馈样本。
+ */
+robot_status_t motor_driver_get_feedback_snapshot(
+    motor_feedback_snapshot_t *snapshot
+);
 
 /**
  * @brief 判断 Motor Driver 是否已经收到有效反馈。

@@ -1,1 +1,8 @@
+# PyBullet simulation
 pybullet==3.2.7
+
+# FK/IK numerical validation
+numpy<2
+scipy
+roboticstoolbox-python
+spatialmath-python

@@ -21,6 +21,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 
 #include "motor_driver.h"
 
@@ -79,6 +80,9 @@ static robot_joint_positions_t
  */
 static robot_joint_velocities_t
     motor_feedback_velocities;
+
+/* Increments only when a complete feedback sample is committed. */
+static uint32_t motor_feedback_sample_sequence = 0U;
 
 
 /* =========================================================
@@ -218,6 +222,7 @@ robot_status_t motor_driver_init(void)
 
     motor_feedback_valid =
         0U;
+    motor_feedback_sample_sequence = 0U;
 
 
     motor_driver_initialized =
@@ -330,128 +335,77 @@ robot_status_t motor_driver_update_feedback(
     robot_real_t delta_time_s
 )
 {
+    robot_joint_angles_t next_angles;
+    robot_joint_positions_t next_positions;
+    robot_joint_velocities_t next_velocities;
     uint32_t i;
 
-
-    if (
-        feedback == NULL
-    )
+    if (feedback == NULL)
     {
-        return
-            ROBOT_STATUS_ERROR_NULL_POINTER;
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
-    if (
-        !motor_driver_initialized
-    )
+    if (!motor_driver_initialized)
     {
-        return
-            ROBOT_STATUS_ERROR_NOT_READY;
+        return ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
-    for (
-        i = 0U;
-        i < ROBOT_JOINT_COUNT;
-        i++
-    )
+    /*
+     * Prepare all six joints locally before changing persistent state.
+     * A rejected update must not commit only part of a feedback frame.
+     */
+    for (i = 0U; i < ROBOT_JOINT_COUNT; i++)
     {
-        robot_joint_angle_t
-            current_angle;
+        robot_joint_angle_t current_angle =
+            motor_driver_normalize_angle_raw((int32_t)feedback->value[i]);
 
+        next_angles.value[i] = current_angle;
 
-        current_angle =
-            motor_driver_normalize_angle_raw(
-                (int32_t)feedback->value[i]
-            );
-
-
-        if (
-            motor_feedback_valid
-        )
+        if (motor_feedback_valid != 0U)
         {
-            int32_t
-                delta_raw;
+            int32_t delta_raw = motor_driver_shortest_delta_raw(
+                current_angle, motor_feedback_positions.value[i]
+            );
+            int64_t proposed_position =
+                (int64_t)motor_feedback_unwrapped_positions.value[i]
+                + (int64_t)delta_raw;
 
-
-            delta_raw =
-                motor_driver_shortest_delta_raw(
-                    current_angle,
-                    motor_feedback_positions.value[i]
-                );
-
-
-            /*
-             * 使用最短角位移更新连续位置。
-             */
-            motor_feedback_unwrapped_positions.value[i]
-                +=
-                delta_raw;
-
-
-            /*
-             * 时间间隔有效时，
-             * 根据经过 Wrap Correction 的
-             * 连续角位移计算速度。
-             */
-            if (
-                delta_time_s > 0.0F
-            )
+            if (proposed_position > INT32_MAX ||
+                proposed_position < INT32_MIN)
             {
-                robot_real_t
-                    delta_degree;
+                return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+            }
 
+            next_positions.value[i] =
+                (robot_joint_position_t)proposed_position;
 
-                delta_degree =
-                    (robot_real_t)delta_raw
-                    *
-                    ROBOT_JOINT_ANGLE_UNIT_DEG;
-
-
-                motor_feedback_velocities.value[i] =
-                    delta_degree
-                    /
-                    delta_time_s;
+            if (delta_time_s > 0.0F)
+            {
+                next_velocities.value[i] =
+                    ((robot_real_t)delta_raw *
+                     ROBOT_JOINT_ANGLE_UNIT_DEG) / delta_time_s;
             }
             else
             {
-                motor_feedback_velocities.value[i] =
-                    0.0F;
+                next_velocities.value[i] = 0.0F;
             }
         }
         else
         {
-            /*
-             * 第一组 Feedback
-             * 没有历史状态可用于展开。
-             *
-             * 因此将 Canonical Angle
-             * 作为连续位置初始值。
-             */
-            motor_feedback_unwrapped_positions.value[i] =
+            next_positions.value[i] =
                 (robot_joint_position_t)current_angle;
-
-
-            motor_feedback_velocities.value[i] =
-                0.0F;
+            next_velocities.value[i] = 0.0F;
         }
-
-
-        /*
-         * 保存最新 Canonical Feedback。
-         */
-        motor_feedback_positions.value[i] =
-            current_angle;
     }
 
+    /* Commit a complete validated feedback sample. */
+    motor_feedback_positions = next_angles;
+    motor_feedback_unwrapped_positions = next_positions;
+    motor_feedback_velocities = next_velocities;
+    motor_feedback_valid = 1U;
+    motor_feedback_sample_sequence++;
 
-    motor_feedback_valid =
-        1U;
-
-
-    return
-        ROBOT_STATUS_OK;
+    return ROBOT_STATUS_OK;
 }
 
 
@@ -614,6 +568,40 @@ robot_status_t motor_driver_get_velocities(
 
     return
         ROBOT_STATUS_OK;
+}
+
+
+/* =========================================================
+ * Read complete logical feedback sample
+ * ========================================================= */
+
+robot_status_t motor_driver_get_feedback_snapshot(
+    motor_feedback_snapshot_t *snapshot
+)
+{
+    motor_feedback_snapshot_t current;
+
+    if (snapshot == NULL)
+    {
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    }
+
+    if (!motor_driver_initialized || !motor_feedback_valid)
+    {
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    }
+
+    /*
+     * A single logical sample, not an RTOS-atomic transaction.
+     * Callers must synchronize with a concurrent feedback writer.
+     */
+    current.canonical_positions = motor_feedback_positions;
+    current.unwrapped_positions = motor_feedback_unwrapped_positions;
+    current.velocities = motor_feedback_velocities;
+    current.sample_sequence = motor_feedback_sample_sequence;
+    *snapshot = current;
+
+    return ROBOT_STATUS_OK;
 }
 
 

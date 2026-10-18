@@ -14,6 +14,28 @@
 set(FREERTOS_DIR
     "${CMAKE_SOURCE_DIR}/third_party/FreeRTOS-Kernel")
 
+# Accept both the kernel repository layout and the older Source/ layout.
+if(EXISTS "${FREERTOS_DIR}/tasks.c")
+    set(FREERTOS_SOURCE_DIR "${FREERTOS_DIR}")
+elseif(EXISTS "${FREERTOS_DIR}/Source/tasks.c")
+    set(FREERTOS_SOURCE_DIR "${FREERTOS_DIR}/Source")
+else()
+    # The dependency may not have been initialized locally (for example, a
+    # missing git submodule). Populate a known kernel release as a fallback.
+    include(FetchContent)
+    FetchContent_Declare(
+        freertos_kernel
+        GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+        GIT_TAG V11.1.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_GetProperties(freertos_kernel)
+    if(NOT freertos_kernel_POPULATED)
+        FetchContent_Populate(freertos_kernel)
+    endif()
+    set(FREERTOS_SOURCE_DIR "${freertos_kernel_SOURCE_DIR}")
+endif()
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # Optional startup checks.
@@ -84,6 +106,7 @@ add_executable(freertos_demo
     application/uart_tx_manager.c
     application/protocol_tasks.c
     application/runtime_config.c
+    application/motor_state.c
 
     # Application / command services
     application/services/protocol_commands.c
@@ -104,11 +127,11 @@ add_executable(freertos_demo
     algorithms/motion/motion_limits.c
 
     # FreeRTOS kernel and Cortex-M port
-    ${FREERTOS_DIR}/tasks.c
-    ${FREERTOS_DIR}/list.c
-    ${FREERTOS_DIR}/queue.c
-    ${FREERTOS_DIR}/portable/GCC/ARM_CM3/port.c
-    ${FREERTOS_DIR}/portable/MemMang/heap_4.c
+    ${FREERTOS_SOURCE_DIR}/tasks.c
+    ${FREERTOS_SOURCE_DIR}/list.c
+    ${FREERTOS_SOURCE_DIR}/queue.c
+    ${FREERTOS_SOURCE_DIR}/portable/GCC/ARM_CM3/port.c
+    ${FREERTOS_SOURCE_DIR}/portable/MemMang/heap_4.c
 )
 
 add_dependencies(
@@ -157,8 +180,8 @@ target_include_directories(freertos_demo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/motion
 
-    ${FREERTOS_DIR}/include
-    ${FREERTOS_DIR}/portable/GCC/ARM_CM3
+    ${FREERTOS_SOURCE_DIR}/include
+    ${FREERTOS_SOURCE_DIR}/portable/GCC/ARM_CM3
 )
 
 target_compile_options(freertos_demo PRIVATE

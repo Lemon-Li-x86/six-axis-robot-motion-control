@@ -590,7 +590,12 @@ static void record_result(
 /*
  * 在此函数上设置 GDB 断点，
  * 即可查看全部目标端测试结果。
+ *
+ * Windows Host Test 不编译此函数，
+ * 避免 MSVC 无法识别 GCC 汇编语法。
  */
+#ifndef MOTOR_DRIVER_HOST_TEST
+
 __attribute__((noinline))
 void qemu_motor_test_done(void)
 {
@@ -599,6 +604,8 @@ void qemu_motor_test_done(void)
         __asm volatile ("nop");
     }
 }
+
+#endif
 
 
 int main(void)
@@ -619,7 +626,10 @@ int main(void)
     record_result(9U, test_nonpositive_delta_time());
     record_result(10U, test_multiple_wrap_updates());
 
+#ifdef MOTOR_DRIVER_HOST_TEST
+    return (g_motor_test_report.failed == 0U) ? 0 : 1;
+#else
     qemu_motor_test_done();
-
     return 0;
+#endif
 }

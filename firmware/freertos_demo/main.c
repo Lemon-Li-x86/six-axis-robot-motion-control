@@ -26,6 +26,7 @@
 
 #include "uart_driver.h"
 #include "motor_driver.h"
+#include "motor_state.h"
 #include "timer_driver.h"
 #include "gpio_driver.h"
 
@@ -297,6 +298,16 @@ int main(void)
         }
     }
 
+
+    /*
+     * Initialize the shared Motor Driver access mutex before tasks start.
+     */
+    if (motor_state_init() != ROBOT_STATUS_OK)
+    {
+        while (1)
+        {
+        }
+    }
 
     /* =====================================================
      * 11. Application Tasks

@@ -160,6 +160,9 @@
 
 #define INCLUDE_vTaskDelay 1
 
+/* Required to roll back partial ProtocolTX/ProtocolRX task creation. */
+#define INCLUDE_vTaskDelete 1
+
 
 /* =========================================================
  * Cortex-M NVIC Priority
