@@ -40,3 +40,13 @@ The `MOTOR_DRIVER_HOST_TEST` macro only selects an exit code instead of
 entering the QEMU GDB completion loop; the production motor driver remains
 unchanged. `ctest --test-dir build/motion-host --output-on-failure` runs both
 motion-limits and motor-driver tests.
+
+## Long-running feedback safety
+
+`motor_feedback_safety_host_test` exercises the production Motor Driver
+near both signed 32-bit continuous-position limits. It checks that overflow
+returns `ROBOT_STATUS_ERROR_OUT_OF_RANGE` without partially overwriting
+canonical feedback, unwrapped positions, or velocities. This is a native-only
+stress regression; it does not replace RTOS concurrency or hardware testing.
+
+All three registered native CTest executables run with the command above.
