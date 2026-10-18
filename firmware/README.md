@@ -59,7 +59,7 @@
 
 ```text
 ┌────────────────────────────────────────────┐
-│        ARM Cortex-M4 / FreeRTOS             │
+│        ARM Cortex-M4 / FreeRTOS            │
 │                 QEMU                       │
 │                                            │
 │  ProtocolTX Task                           │

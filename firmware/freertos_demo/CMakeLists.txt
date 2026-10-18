@@ -14,38 +14,46 @@
 set(FREERTOS_DIR
     "${CMAKE_SOURCE_DIR}/third_party/FreeRTOS-Kernel")
 
-# Accept both the kernel repository layout and the older Source/ layout.
+# Accept both the kernel repository layout and
+# the older Source/ layout.
 if(EXISTS "${FREERTOS_DIR}/tasks.c")
     set(FREERTOS_SOURCE_DIR "${FREERTOS_DIR}")
 elseif(EXISTS "${FREERTOS_DIR}/Source/tasks.c")
     set(FREERTOS_SOURCE_DIR "${FREERTOS_DIR}/Source")
 else()
-    # The dependency may not have been initialized locally (for example, a
-    # missing git submodule). Populate a known kernel release as a fallback.
     include(FetchContent)
+
     FetchContent_Declare(
         freertos_kernel
-        GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+        GIT_REPOSITORY
+            https://github.com/FreeRTOS/FreeRTOS-Kernel.git
         GIT_TAG V11.1.0
         GIT_SHALLOW TRUE
     )
+
     FetchContent_GetProperties(freertos_kernel)
+
     if(NOT freertos_kernel_POPULATED)
         FetchContent_Populate(freertos_kernel)
     endif()
-    set(FREERTOS_SOURCE_DIR "${freertos_kernel_SOURCE_DIR}")
+
+    set(FREERTOS_SOURCE_DIR
+        "${freertos_kernel_SOURCE_DIR}")
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# Optional startup checks.
-# Defaults preserve existing development behavior.
+option(
+    ROBOT_ENABLE_KINEMATICS_SELF_TEST
+    "Run kinematics self-tests before starting FreeRTOS"
+    ON
+)
 
-option(ROBOT_ENABLE_KINEMATICS_SELF_TEST
-    "Run kinematics self-tests before starting FreeRTOS" ON)
-
-option(ROBOT_ENABLE_PARSER_BENCHMARK
-    "Run protocol parser benchmark before starting FreeRTOS" ON)
+option(
+    ROBOT_ENABLE_PARSER_BENCHMARK
+    "Run protocol parser benchmark before starting FreeRTOS"
+    ON
+)
 
 set(FIRMWARE_CONFIG_JSON
     "${CMAKE_CURRENT_SOURCE_DIR}/config/robot_defaults.json")
@@ -69,7 +77,8 @@ add_custom_command(
     DEPENDS
         "${FIRMWARE_CONFIG_JSON}"
         "${FIRMWARE_CONFIG_GENERATOR}"
-    COMMENT "Validating JSON and generating firmware defaults"
+    COMMENT
+        "Validating JSON and generating firmware defaults"
     VERBATIM
 )
 
@@ -139,14 +148,10 @@ add_dependencies(
     firmware_defaults_header
 )
 
-# Export startup settings to main.c as 0/1 macros.
-
 target_compile_definitions(freertos_demo PRIVATE
     ROBOT_ENABLE_KINEMATICS_SELF_TEST=$<BOOL:${ROBOT_ENABLE_KINEMATICS_SELF_TEST}>
     ROBOT_ENABLE_PARSER_BENCHMARK=$<BOOL:${ROBOT_ENABLE_PARSER_BENCHMARK}>
 )
-
-# Include development self-tests only when enabled.
 
 if(ROBOT_ENABLE_KINEMATICS_SELF_TEST)
     target_sources(freertos_demo PRIVATE
@@ -401,10 +406,54 @@ add_executable(qemu_motion_limits_tests
     memory.c
 )
 
-target_include_directories(qemu_motion_limits_tests PRIVATE
+target_include_directories(
+    qemu_motion_limits_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/model
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/motion
 )
 
 configure_qemu_target(qemu_motion_limits_tests)
+
+
+# ----------------------------------------------------------
+# 12. Stage 3: kinematics performance benchmark (QEMU)
+# ----------------------------------------------------------
+
+add_executable(qemu_kinematics_perf
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/kinematics_perf_test_main.c
+
+    drivers/timer_driver.c
+    model/ur5_model.c
+
+    algorithms/math/matrix4.c
+
+    algorithms/kinematics/kinematics_common.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/kinematics/kinematics_inverse.c
+    algorithms/kinematics/ur5_analytic_ik.c
+
+    algorithms/motion/motion_limits.c
+    algorithms/motion/ik_solution_selector.c
+
+    memory.c
+)
+
+target_include_directories(qemu_kinematics_perf PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/motion
+)
+
+configure_qemu_target(qemu_kinematics_perf m)
+
+# Benchmark with optimization enabled.
+# Overrides the test helper's earlier -O0.
+target_compile_options(qemu_kinematics_perf PRIVATE
+    -O2
+)
