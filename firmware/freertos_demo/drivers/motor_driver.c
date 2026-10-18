@@ -81,6 +81,9 @@ static robot_joint_positions_t
 static robot_joint_velocities_t
     motor_feedback_velocities;
 
+/* Increments only when a complete feedback sample is committed. */
+static uint32_t motor_feedback_sample_sequence = 0U;
+
 
 /* =========================================================
  * Angle Normalize
@@ -219,6 +222,7 @@ robot_status_t motor_driver_init(void)
 
     motor_feedback_valid =
         0U;
+    motor_feedback_sample_sequence = 0U;
 
 
     motor_driver_initialized =
@@ -399,6 +403,7 @@ robot_status_t motor_driver_update_feedback(
     motor_feedback_unwrapped_positions = next_positions;
     motor_feedback_velocities = next_velocities;
     motor_feedback_valid = 1U;
+    motor_feedback_sample_sequence++;
 
     return ROBOT_STATUS_OK;
 }
@@ -563,6 +568,40 @@ robot_status_t motor_driver_get_velocities(
 
     return
         ROBOT_STATUS_OK;
+}
+
+
+/* =========================================================
+ * Read complete logical feedback sample
+ * ========================================================= */
+
+robot_status_t motor_driver_get_feedback_snapshot(
+    motor_feedback_snapshot_t *snapshot
+)
+{
+    motor_feedback_snapshot_t current;
+
+    if (snapshot == NULL)
+    {
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    }
+
+    if (!motor_driver_initialized || !motor_feedback_valid)
+    {
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    }
+
+    /*
+     * A single logical sample, not an RTOS-atomic transaction.
+     * Callers must synchronize with a concurrent feedback writer.
+     */
+    current.canonical_positions = motor_feedback_positions;
+    current.unwrapped_positions = motor_feedback_unwrapped_positions;
+    current.velocities = motor_feedback_velocities;
+    current.sample_sequence = motor_feedback_sample_sequence;
+    *snapshot = current;
+
+    return ROBOT_STATUS_OK;
 }
 
 
