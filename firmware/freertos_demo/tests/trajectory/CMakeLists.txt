@@ -156,3 +156,29 @@ if(NOT MSVC)
     target_link_libraries(stage3_reference_ik_host PRIVATE m)
 endif()
 add_test(NAME stage3_reference_ik_host COMMAND stage3_reference_ik_host)
+
+# Shared production joint-output limiter: six joints, acceleration,
+# velocity, output quantization and failure atomicity.
+add_executable(stage4_command_limiter_host
+    command_limiter_test_main.c
+    ${FIRMWARE_ROOT}/algorithms/control/joint_command_limiter.c
+    ${FIRMWARE_ROOT}/model/ur5_model.c
+)
+target_include_directories(stage4_command_limiter_host PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/model
+    ${FIRMWARE_ROOT}/algorithms/control
+    ${FIRMWARE_ROOT}/algorithms/trajectory
+)
+set_target_properties(stage4_command_limiter_host PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(stage4_command_limiter_host PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(stage4_command_limiter_host PRIVATE m)
+endif()
+add_test(NAME stage4_command_limiter_host COMMAND stage4_command_limiter_host)
