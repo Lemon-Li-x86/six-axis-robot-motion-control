@@ -82,3 +82,15 @@ Control Task 启动栈由512加到768 words以预留嵌套计算余量；该数�
 Stage4默认 `cartesian_waypoint_*` 容差由 `kinematics.h` 定义的安全门限派生；即使应用层手动注入更宽松配置，`motion_pipeline_start()` 现在也会拒绝大于 IK 验收门限的运行配置，避免算法放行而应用忽略。
 
 以上改动全部保持 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF` 为默认；任何机械执行或 PyBullet 实际动作均需另外明确开启且检查仿真环境。
+
+## 第4阶段原生 PyBullet 控制链（2026-10-26）
+
+| 来源/参数 | 所有者 | 作用 |
+|---|---|---|
+| `stage4_motion_default_config()` | `config/stage4_motion_config.c` | **唯一** PID 初始增益、积分限制、命令位置修正上限、速度/加速度上限、反馈超时等 |
+| `TASK_PERIOD_CONTROL_MS` | `config/robot_defaults.json` → 生成头文件 | 固件任务周期；PyBullet脚本从同一JSON读取周期，不再独立硬编码10ms |
+| UR5 DH、关节限位 | `model/ur5_model.c` | 原生控制桥调用 `robot_model_get_active()`，不复制真实模型参数 |
+| `START_RAW` / `GOAL_RAW` | `simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py` | 仿真测试**输入样本**，不是算法或本体参数，刻意与部署配置分离 |
+| PyBullet `physics-dt-s` / `motor-force` / `max-final-error-deg` | Python脚本命令行 | **测试台架**参数，不得解释为机器人硬件额定参数或新的嵌入式配置 |
+
+`stage4_sim_bridge.c` 是仅限开发主机的包装，链接到**同一套生产轨迹、PID和限速源文件**，测试过程中没有隐藏共享可变配置；Python只调用C函数，不实现第二份PID/梯形算法。Cortex-M4固件不链接该桥接模块（不向嵌入式系统引入malloc）。
