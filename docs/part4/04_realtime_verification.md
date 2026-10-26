@@ -36,3 +36,14 @@
 ## 不能伪称已通过
 
 没有 ARM/QEMU 工具链运行输出、GDB 变量和 PyBullet 数据就不能填写准确 PID 调优数值、CPU WCET、任务调度 jitter 或电机位置跟踪精度。
+
+## 本批新增验证边界（2026-10-26）
+
+- `task_stack_depth_words.control` 从 512 调整至 768 **words**；仅为速度/加速度双限制计算新增余量，绝非最大栈使用证明。
+- 新增 `joint_command_limiter` C 模块根据同一份 Stage4 默认配置限幅命令速度与加速度、内部累计0.01度以下小数位。原先仅限制速度，现在可以对加速度进行纯算法回归。
+- 新增第6组 Host CTest `stage4_command_limiter_host`、独立模拟 DLL 的 `stage4_sim_bridge_smoke`、以及 PyBullet DIRECT 下的动态六轴状态闭环试验。
+- 旧第4阶段 QEMU 14/14、旧第3阶段 QEMU 128/128、FreeRTOS Monitor 命中断点均有来自用户的原版日志。新修订版本尚未通过重新构建和实测，不能复用旧证据断言新版本已验收。
+- Windows 总验收入口：`tools/test_stage4_once.ps1`；默认第4阶段电机输出编译门控为 OFF，不会触发真实机械运动。
+- 动态 DLL ↔ PyBullet 测试**不包括**真实 FreeRTOS 周期抖动、UART 故障恢复、硬实时 WCET、实机碰撞检测。它可以测量控制算法与 URDF 动力学交互，但不能宣称整个嵌入式系统闭环联调完成。
+
+因此第四阶段仍保留以下未通过结项门禁：真实QEMU/FreeRTOS运动请求贯通、UART闭环动态测试、丢包/旧反馈故障注入、周期P99与最坏值、完整长时负载和最终增益整定记录。拒绝用“能编译”或“Python GUI 能动”替代这些门禁。
