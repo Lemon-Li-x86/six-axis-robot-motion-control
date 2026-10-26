@@ -31,6 +31,7 @@ robot_status_t trajectory_trapezoid_init(
     memset(&next, 0, sizeof(next));
     next.start_positions = *start;
     next.goal_positions = *goal;
+    next.initialized = 1U;
 
     for (j = 0U; j < ROBOT_JOINT_COUNT; ++j)
     {
@@ -97,7 +98,7 @@ robot_status_t trajectory_trapezoid_sample(
 
     if (plan == NULL || out == NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
-    if (!isfinite(elapsed_s) || elapsed_s < 0.0 ||
+    if (plan->initialized != 1U || !isfinite(elapsed_s) || elapsed_s < 0.0 ||
         !isfinite(plan->total_time_s) || plan->total_time_s < 0.0)
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
 
