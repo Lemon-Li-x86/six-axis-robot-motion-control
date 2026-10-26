@@ -7,6 +7,7 @@ on:
     paths:
       - 'firmware/freertos_demo/**'
       - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
+      - 'tools/test_stage4_once.ps1'
       - '.github/workflows/stage4-trajectory-host.yml'
   workflow_dispatch:
 
@@ -54,3 +55,23 @@ jobs:
           name: stage4-pybullet-default-kp-${{ matrix.scenario }}
           path: build/stage4-closed-loop/*
           if-no-files-found: ignore
+
+  stage4-windows-script-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse one-command Windows acceptance script with PowerShell AST
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/test_stage4_once.ps1').Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PowerShell acceptance script syntax OK'
