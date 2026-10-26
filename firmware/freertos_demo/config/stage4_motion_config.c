@@ -1,27 +1,33 @@
 #include "stage4_motion_config.h"
 
-/* Simulation-only starting points; must be tuned against PyBullet feedback.
- * Separate from UR5 fixed geometry/position limits in Robot Model.
- * Requested max motion rates are conservative but NOT a safety certificate.
+/* Simulation-only INITIAL configuration, not measured PID tuning.
+ * Single definition site for all Stage 4 control strategy defaults.
  */
-static const motion_stage4_config_t g_stage4_config = {
-    .pid = {
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F },
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F },
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F },
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F },
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F },
-        { .kp=0.8F, .ki=0.0F, .kd=0.0F, .integral_limit_deg_s=10.0F,
-          .output_limit_deg=3.0F, .deadband_deg=0.02F }
-    },
-    .max_velocity_deg_s = {{15.0F,15.0F,15.0F,15.0F,15.0F,15.0F}},
-    .max_acceleration_deg_s2 = {{30.0F,30.0F,30.0F,30.0F,30.0F,30.0F}},
-    .feedback_timeout_ms = 3000U
+#define STAGE4_PID_STARTER_GAIN_P 0.8F
+#define STAGE4_PID_STARTER_GAIN_I 0.0F
+#define STAGE4_PID_STARTER_GAIN_D 0.0F
+#define STAGE4_PID_INTEGRAL_CAP_DEG_S 10.0F
+#define STAGE4_PID_COMMAND_CAP_DEG 3.0F
+#define STAGE4_PID_DEADBAND_DEG 0.02F
+#define STAGE4_SIM_VELOCITY_CAP_DEG_S 15.0F
+#define STAGE4_SIM_ACCEL_CAP_DEG_S2 30.0F
+#define STAGE4_FEEDBACK_TIMEOUT_MS 3000U
+
+#define STAGE4_PID_ENTRY { \
+    STAGE4_PID_STARTER_GAIN_P, STAGE4_PID_STARTER_GAIN_I, \
+    STAGE4_PID_STARTER_GAIN_D, STAGE4_PID_INTEGRAL_CAP_DEG_S, \
+    STAGE4_PID_COMMAND_CAP_DEG, STAGE4_PID_DEADBAND_DEG \
+}
+#define STAGE4_SIX_VALUES(x) {{x,x,x,x,x,x}}
+
+static const motion_stage4_config_t g_stage4_config={
+    .pid={ STAGE4_PID_ENTRY,STAGE4_PID_ENTRY,STAGE4_PID_ENTRY,
+           STAGE4_PID_ENTRY,STAGE4_PID_ENTRY,STAGE4_PID_ENTRY },
+    .max_velocity_deg_s=
+        STAGE4_SIX_VALUES(STAGE4_SIM_VELOCITY_CAP_DEG_S),
+    .max_acceleration_deg_s2=
+        STAGE4_SIX_VALUES(STAGE4_SIM_ACCEL_CAP_DEG_S2),
+    .feedback_timeout_ms=STAGE4_FEEDBACK_TIMEOUT_MS
 };
 
 const motion_stage4_config_t *stage4_motion_default_config(void)
