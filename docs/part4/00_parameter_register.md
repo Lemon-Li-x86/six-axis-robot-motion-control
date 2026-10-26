@@ -47,3 +47,20 @@
 - `cartesian_waypoint_position_tolerance_mm`、`cartesian_waypoint_rotation_matrix_tolerance`：每一个 IK+Selector 选中解的生产 FK 回代误差判据，统一由同一配置文件提供；**矩阵元素差不是角度误差**。
 - `reference_timeout_ms`：已生成 `TASK_PERIOD_TRAJECTORY_MS` 的倍数，声明于 Stage4 配置，Control Task 不自行复制常数。
 - `abort_requested`：Control Task 发现故障、反馈过期时请求 Trajectory Task 停止，属于 Application 运行态而非算法参数。
+
+## 跨阶段修复：J6近奇异参考条件化（2026-10-26）
+
+| 参数/接口 | 语义、单位 | 唯一声明位置 | 分类与约束 |
+|---|---|---|---|
+| `KINEMATICS_SEEDED_WRIST_SIN_THRESHOLD` | `abs(sin(J5)) < 0.001` 的近奇异数值敏感门限，无量纲 | `algorithms/kinematics/kinematics_private.h` | 算法可靠性常量，仅用于**带参考**的 IK，不改变数学可达域 |
+| `KINEMATICS_SEEDED_SHOULDER_MAX_ERROR_RAD` | 当前参考J1与候选J1可匹配的最大角差，rad | 同上 | 算法可靠性常量，拒绝不同肩部分支套用参考 |
+| `KINEMATICS_SEEDED_Q6_MAX_ERROR_RAD` | 参考J6与姿态反算J6允许的最大一致性偏差，rad | 同上 | 算法可靠性常量，拒绝远离参考的替代 |
+| `KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM` | 参考条件化后的IK候选必须通过的FK位置回代门限，mm | `algorithms/kinematics/kinematics.h` | 公开算法验收常量；Stage4默认运行配置由此派生 |
+| `KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL` | 同一候选的FK旋转矩阵最大单元素误差，无量纲 | 同上 | 公开算法验收常量；不能解释为角度 |
+| `KINEMATICS_TRIG_DOMAIN_EPSILON` | q3/q5 的反三角函数计算域容差 | **仍只在** `algorithms/kinematics/ur5_analytic_ik.c` 原位置定义 | **未放宽**，不被近奇异修复替代 |
+| `kinematics_inverse_with_reference()` | 显式引入当前Canonical关节参考，0.01°单位 | `algorithms/kinematics/kinematics.h` | 纯函数输入；不引入运行时全局状态 |
+| `current` → `reference` | 当前连续关节位置转换成Canonical参考 | `common/angle_utils.c` → `algorithms/trajectory/cartesian_waypoint.c` | 当前状态来自调用方，不在IK内部缓存 |
+
+设计保证：旧 `kinematics_inverse` 不受影响；新的IK接口只在近腕部奇异、与当前肩/腕符号匹配、J6与参考相近的条件下替代J6，随后按实际请求位姿执行生产FK回代门限。第4阶段 Cartesian 之后仍使用既有 Selector 的近奇异拒绝、关节行程检查和任务端速度跳变保护；**不绕过硬奇异保护，不代表零J5奇异点的连续运动已解决**。
+
+`config/stage4_motion_config.c` 的初始Waypoint FK门限现在从 Kinematics 两项常量派生，运行态允许用户注入更严格的门限；无相同语义硬编码副本。以上算法门限不是生产机器人经实测确认的安全参数。
