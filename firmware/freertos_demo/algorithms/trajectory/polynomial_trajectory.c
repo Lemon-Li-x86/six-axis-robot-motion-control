@@ -60,8 +60,8 @@ static robot_status_t init_common(
 
     for (j = 0U; j < ROBOT_JOINT_COUNT; ++j)
     {
-        double p0 = (double)start->value[j] * 0.01;
-        double p1 = (double)goal->value[j] * 0.01;
+        double p0 = (double)start->value[j] * (double)ROBOT_JOINT_ANGLE_UNIT_DEG;
+        double p1 = (double)goal->value[j] * (double)ROBOT_JOINT_ANGLE_UNIT_DEG;
         double d = p1 - p0;
         double v0t = (double)v0->value[j] * duration_s;
         double v1t = (double)v1->value[j] * duration_s;
@@ -170,7 +170,7 @@ robot_status_t trajectory_polynomial_sample(
             fabs(v) > FLT_MAX || fabs(a) > FLT_MAX)
             return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
 
-        raw = p * 100.0;
+        raw = p / (double)ROBOT_JOINT_ANGLE_UNIT_DEG;
         if (u == 0.0) raw = (double)plan->start_positions.value[j];
         if (u == 1.0) raw = (double)plan->goal_positions.value[j];
         if (!isfinite(raw) || raw < (double)INT32_MIN ||
