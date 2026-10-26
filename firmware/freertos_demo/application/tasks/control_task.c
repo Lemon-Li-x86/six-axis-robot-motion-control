@@ -76,6 +76,7 @@ static void task_control(void *arg)
             taskENTER_CRITICAL();
             r->diagnostics.feedback_stale_count++;
             taskEXIT_CRITICAL();
+            motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
             active=0U; last_command_valid=0U;
             joint_controller_reset(&controller);
             continue;
