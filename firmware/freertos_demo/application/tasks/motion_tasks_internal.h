@@ -19,6 +19,7 @@ typedef struct {
     robot_joint_positions_t target;
     TickType_t created_tick;
     uint32_t sequence;
+    uint8_t enabled; /* 0=cancel/disable command output */
 } motion_reference_t;
 typedef struct {
     QueueHandle_t request_queue;
