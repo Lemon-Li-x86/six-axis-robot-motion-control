@@ -96,3 +96,20 @@
 **证据等级**：这是用户对最后一次运行结果的明确确认，尚未收到该次 `build/stage4-final-validation.log` 的逐行内容；本节不额外编造本机执行计数、仿真数值或持续运行时间。对应算法、任务、PyBullet 云端真实证据已在前文分别记录。
 
 **通过范围**：第四阶段**本机统一非驱动回归测试通过**。不等同于完整工业机器人系统验收。后续仍需如实单列：真实 UART↔PyBullet 闭环、通信异常与反馈过期故障注入、调度周期/抖动及最坏栈量、长时稳定性、实际硬件/安全联锁等验证。保留源代码和参数登记簿审查，不因一次脚本通过而跳过集成安全测试。
+
+## 全局审查后追加：失联故障注入13项实测
+
+[GitHub Actions Run #40349948758](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40349948758) 真实QEMU/GDB在修订后的自检源码上得到：
+
+| 字段 | 实测 |
+|---|---:|
+| `finished`、`checks`、`failed` | 1、13、0 |
+| `accepted` | 1 |
+| `trajectory_samples` | 210 |
+| `controller_steps` | 418 |
+| `monitoring_ticks` | 43 |
+| `controller_faults` | 1 |
+| `planner_faults` | 0 |
+| `feedback_stale_count` | 1 |
+
+测试先定期注入模拟反馈约1.2s，再停止反馈超过正式 Stage4 配置的 `feedback_timeout_ms`，最后间隔再次检查Control步数不继续增加。验收为软件任务的故障检测与停止生成新目标，**不代表实体驱动器能主动制动或掉电安全**。原来的11项成功记录是未注入失联的旧证据，不与此结果混用。
