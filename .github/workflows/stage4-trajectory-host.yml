@@ -6,6 +6,9 @@ on:
       - feat/stage4-trajectory-2026-10-26
     paths:
       - 'firmware/freertos_demo/algorithms/trajectory/**'
+      - 'firmware/freertos_demo/algorithms/control/**'
+      - 'firmware/freertos_demo/application/services/trajectory_request_adapter.*'
+      - 'firmware/freertos_demo/common/angle_utils.*'
       - 'firmware/freertos_demo/tests/trajectory/**'
       - '.github/workflows/stage4-trajectory-host.yml'
   workflow_dispatch:
