@@ -98,8 +98,8 @@ git fetch origin
 git switch feat/stage4-trajectory-2026-10-26
 git pull --ff-only
 cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
-cmake --build build/stage4-trajectory
-ctest --test-dir build/stage4-trajectory --output-on-failure
+cmake --build build/stage4-trajectory --config Debug
+ctest --test-dir build/stage4-trajectory -C Debug --output-on-failure
 ```
 
 目标：关节轨迹、IK-to-trajectory 适配、笛卡尔/PID、笛卡尔 FK→IK→选解链，共四个 Host CTest。测试失败必须记录原始输出，不能手工忽略断言。
@@ -180,3 +180,11 @@ cmake --build --preset firmware
 - 每个 Cartesian IK+Selector 的最终连续角，都先规范化并经既有 `kinematics_forward()` 回代，与原位姿比较（位置毫米距离和旋转矩阵最大元素差）。门限唯一归属 `config/stage4_motion_config.c`。
 - 若控制任务遇到反馈超时或计算异常，会通过 `abort_requested` 取消规划任务的后续参考点；轨迹任务自己也会每周期检查反馈新鲜度，防止反馈断开后继续计时并在恢复时跳点。
 - 目前阶段不新增 UART 运动指令字节协议；运动请求由 Application 公开 `motion_pipeline_submit_*` API 注入。上位机到运动请求的正式命令映射属于后续系统集成，不得在第4阶段未验收时悄悄复用现有反馈帧当新指令。
+
+### Windows/MSVC Host 测试的数值精度说明（2026-10-26）
+
+发现 `trajectory_test_main.c` 中3条运行时间预期使用了 `1e-10 s`（0.1纳秒）误差门限，与项目公共 `ROBOT_JOINT_ANGLE_UNIT_DEG=0.01F` 的 binary32 表示精度不相容。该浮点值提升为 double 后仍保留原来的单精度舍入：仿真测试对 1.5/2.5/1.0秒的计算产生约 45/45/11纳秒偏差。已将**仅这3条总时间、巡航时间断言**改为统一 `TRAJECTORY_TEST_TIME_TOLERANCE_S=1e-6`。这不修改生产规划算法，不更改关节速度/加速度/IK 容差；原来其他时间/物理量断言未更改。
+
+Visual Studio 是多配置构建器，CTest 必须带 `-C Debug`，不能把缺少配置导致的 `Not Run` 当成函数测试不通过。
+
+> 状态：补丁已提交，需本机重新编译与实际执行 CTest；此处不宣称已经通过。 
