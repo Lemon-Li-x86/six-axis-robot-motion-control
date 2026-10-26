@@ -40,3 +40,10 @@
 | `g_motion_runtime`、Trajectory/PID instance | 运行时状态、监测统计 | Application Task/Services | **不得存入 Robot Model 或算法常量文件** |
 
 注意：此前 Stage2 Driver 内的同名角度回绕数学逻辑已改为调用 Common 唯一实现；修订了其 QEMU / Host / Unity 构建依赖，避免重定义。
+
+### 笛卡尔安全门限与中止策略（补充）
+
+- `cartesian_start_tolerance_mm`、`cartesian_start_rotation_matrix_tolerance`：起点反馈姿态与请求起点一致性判据，统一由 `config/stage4_motion_config.c` 提供。
+- `cartesian_waypoint_position_tolerance_mm`、`cartesian_waypoint_rotation_matrix_tolerance`：每一个 IK+Selector 选中解的生产 FK 回代误差判据，统一由同一配置文件提供；**矩阵元素差不是角度误差**。
+- `reference_timeout_ms`：已生成 `TASK_PERIOD_TRAJECTORY_MS` 的倍数，声明于 Stage4 配置，Control Task 不自行复制常数。
+- `abort_requested`：Control Task 发现故障、反馈过期时请求 Trajectory Task 停止，属于 Application 运行态而非算法参数。
