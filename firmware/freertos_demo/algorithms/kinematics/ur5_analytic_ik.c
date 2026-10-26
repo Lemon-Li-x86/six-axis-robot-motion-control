@@ -91,6 +91,44 @@ ur5_analytic_ik_compute_p13(
     return ROBOT_STATUS_OK;
 }
 
+/*
+ * TEST-ONLY precision inspection hook.
+ *
+ * This call reuses the EXACT production p13 implementation above.
+ * It reports the un-clamped elbow cosine so a rejected branch can be
+ * classified as geometric domain failure vs. quantized deduplication.
+ *
+ * Only the independent QEMU trace executable enables this macro.
+ * No production-IK return value, tolerance or solver branch is changed.
+ */
+#if defined(ROBOT_KINEMATICS_ELBOW_TRACE)
+robot_status_t ur5_analytic_ik_trace_elbow_cosine(
+    const robot_model_t *model,
+    const robot_transform_t *dh_transform,
+    robot_real_t q1_rad,
+    robot_real_t q6_rad,
+    double *p13_x,
+    double *p13_y,
+    double *raw_cos_q3)
+{
+    robot_status_t status;
+    double a2, a3;
+    if (model == NULL || dh_transform == NULL || p13_x == NULL ||
+        p13_y == NULL || raw_cos_q3 == NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    status = ur5_analytic_ik_compute_p13(
+        model, dh_transform, q1_rad, q6_rad, p13_x, p13_y);
+    if (status != ROBOT_STATUS_OK)
+        return status;
+    a2 = (double)model->dh_a_mm[1];
+    a3 = (double)model->dh_a_mm[2];
+    *raw_cos_q3 =
+        (*p13_x * *p13_x + *p13_y * *p13_y - a2*a2 - a3*a3) /
+        (2.0 * a2 * a3);
+    return ROBOT_STATUS_OK;
+}
+#endif
+
 /* =========================================================
  * q1 Shoulder
  * ========================================================= */
