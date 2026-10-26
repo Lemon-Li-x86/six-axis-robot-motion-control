@@ -5,7 +5,7 @@
 /* Simulation-only INITIAL configuration, not measured PID tuning.
  * Single definition site for all Stage 4 control strategy defaults.
  */
-#define STAGE4_PID_STARTER_GAIN_P 0.8F
+#define STAGE4_PID_STARTER_GAIN_P 0.2F
 #define STAGE4_PID_STARTER_GAIN_I 0.0F
 #define STAGE4_PID_STARTER_GAIN_D 0.0F
 #define STAGE4_PID_INTEGRAL_CAP_DEG_S 10.0F
