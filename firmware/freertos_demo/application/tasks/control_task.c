@@ -63,7 +63,7 @@ static void task_control(void *arg)
         if(!active) continue;
 
         if((now-reference.created_tick)>
-             pdMS_TO_TICKS(3U*TASK_PERIOD_TRAJECTORY_MS)) {
+             pdMS_TO_TICKS(r->config.reference_timeout_ms)) {
             motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
             active=0U; last_command_valid=0U;
             joint_controller_reset(&controller);
