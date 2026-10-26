@@ -78,7 +78,7 @@ Host/ProtocolRX       IK/Selector        motion_limits
 | PID Kp/Ki/Kd、死区、限幅 | 0.8/0/0，0.02°，3°等**未经整定初值** | 同上 |
 | 笛卡尔路径周期 | 必须与 Trajectory Task 20ms 一致 | API 参数与 Task Config 比较 |
 
-真实运动安全尚未验证。关节位置端点经过 Robot Model 限位，笛卡尔离散逆解也通过选解器及速度跳变检查；但这**不等于完整连续空间碰撞检测、全部关节动力学/加速度约束都已验证**。绝对不能直接用在实体机器上。
+真实运动安全尚未验证。关节位置端点经过 Robot Model 限位，笛卡尔离散逆解也通过选解器、选中解的 FK 回代精度门限及速度跳变检查；但这**不等于完整连续空间碰撞检测、全部关节动力学/加速度约束都已验证**。绝对不能直接用在实体机器上。
 
 ### 编译选项（不默认改变第1～3阶段启动行为）
 
@@ -173,3 +173,10 @@ cmake --build --preset firmware
 详细参数登记簿：`docs/part4/00_parameter_register.md`。调参记录模板：`03_pid_tuning_record.md`。多任务实时验证模板：`04_realtime_verification.md`。这些模板中的“待测”不是已通过报告。
 
 **当前：代码已提交，未取得第4阶段本机/ARM/QEMU/PyBullet测试实测通过记录。** 
+
+### 运行时安全性补充（同日修订）
+
+- Trajectory Task 同时接收 `JOINT`、`POLYNOMIAL`、`CARTESIAN` 三类请求，三次/五次插补不再只是离线函数；多项式轨迹每个输出点验证位置、速度和加速度限值。
+- 每个 Cartesian IK+Selector 的最终连续角，都先规范化并经既有 `kinematics_forward()` 回代，与原位姿比较（位置毫米距离和旋转矩阵最大元素差）。门限唯一归属 `config/stage4_motion_config.c`。
+- 若控制任务遇到反馈超时或计算异常，会通过 `abort_requested` 取消规划任务的后续参考点；轨迹任务自己也会每周期检查反馈新鲜度，防止反馈断开后继续计时并在恢复时跳点。
+- 目前阶段不新增 UART 运动指令字节协议；运动请求由 Application 公开 `motion_pipeline_submit_*` API 注入。上位机到运动请求的正式命令映射属于后续系统集成，不得在第4阶段未验收时悄悄复用现有反馈帧当新指令。
