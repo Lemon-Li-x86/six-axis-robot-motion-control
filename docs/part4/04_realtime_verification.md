@@ -81,3 +81,18 @@
 | `monitoring_ticks` | 12 |
 
 此结果真实证明软件仿真中的 **模拟反馈→运动请求→Trajectory Task→Control PID计算→Monitor Task** 流程执行，且自检检查项通过；并不表示 `motor_state_set_targets` 电机输出开启、UART 往返跑通、PID 驱动真实或仿真机械执行完一条运动。满载抖动和30分钟稳定性仍待测。
+
+## Windows 本机统一验收报告（2026-10-26，用户确认）
+
+用户运行 `tools/test_stage4_once.ps1` 后明确反馈：“ok全过了”。据此将**该脚本包含的全部本机回归步骤**登记为用户报告通过，包括：
+
+1. 本机六组 Stage3/4 Host CTest 构建与测试。
+2. ARM Cortex-M4 固件与 QEMU 测试构建。
+3. QEMU 运动学和第4阶段算法回归及近奇异 IK 回归。
+4. FreeRTOS Monitor 任务启动检查。
+5. 非驱动 QEMU 模拟反馈→轨迹请求→Trajectory/Control/Monitor 三任务实际运行自检。
+6. 原生 C 共享库构建、smoke 和 PyBullet DIRECT 单轴、六轴动态闭环测试。
+
+**证据等级**：这是用户对最后一次运行结果的明确确认，尚未收到该次 `build/stage4-final-validation.log` 的逐行内容；本节不额外编造本机执行计数、仿真数值或持续运行时间。对应算法、任务、PyBullet 云端真实证据已在前文分别记录。
+
+**通过范围**：第四阶段**本机统一非驱动回归测试通过**。不等同于完整工业机器人系统验收。后续仍需如实单列：真实 UART↔PyBullet 闭环、通信异常与反馈过期故障注入、调度周期/抖动及最坏栈量、长时稳定性、实际硬件/安全联锁等验证。保留源代码和参数登记簿审查，不因一次脚本通过而跳过集成安全测试。
