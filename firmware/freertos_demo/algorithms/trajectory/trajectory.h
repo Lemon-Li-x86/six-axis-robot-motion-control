@@ -85,6 +85,7 @@ typedef struct
     double acceleration_time_s;
     double cruise_time_s;
     double total_time_s;
+    uint8_t initialized; /* only a successful init marks a usable plan */
 } trajectory_trapezoid_plan_t;
 
 robot_status_t trajectory_trapezoid_init(
