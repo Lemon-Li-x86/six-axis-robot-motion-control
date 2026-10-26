@@ -61,3 +61,23 @@
 该自检和 PyBullet Native C 闭环是互补试验：前者测 FreeRTOS 内部实时任务间数据流，后者测算法和物理引擎相互作用；两者都不宣称完成真实 UART 闭环或 FreeRTOS 硬实时延迟测量。
 
 最新版统一验收脚本 `tools/test_stage4_once.ps1` 包含此测试以及 Native C/PyBullet，步骤变成8项；尚未收到新版本实际执行记录。
+
+## QEMU FreeRTOS 三任务真实执行验收证据（2026-10-26）
+
+运行来源：[GitHub Actions #40345768977](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40345768977)，`stage4-arm-qemu-rtos-runtime` Job 真实使用 `arm-none-eabi-gcc`、`qemu-system-arm -M mps2-an386`、`gdb-multiarch`，而不是只执行交叉编译。测试开关 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON` 且 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF`。
+
+原先 Windows 本机在 `stage4_rtos_selftest_done` 断点处无法 `printf` 变量，GDB 报 `g_stage4_rtos_test_finished has unknown type`，根因是 `freertos_demo` 没有独立 QEMU 目标的 `-g3` 类型信息。现仅在专用测试构建添加 `-O0 -g3`，普通固件编译不变；同时扩展了 GitHub Actions 云端 QEMU/GDB 运行验证。
+
+**真实 GDB 输出**：
+
+| 指标 | 本次云端实测 |
+|---|---:|
+| `g_stage4_rtos_test_finished` | 1 |
+| `g_stage4_rtos_test_report.checks` | 11 |
+| `g_stage4_rtos_test_report.failed` | 0 |
+| `requests_accepted` | 1 |
+| `trajectory_samples` | 60 |
+| `controller_steps` | 118 |
+| `monitoring_ticks` | 12 |
+
+此结果真实证明软件仿真中的 **模拟反馈→运动请求→Trajectory Task→Control PID计算→Monitor Task** 流程执行，且自检检查项通过；并不表示 `motor_state_set_targets` 电机输出开启、UART 往返跑通、PID 驱动真实或仿真机械执行完一条运动。满载抖动和30分钟稳定性仍待测。
