@@ -124,3 +124,34 @@ if(NOT MSVC)
     target_link_libraries(stage4_cartesian_ik_host PRIVATE m)
 endif()
 add_test(NAME stage4_cartesian_ik_host COMMAND stage4_cartesian_ik_host)
+
+# Seed-conditioned analytic IK: QEMU-proven near-singular fixture and
+# wrong-reference guard. Same production IK/FK sources as existing test;
+# no duplicated model constants or test-only motion changes.
+add_executable(stage3_reference_ik_host
+    ik_reference_regression_test_main.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_common.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_forward.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_inverse.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/ur5_analytic_ik.c
+    ${FIRMWARE_ROOT}/algorithms/math/matrix4.c
+    ${FIRMWARE_ROOT}/model/ur5_model.c
+)
+target_include_directories(stage3_reference_ik_host PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/model
+    ${FIRMWARE_ROOT}/algorithms/math
+    ${FIRMWARE_ROOT}/algorithms/kinematics
+)
+set_target_properties(stage3_reference_ik_host PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(stage3_reference_ik_host PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(stage3_reference_ik_host PRIVATE m)
+endif()
+add_test(NAME stage3_reference_ik_host COMMAND stage3_reference_ik_host)
