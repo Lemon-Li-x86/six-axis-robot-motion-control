@@ -38,6 +38,11 @@
 #include "protocol_tasks.h"
 
 #include "performance_monitor.h"
+#if ROBOT_ENABLE_STAGE4_TASKS
+#include "motion_pipeline.h"
+#include "stage4_motion_config.h"
+#include "task_config.h"
+#endif
 
 /*
  * 仅在启用 Kinematics Self-Test 时引入测试接口。
@@ -332,6 +337,27 @@ int main(void)
         }
     }
 
+
+#if ROBOT_ENABLE_STAGE4_TASKS
+    /*
+     * Explicit opt-in Stage 4 tasks. No motion is issued at boot.
+     * Application requests arrive through motion_pipeline_submit_*().
+     * Motion output remains a SEPARATE opt-in CMake gate.
+     */
+    if(motion_pipeline_start(stage4_motion_default_config())
+        != ROBOT_STATUS_OK)
+    {
+        while(1) {}
+    }
+#if ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
+    /* Output transport must be no slower than the PID task period. */
+    if(runtime_config_set_protocol_tx_period_ms(
+        TASK_PERIOD_CONTROL_MS) != ROBOT_STATUS_OK)
+    {
+        while(1) {}
+    }
+#endif
+#endif
 
     /* =====================================================
      * 12. FreeRTOS Scheduler
