@@ -156,6 +156,27 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                 abs(last[j] - GOAL_RAW[j]) / 100.0
                 for j in range(COUNT)
             ]
+            # Measurements on the sampled trajectory, NOT claims about
+            # hardware. A tolerance/settling window is a test-only policy.
+            tracking_errors = [
+                row["tracking_error_j2_deg"] for row in samples]
+            tracking_mae = sum(abs(x) for x in tracking_errors) / len(samples)
+            tracking_rmse = math.sqrt(
+                sum(x * x for x in tracking_errors) / len(samples))
+            initial_j2_deg = START_RAW[1] / 100.0
+            goal_j2_deg = GOAL_RAW[1] / 100.0
+            direction = 1.0 if goal_j2_deg >= initial_j2_deg else -1.0
+            overshoot_deg = max(
+                0.0, max(direction * (row["actual_j2_deg"] - goal_j2_deg)
+                         for row in samples))
+            settling_s = None
+            for k, row in enumerate(samples):
+                if (row["time_s"] >= duration and
+                    all(abs(rest["actual_j2_deg"] - goal_j2_deg) <=
+                        max_final_error_deg for rest in samples[k:])):
+                    settling_s = row["time_s"]
+                    break
+
             summary = {
                 "kind": "native_C_stage4_algorithms_to_PyBullet_DIRECT",
                 "not_tested": [
@@ -173,6 +194,11 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                 "max_final_error_deg": max(goal_errors),
                 "max_tracking_error_j2_deg": max(
                     abs(row["tracking_error_j2_deg"]) for row in samples),
+                "trajectory_tracking_mae_j2_deg": tracking_mae,
+                "trajectory_tracking_rmse_j2_deg": tracking_rmse,
+                "overshoot_j2_deg": overshoot_deg,
+                "settled_within_threshold_after_s": settling_s,
+                "sample_count": len(samples),
                 "acceptance_error_deg": max_final_error_deg,
                 "passed": max(goal_errors) <= max_final_error_deg,
             }
