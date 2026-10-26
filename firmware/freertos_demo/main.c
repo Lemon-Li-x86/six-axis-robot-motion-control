@@ -43,6 +43,10 @@
 #include "stage4_motion_config.h"
 #include "task_config.h"
 #endif
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+/* Diagnostics only; never included without explicit QEMU-only CMake flag. */
+BaseType_t stage4_rtos_selftest_start(void);
+#endif
 
 /*
  * 仅在启用 Kinematics Self-Test 时引入测试接口。
@@ -357,6 +361,13 @@ int main(void)
         while(1) {}
     }
 #endif
+#endif
+
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+    if(stage4_rtos_selftest_start()!=pdPASS)
+    {
+        while(1) {}
+    }
 #endif
 
     /* =====================================================
