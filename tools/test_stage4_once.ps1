@@ -101,8 +101,9 @@ function Run-QemuGdb {
             throw "$target GDB failed with exit code $($gdb.ExitCode)"
         }
         # Don't accept a clean GDB exit that failed to reach the test marker.
-        if ($stdout -notmatch '(?m)^Breakpoint [0-9]+, ' +
-              [regex]::Escape($breakpoint) + '\\b') {
+        $breakPattern = '(?m)^Breakpoint [0-9]+, ' +
+            [regex]::Escape($breakpoint) + '\b'
+        if ($stdout -notmatch $breakPattern) {
             throw "$target: never reached $breakpoint"
         }
         foreach ($name in $fields) {
