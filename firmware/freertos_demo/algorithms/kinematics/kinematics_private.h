@@ -21,23 +21,17 @@
 
 #include "kinematics.h"
 #include "robot_model.h"
+#include "math_constants.h"
 
 
 /* =========================================================
  * Mathematical Constants
  * ========================================================= */
 
-#define KINEMATICS_PI_F \
-    3.14159265358979323846F
-
-#define KINEMATICS_TWO_PI_F \
-    (2.0F * KINEMATICS_PI_F)
-
-#define KINEMATICS_DEG_TO_RAD_F \
-    (KINEMATICS_PI_F / 180.0F)
-
-#define KINEMATICS_RAD_TO_DEG_F \
-    (180.0F / KINEMATICS_PI_F)
+#define KINEMATICS_PI_F ROBOT_PI_F
+#define KINEMATICS_TWO_PI_F ROBOT_TWO_PI_F
+#define KINEMATICS_DEG_TO_RAD_F ROBOT_DEG_TO_RAD_F
+#define KINEMATICS_RAD_TO_DEG_F ROBOT_RAD_TO_DEG_F
 
 
 /* Near-wrist singularity conditioning policy for OPTIONAL seeded IK.
