@@ -1,0 +1,26 @@
+name: Stage 4 trajectory host regression
+
+on:
+  push:
+    branches:
+      - feat/stage4-trajectory-2026-10-26
+    paths:
+      - 'firmware/freertos_demo/algorithms/trajectory/**'
+      - 'firmware/freertos_demo/tests/trajectory/**'
+      - '.github/workflows/stage4-trajectory-host.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trajectory-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure pure trajectory tests
+        run: cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory -G Ninja
+      - name: Build with strict warnings
+        run: cmake --build build/stage4-trajectory
+      - name: Execute regression suite
+        run: ctest --test-dir build/stage4-trajectory --output-on-failure
