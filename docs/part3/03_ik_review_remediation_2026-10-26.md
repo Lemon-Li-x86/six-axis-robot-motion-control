@@ -226,3 +226,17 @@ p g_ik_trace[5].shoulders[1].wrists[0]
 5. 修复候选：有种子关节角的奇异附近连续解跟踪/局部数值 IK，或从输入到输出全链路有证据的更高数值精度设计；两者均需单独测试速度、位置和解连续性。
 
 本次诊断只更新文档，**生产 IK 算法未变更**；保留老师评语1为“已定位致因链条，根因完整分解/连续解修复待实现”。
+
+## 针对性生产改动：参考条件化 IK（2026-10-26，尚待实测）
+
+在已证实的 `J6 → p13 → J3` 误差传播基础上，不改 `KINEMATICS_TRIG_DOMAIN_EPSILON`，改以**显式当前关节参考**解决极近腕部奇异分支的J6数值不稳定：
+
+1. `kinematics_inverse()` 旧入口仍保留其原行为；新增 `kinematics_inverse_with_reference(transform, reference, solutions)`，参考是Canonical 0.01°六轴关节状态，由调用方提供，不是隐藏的目标关节真值或全局变量。
+2. 对近奇异 `|sin(J5)|<0.001` 的候选，仅在 **J1匹配参考、J5同号、原始恢复J6与参考相差不到0.05rad** 时，用参考J6推进原本的 `p13 → J3 → J2 → J4` 求解；其他分支沿用原算法。各门限仅在 `kinematics_private.h` 声明。
+3. 对受条件化影响的**所有输出候选**在0.01°量化后，使用生产 `kinematics_forward` 回代到请求位姿，拒绝位置残差超过0.5mm或旋转矩阵元素误差超过0.003的候选。门限只在 `kinematics.h` 定义，并供Stage4初始配置派生。
+4. 第4阶段 `cartesian_waypoint.c` 通过 `robot_angles_canonicalize(current)` 提供当前关节参考，并继续把候选交由旧Selector筛选；它的 `|sin(J3)|/|sin(J5)|<0.01` 硬奇异拒绝、限位、速度门禁均未绕过。**该改动恢复候选数值可信性，不允许机器人穿越奇异构型。**
+5. J5严格等于0时的J6非唯一性依旧保留安全拒绝；不要求“8解全部存在”，也不声称任意近奇异位姿或动态过零轨迹已经完全解决。
+
+**新增实测入口**：原Stage4 Host CTest目录现在有第五组 `stage3_reference_ik_host`，测试输入J3=0、J5=±0.01°、J6=-10°及错误参考不应被注入；`qemu_ik_near_singular_trace` 额外输出 `g_ik_reference_regression_checks` 与 `g_ik_reference_regression_failures`，以及 `g_ik_trace[3/5].conditioned_* `字段。要求QEMU `checks=2, failures=0` 且两组 `conditioned_close_to_reference=1`、`conditioned_fk_verified=1`。这只是近奇异参考恢复的回归，不替代全局数值验证。
+
+**当前验收状态**：源码、构建和回归测试已提交到功能分支，但上述新增程序尚未获得本机 MSVC/ARM/QEMU 运行成功报告。本轮不能把测试“预期通过”当作“已通过”。此前128/128 FK→IK→Selector→FK 的证据属于改动前的无参考入口，改动后仍需确认不回归。
