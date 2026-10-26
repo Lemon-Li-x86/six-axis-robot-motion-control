@@ -536,3 +536,28 @@ configure_qemu_target(qemu_stage4_trajectory_tests m)
 
 # Stage2 QEMU motor boundary test now uses the shared canonical angle helper.
 target_sources(qemu_motor_tests PRIVATE common/angle_utils.c)
+
+# Stage 3 teacher review: isolated, test-only near-singular branch trace.
+# The production IK solver is NOT compiled with this macro in freertos_demo.
+# No additional runtime parameters, drivers, or FreeRTOS dependencies.
+add_executable(qemu_ik_near_singular_trace
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/ik_near_singular_trace_main.c
+    model/ur5_model.c
+    algorithms/math/matrix4.c
+    algorithms/kinematics/kinematics_common.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/kinematics/kinematics_inverse.c
+    algorithms/kinematics/ur5_analytic_ik.c
+    memory.c
+)
+target_include_directories(qemu_ik_near_singular_trace PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+)
+target_compile_definitions(qemu_ik_near_singular_trace PRIVATE
+    ROBOT_KINEMATICS_ELBOW_TRACE=1
+)
+configure_qemu_target(qemu_ik_near_singular_trace m)
