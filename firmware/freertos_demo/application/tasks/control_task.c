@@ -4,8 +4,6 @@
  * No command is emitted before request + fresh feedback. Output is gated
  * separately by ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT (default OFF).
  */
-#include <limits.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "FreeRTOS.h"
@@ -14,6 +12,7 @@
 #include "motion_tasks_internal.h"
 #include "task_config.h"
 #include "joint_controller.h"
+#include "joint_command_limiter.h"
 #include "motor_state.h"
 #include "motion_limits.h"
 #include "angle_utils.h"
@@ -23,13 +22,12 @@ static void task_control(void *arg)
 {
     motion_runtime_t *r=(motion_runtime_t *)arg;
     joint_controller_t controller;
+    joint_command_limiter_t limiter={0};
     motion_reference_t reference={0};
     TickType_t last_wake=xTaskGetTickCount();
     TickType_t previous_tick=last_wake;
     TickType_t period=pdMS_TO_TICKS(TASK_PERIOD_CONTROL_MS);
     uint8_t active=0U;
-    robot_joint_positions_t last_command={0};
-    uint8_t last_command_valid=0U;
 
     if(joint_controller_init(&controller,r->config.pid)!=ROBOT_STATUS_OK) {
         motion_record_fault(ROBOT_STATUS_ERROR_INVALID_ARGUMENT,1U);
@@ -45,7 +43,6 @@ static void task_control(void *arg)
         robot_joint_angles_t canonical={{0}};
         TickType_t now;
         double dt;
-        uint32_t j;
         robot_status_t status;
         const robot_model_t *model;
 
@@ -56,7 +53,7 @@ static void task_control(void *arg)
         if(xQueueReceive(r->reference_queue,&reference,0U)==pdTRUE) {
             if(reference.enabled==0U) {
                 active=0U;
-                last_command_valid=0U;
+                joint_command_limiter_reset(&limiter);
                 joint_controller_reset(&controller);
             } else active=1U;
         }
@@ -65,7 +62,7 @@ static void task_control(void *arg)
         if((now-reference.created_tick)>
              pdMS_TO_TICKS(r->config.reference_timeout_ms)) {
             motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
-            active=0U; last_command_valid=0U;
+            active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
             continue;
         }
@@ -77,7 +74,7 @@ static void task_control(void *arg)
             r->diagnostics.feedback_stale_count++;
             taskEXIT_CRITICAL();
             motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
-            active=0U; last_command_valid=0U;
+            active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
             continue;
         }
@@ -85,51 +82,30 @@ static void task_control(void *arg)
              &observation.feedback.unwrapped_positions,dt,&correction);
         if(status!=ROBOT_STATUS_OK) {
             motion_record_fault(status,1U);
-            active=0U; last_command_valid=0U;
+            active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
             continue;
         }
+        /*
+         * The pure limiter owns fractional command state, applies BOTH
+         * per-joint velocity and acceleration constraints, and rounds only
+         * when publishing 0.01 degree motor positions.
+         */
         model=robot_model_get_active();
-        if(model==NULL) {
-            motion_record_fault(ROBOT_STATUS_ERROR_INTERNAL,1U);
+        status=joint_command_limiter_step(
+            &limiter,
+            &observation.feedback.unwrapped_positions,
+            &correction,
+            &r->config.max_velocity_deg_s,
+            &r->config.max_acceleration_deg_s2,
+            model,
+            dt,
+            &candidate);
+        if(status!=ROBOT_STATUS_OK) {
+            motion_record_fault(status,1U);
             active=0U;
-            continue;
-        }
-
-        for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
-            double proposal=(double)observation.feedback.unwrapped_positions.value[j]+
-              (double)correction.value[j]/
-              (double)ROBOT_JOINT_ANGLE_UNIT_DEG;
-            double high=(double)model->joint_max_positions.value[j];
-            double low=(double)model->joint_min_positions.value[j];
-            double max_delta=(double)r->config.max_velocity_deg_s.value[j]*
-                dt/(double)ROBOT_JOINT_ANGLE_UNIT_DEG;
-            if(!isfinite(proposal) || !isfinite(max_delta)) {
-                status=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-                break;
-            }
-            if(last_command_valid) {
-                double upper=(double)last_command.value[j]+max_delta;
-                double lower=(double)last_command.value[j]-max_delta;
-                if(proposal>upper) proposal=upper;
-                if(proposal<lower) proposal=lower;
-            } else {
-                /* First command ramps from measured feedback; no jump. */
-                double fb=(double)observation.feedback.unwrapped_positions.value[j];
-                if(proposal>fb+max_delta) proposal=fb+max_delta;
-                if(proposal<fb-max_delta) proposal=fb-max_delta;
-            }
-            if(proposal>high) proposal=high;
-            if(proposal<low) proposal=low;
-            if(proposal>(double)INT32_MAX || proposal<(double)INT32_MIN) {
-                status=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-                break;
-            }
-            candidate.value[j]=(robot_joint_position_t)llround(proposal);
-        }
-        if(j!=ROBOT_JOINT_COUNT) {
-            motion_record_fault(ROBOT_STATUS_ERROR_OUT_OF_RANGE,1U);
-            active=0U; last_command_valid=0U;
+            joint_command_limiter_reset(&limiter);
+            joint_controller_reset(&controller);
             continue;
         }
         status=motion_limits_check_positions(&candidate);
@@ -137,7 +113,7 @@ static void task_control(void *arg)
             status=robot_angles_canonicalize(&candidate,&canonical);
         if(status!=ROBOT_STATUS_OK) {
             motion_record_fault(status,1U);
-            active=0U; last_command_valid=0U;
+            active=0U; joint_command_limiter_reset(&limiter);
             continue;
         }
 
@@ -145,14 +121,12 @@ static void task_control(void *arg)
         status=motor_state_set_targets(&canonical);
         if(status!=ROBOT_STATUS_OK) {
             motion_record_fault(status,1U);
-            active=0U; last_command_valid=0U;
+            active=0U; joint_command_limiter_reset(&limiter);
             continue;
         }
 #else
         (void)canonical; /* algorithm/task dry-run; no actuator commands */
 #endif
-        last_command=candidate;
-        last_command_valid=1U;
         taskENTER_CRITICAL();
         r->diagnostics.controller_steps++;
         taskEXIT_CRITICAL();
