@@ -63,3 +63,16 @@
 **系统验收层面**：在完整UART双向闭环、失联故障注入、实时统计与长时稳定性门禁完成前，不能标注“第4阶段全系统验收通过”；更不能宣称具备实物工业机器人安全等级。第5阶段可以**进入规划/接口设计**，但不能用未验证的系统安全作为已具备前提。
 
 **后续顺序（无需用户逐文件协助）**：最新CI Host→ARM/QEMU故障注入→PyBullet回归通过后，进入UART端到端协议及安全门禁独立开发；届时完成性能报告与再次全局审查，再合并/开启下一阶段。
+
+## 6. 审查后云端复测结果（已取得，更新于2026-10-26）
+
+[Run #40349948758](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40349948758) 经逐项工作流状态核实，以下五个Job全部 `success`：
+
+- `stage3-stage4-host`：6项Host回归及C/Python协议镜像一致性测试通过；
+- `stage4-arm-qemu-rtos-runtime`：ARM交叉编译、QEMU调度和GDB真实故障注入 **13/13、failed=0**；
+- `stage4-native-pybullet (joint2)` 和 `(six_axis)`：分别通过 Native C 算法桥、PyBullet动态仿真；
+- `stage4-windows-script-parse`：PowerShell解析检查通过。
+
+ARM/GDB原始摘要：`accepted=1; trajectory_samples=210; controller_steps=418; monitoring_ticks=43; controller_faults=1; planner_faults=0; feedback_stale_count=1`。任务计数后的停止判断由13项检查覆盖。新版测试为**超时注入后控制计算停步**，不是驱动器切断电源或实体执行机构急停。
+
+这是重构后有依据的 **Stage4核心软件回归通过** 证据。由于 `main` 尚未合并、UART完整闭环和硬实时长稳门禁未完，第4阶段仅能结算**代码结构清理和非驱动自动化回归**，不能结算完整系统验收。
