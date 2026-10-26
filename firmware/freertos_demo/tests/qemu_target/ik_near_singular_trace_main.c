@@ -72,6 +72,10 @@ typedef struct
     int32_t dh_status;
     int32_t q1_status;
     uint32_t final_solution_count;
+    int32_t conditioned_status;
+    uint32_t conditioned_solution_count;
+    uint32_t conditioned_close_to_reference;
+    uint32_t conditioned_fk_verified;
     ik_trace_shoulder_t shoulders[2];
 } ik_trace_sample_t;
 
@@ -127,6 +131,62 @@ int main(void)
         result.ik_status =
             (int32_t)kinematics_inverse(&target,&solutions);
         result.final_solution_count = solutions.count;
+        {
+            /*
+             * Same input joint tuple is now supplied EXPLICITLY as the
+             * runtime-equivalent reference. No input joint angles are
+             * assumed by kinematics_inverse_with_reference().
+             */
+            kinematics_ik_solutions_t conditioned = {0};
+            robot_status_t ref_status =
+                kinematics_inverse_with_reference(
+                    &target, &result.input, &conditioned);
+            uint32_t k, j;
+            result.conditioned_status = (int32_t)ref_status;
+            result.conditioned_solution_count = conditioned.count;
+            if (ref_status == ROBOT_STATUS_OK)
+            {
+                for(k=0U;k<conditioned.count;k++)
+                {
+                    int close=1,valid=1;
+                    robot_transform_t reconstructed={{{0}}};
+                    double dist2=0.0,max_r=0.0;
+                    uint32_t row,col;
+                    for(j=0U;j<ROBOT_JOINT_COUNT;j++)
+                    {
+                        int delta =
+                            (int)conditioned.solutions[k].value[j] -
+                            (int)result.input.value[j];
+                        if(delta < -25 || delta > 25)
+                            close=0;
+                    }
+                    if(!close)continue;
+                    result.conditioned_close_to_reference=1U;
+                    if(kinematics_forward(&conditioned.solutions[k],
+                        &reconstructed)!=ROBOT_STATUS_OK) valid=0;
+                    if(!valid)continue;
+                    for(row=0U;row<3U;row++)
+                    {
+                        double dp=
+                            (double)reconstructed.matrix[row][3]-
+                            (double)target.matrix[row][3];
+                        dist2+=dp*dp;
+                        for(col=0U;col<3U;col++)
+                        {
+                            double dr=fabs(
+                              (double)reconstructed.matrix[row][col]-
+                              (double)target.matrix[row][col]);
+                            if(dr>max_r)max_r=dr;
+                        }
+                    }
+                    if(dist2<=
+                       (double)KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM *
+                       KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM &&
+                       max_r<=KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)
+                        result.conditioned_fk_verified=1U;
+                }
+            }
+        }
         result.dh_status = (int32_t)kinematics_public_to_dh_transform(
             model,&target,&dh);
         if(result.dh_status!=(int32_t)ROBOT_STATUS_OK)
