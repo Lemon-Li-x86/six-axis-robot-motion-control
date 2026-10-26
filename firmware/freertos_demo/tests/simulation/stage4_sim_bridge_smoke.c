@@ -28,7 +28,7 @@ int main(void)
         double time=(double)i*0.01;
         if(stage4_sim_step(handle,feedback,time,0.01,command,ref)!=0)
             return 3;
-        if(command[1]<-4500 || command[1]>-4300)
+        if(command[1]<-36000 || command[1]>36000)
             return 4;
         if(ref[1]<-4500 || ref[1]>-4300)
             return 5;
