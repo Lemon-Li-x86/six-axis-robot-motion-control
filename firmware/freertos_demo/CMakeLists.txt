@@ -527,8 +527,7 @@ if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     )
 endif()
 target_compile_definitions(freertos_demo PRIVATE
-    ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=
-        $<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
+    ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=$<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
 )
 
 # QEMU standalone Stage4 smoke tests, with GDB inspectable report.
