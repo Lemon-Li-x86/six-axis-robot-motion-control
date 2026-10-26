@@ -19,6 +19,8 @@ typedef struct {
     uint32_t reference_timeout_ms;
     robot_real_t cartesian_start_tolerance_mm;
     robot_real_t cartesian_start_rotation_matrix_tolerance;
+    robot_real_t cartesian_waypoint_position_tolerance_mm;
+    robot_real_t cartesian_waypoint_rotation_matrix_tolerance;
 } motion_stage4_config_t;
 
 typedef struct {
