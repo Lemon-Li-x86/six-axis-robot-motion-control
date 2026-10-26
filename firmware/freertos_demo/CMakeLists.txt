@@ -552,6 +552,7 @@ add_executable(qemu_ik_near_singular_trace
     memory.c
 )
 target_include_directories(qemu_ik_near_singular_trace PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/kinematics
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/model
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
