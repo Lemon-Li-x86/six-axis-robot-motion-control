@@ -204,6 +204,13 @@ target_link_options(freertos_demo PRIVATE
     "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
 )
 
+# GNU Arm newlib libm's sqrt/acos wrappers may call __errno().
+# Bare-metal -nostdlib does not pull it from libc. The shim is a single
+# platform ABI provider, not an algorithm parameter or a full libc port.
+target_sources(freertos_demo PRIVATE
+    platform/freestanding_errno.c
+)
+
 target_link_libraries(freertos_demo PRIVATE m gcc)
 
 set_target_properties(
@@ -217,6 +224,12 @@ set_target_properties(
 # ----------------------------------------------------------
 
 function(configure_qemu_target target_name)
+
+    # Reuse the same freestanding libm ABI shim for every independent
+    # QEMU executable. No per-test copies or scattered __errno definitions.
+    target_sources(${target_name} PRIVATE
+        platform/freestanding_errno.c
+    )
 
     target_compile_options(${target_name} PRIVATE
         -mcpu=cortex-m4
