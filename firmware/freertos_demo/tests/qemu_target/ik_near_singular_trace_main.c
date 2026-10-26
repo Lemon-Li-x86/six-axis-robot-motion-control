@@ -19,6 +19,7 @@
 #include "kinematics.h"
 #include "kinematics_private.h"
 #include "error_code.h"
+#include "ik_reference_test_limits.h"
 
 /* Implemented only in ur5_analytic_ik.c when the test macro is defined;
  * reuses the production p13 helper, avoiding a second copy of its formula.
@@ -159,7 +160,8 @@ int main(void)
                         int delta =
                             (int)conditioned.solutions[k].value[j] -
                             (int)result.input.value[j];
-                        if(delta < -25 || delta > 25)
+                        if(delta < -IK_REFERENCE_TEST_MATCH_WINDOW_RAW ||
+                           delta > IK_REFERENCE_TEST_MATCH_WINDOW_RAW)
                             close=0;
                     }
                     if(!close)continue;
