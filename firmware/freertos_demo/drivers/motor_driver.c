@@ -24,6 +24,7 @@
 #include <limits.h>
 
 #include "motor_driver.h"
+#include "angle_utils.h"
 
 
 /* =========================================================
@@ -98,41 +99,10 @@ static uint32_t motor_feedback_sample_sequence = 0U;
  *
  * [-180°, 180°)
  */
-static robot_joint_angle_t
-motor_driver_normalize_angle_raw(
-    int32_t raw_angle
-)
+static robot_joint_angle_t motor_driver_normalize_angle_raw(int32_t raw_angle)
 {
-    int32_t normalized;
-
-
-    normalized =
-        raw_angle
-        %
-        ROBOT_JOINT_FULL_TURN_RAW;
-
-
-    if (
-        normalized
-        >= ROBOT_JOINT_HALF_TURN_RAW
-    )
-    {
-        normalized -=
-            ROBOT_JOINT_FULL_TURN_RAW;
-    }
-    else if (
-        normalized
-        <
-        -ROBOT_JOINT_HALF_TURN_RAW
-    )
-    {
-        normalized +=
-            ROBOT_JOINT_FULL_TURN_RAW;
-    }
-
-
-    return
-        (robot_joint_angle_t)normalized;
+    /* Reuse the unique Common implementation. */
+    return robot_joint_angle_normalize_raw(raw_angle);
 }
 
 
