@@ -1,100 +1,104 @@
-# 第4阶段参数登记簿（2026-10-26）
+# 第4阶段参数登记簿（权威版本）
 
-> 设计规则：机器人本体事实属于 Model；算法参数由调用方注入；运行时状态属于 Application/Motor State；轨迹只计算，不自行配置底层驱动。
+更新时间：2026-10-26。适用分支：`feat/stage4-trajectory-2026-10-26`。本登记簿替代前期逐段追加的“未来实现”“尚未接入”等过时条目；**实际定义位置以源代码为准**，本文不作为第二份可编辑配置。
 
-| 参数或数据 | 语义 / 单位 | 唯一声明 / 来源 | 第4阶段引用 | 分类 / 处理 |
+## 所有权和单位规则
+
+- **机器人事实 Model**：UR5 几何、基座/工具坐标变换及模型关节行程，唯一值源于 `model/ur5_model.c`，其他层只能通过 `robot_model_get_active()` 引用。
+- **公共约定 Common**：关节数量、Canonical/Continuous 编码、单位、纯数学常量，唯一源于 `common/robot_types.h` 与 `common/math_constants.h`。
+- **数值算法门限 Algorithm**：只服务具体算法的稳定性/选解，定义在各自算法模块；不能被默认为真实硬件安全能力。
+- **策略配置 Config**：Stage4 默认 PID、仿真速度、加速度、超时及笛卡尔容差由 `config/stage4_motion_config.c` 提供，注入 Application；任务静态默认值由 JSON/生成头链路提供。
+- **运行状态 Runtime**：当前反馈、活动轨迹、队列、PID/限速器状态不能保存在 Model、Const 或 Config 内；由 Task、Motor State、Driver 拥有。
+- **测试策略/样本 Fixture**：PyBullet 测试构型、单次试验接受阈值、GDB 检查计数属于 `tests/` 或 `simulation/`，不能复制回生产控制策略。
+
+## 1. 本体事实与单位（唯一来源）
+
+| 参数 / 数据 | 语义与单位 | 定义 / 所有者 | 主要消费者 | 类别 |
 |---|---|---|---|---|
-| `ROBOT_JOINT_COUNT` | 六轴数量 | `common/robot_types.h` | 全部轨迹数组与循环 | 固有公共常量，**不重定义** |
-| `ROBOT_JOINT_ANGLE_UNIT_DEG` | 1 raw = 0.01° | `common/robot_types.h` | 插值/梯形算法输入输出转换 | 单位换算唯一来源，**不硬编码100或0.01** |
-| `robot_joint_positions_t` | 连续位置，0.01°，可跨±180° | `common/robot_types.h` | 插值端点、当前反馈、选中的 IK 目标 | 公共类型，不归一化 |
-| `robot_joint_velocities_t` | 速度，°/s | `common/robot_types.h` | 多项式端点速度、梯形最大速度、采样返回 | 公共类型，数值从调用方注入 |
-| `trajectory_joint_accelerations_t` | 加速度，°/s² | `algorithms/trajectory/trajectory.h` | 五次多项式端点、梯形最大加速度、采样返回 | 新接口类型，**仅此一份定义**；公共 Robot Types 暂无对应结构 |
-| `duration_s` | 多项式总时长，s | 初始化函数实参 | `polynomial_trajectory.c` | 每条轨迹的请求参数 |
-| `max_velocity_deg_s` | 各关节最大速度，°/s | 调用方入参 | `trapezoidal_profile.c` 和适配器 | 可配置策略；暂不假定硬件数值 |
-| `max_acceleration_deg_s2` | 各关节最大加速度，°/s² | 调用方入参 | 同上 | 可配置策略；暂不假定硬件数值 |
-| `joint_min_positions`、`joint_max_positions` | UR5 仿真关节行程，0.01° | `model/ur5_model.c`，经 `motion_limits_check_positions` | `application/services/trajectory_request_adapter.c` | Robot Model 静态事实，**禁止复制进轨迹模块** |
-| `coefficients_deg` | 归一化时间 u=t/T 的多项式系数，° | `trajectory_polynomial_plan_t` | `polynomial_trajectory.c` | 计算派生状态，不是全局配置 |
-| `acceleration_fraction_s2`、`velocity_fraction_s` | 梯形公共路径进度导数，s⁻²、s⁻¹ | `trajectory_trapezoid_plan_t` | `trapezoidal_profile.c` | 每次规划派生结果 |
-| `sample elapsed_s` | 轨迹采样时刻，s | Task/调用方注入 | 两个 sample() | 运行时输入；**不使用 FreeRTOS tick 作算法内部时间** |
-| 轨迹采样周期 | 将来与 Control Task 同步的周期 | 未来应用配置 | 当前模块不保存 | 尚未接入，不得猜测硬编码 |
-| PID Kp、Ki、Kd 等 | 控制策略配置 | 未来 Control 配置 | 当前不使用 | 第4阶段后续任务，不放进轨迹模块 |
+| `ROBOT_JOINT_COUNT` | 6轴，个 | `common/robot_types.h` | 所有六关节数组和循环 | 公共不可变常量 |
+| `ROBOT_JOINT_ANGLE_UNIT_DEG` | 1 raw = 0.01° | 同上 | Driver、UART、IK、轨迹、控制限速器 | 公共编码常量 |
+| `ROBOT_JOINT_HALF_TURN_RAW`、`FULL_TURN_RAW` | 18000、36000 raw | 同上 | `angle_utils`、Motion、IK | 公共编码常量 |
+| `robot_joint_angles_t` | `int16_t` 的 Canonical 六轴角，[-180°,180°) | 同上 | 协议、FK/IK、Motor State | 公共类型 |
+| `robot_joint_positions_t` | `int32_t` 六轴连续位置，不在±180°回绕 | 同上 | 轨迹、PID、反馈 | 公共类型 |
+| `robot_joint_velocities_t` | 关节速度 °/s | 同上 | 轨迹、限速器 | 公共类型 |
+| `trajectory_joint_accelerations_t` | 关节加速度 °/s² | `algorithms/trajectory/trajectory.h` | 多项式、梯形、限速器 | 接口类型 |
+| `robot_transform_t` | `base_link→ee_link`，平移 mm、旋转 3×3 | `common/robot_types.h` | 运动学、笛卡尔轨迹 | 公共几何类型 |
+| `ROBOT_PI_F`、`ROBOT_DEG_TO_RAD_F`、`ROBOT_RAD_TO_DEG_F` | π、°↔rad | `common/math_constants.h` | UR5 Model、IK、IK Selector | **单一数学常量来源** |
+| `dh_a_mm`、`dh_d_mm`、`dh_alpha_rad` | UR5 标准DH，mm/rad | `model/ur5_model.c` | FK、解析IK | **机器人本体事实** |
+| `base_frame_conversion[(_inverse)]`、`tool_frame_conversion[(_inverse)]` | DH与公开Base/Tool坐标间4×4变换 | 同上 | FK、IK | 机器人本体事实 |
+| `joint_min_positions`、`joint_max_positions` | 连续关节行程，raw；J3 ±180°、其余 ±360° | 同上 | `motion_limits`、IK选择、限速器 | **当前URDF仿真模型限位，不等于实物安全限位** |
 
-注意：`trajectory_request_from_ik()` 只桥接数据并检查位置端点，最大速度与最大加速度需要未来配置来源；不应从 Python、Motor Driver、IK 或多个源文件各复制一套。笛卡尔轨迹、碰撞约束和 PID 不在本次实现范围。
+## 2. 运动学数值稳定与选解策略
 
-## 后续补充：完整第4阶段（2026-10-26）
-
-| 参数/状态 | 语义和单位 | 唯一来源 | 使用位置 |
+| 参数 | 语义/单位 | **唯一数值定义位置** | 引用 / 状态 |
 |---|---|---|---|
-| `task_priority.{control,trajectory,monitor}` | RTOS 优先级 | `config/robot_defaults.json` → generated `task_config.h` | 新任务创建 |
-| `task_period_ms.{control,trajectory,monitor}` | 调度周期，ms | 同上 | 周期任务/笛卡尔离散约束 |
-| `task_stack_depth_words` | StackType_t words | 同上 | 新任务栈分配 |
-| Stage4 Kp/Ki/Kd，积分限幅/输出限幅/死区 | PID 反馈策略，见 `pid_config_t` | `config/stage4_motion_config.c` 的单一定义宏和6关节数组 | Control Task 通过 `motion_stage4_config_t` 注入 |
-| 默认关节最高速度/加速度 | °/s、°/s²，仿真占位值 | 同一 `stage4_motion_config.c` | 轨迹算法接受配置，不内置数值 |
-| 反馈最长年龄 | ms | 同一 `stage4_motion_config.c` | Control/Trajectory Task |
-| `CARTESIAN_PATH_LINE/ARC` | 路径种类 | `cartesian_trajectory.h` | Cartesian 算法与队列 |
-| SO3 矩阵合法性容差 | 无量纲算法输入验证门限 | `cartesian_common.c` | 私有数值保护，不是 Robot Model 参数 |
-| `ROBOT_ENABLE_STAGE4_TASKS` | 是否启动任务 | `firmware/freertos_demo/CMakeLists.txt` | main/构建 |
-| `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT` | 是否向 Motor State 写入 PID 目标 | 同上 | Control Task 编译门控 |
-| Continuous→Canonical wrap | raw 0.01° | `common/angle_utils.c` | Motor Driver、轨迹任务、Control Task |
-| 轨迹请求/参考队列容量 | 单条最新请求/单条最新参考 | `application/services/motion_pipeline.c` | Task 服务，非可配运动学常量 |
-| `g_motion_runtime`、Trajectory/PID instance | 运行时状态、监测统计 | Application Task/Services | **不得存入 Robot Model 或算法常量文件** |
+| `KINEMATICS_TRIG_DOMAIN_EPSILON` | `acos`/余弦有效域浮点容差，无量纲 | `algorithms/kinematics/ur5_analytic_ik.c` | 几何有效域；**未因J6近奇异修复而放宽** |
+| `KINEMATICS_SINGULARITY_EPSILON` | 单纯解析算法奇异判别 | 同上 | `q6` 求解；独立于 Selector 的运动安全拒绝门限 |
+| `KINEMATICS_GEOMETRY_EPSILON_MM_SQUARED` | 几何退化检查，mm² | 同上 | IK 内部算法 |
+| `KINEMATICS_ORIENTATION_EPSILON_SQUARED` | 姿态相关内部数值界 | 同上 | IK 内部算法 |
+| `KINEMATICS_SEEDED_WRIST_SIN_THRESHOLD` | `abs(sin J5)<0.001`（近奇异参考入口），无量纲 | `algorithms/kinematics/kinematics_private.h` | 只用于显式参考IK的数值条件化 |
+| `KINEMATICS_SEEDED_SHOULDER_MAX_ERROR_RAD` | J1参考分支匹配最大0.005 rad | 同上 | 不能把不同肩部分支强制配对 |
+| `KINEMATICS_SEEDED_Q6_MAX_ERROR_RAD` | 原始J6与参考允许偏差0.05 rad | 同上 | 仅局部参考连续性 |
+| `KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM` | 条件化候选的FK回代最大0.5 mm | `algorithms/kinematics/kinematics.h` | Stage4默认航点位置容差由此**派生** |
+| `KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL` | FK回代旋转矩阵最大单元素差0.003 | 同上 | Stage4默认航点姿态容差由此**派生**，不是角度 |
+| `IK_SELECTOR_HARD_SINGULAR_SIN` / `SOFT_SINGULAR_SIN` | 选解器硬奇异0.01 / 软惩罚0.25，无量纲 | `algorithms/motion/ik_solution_selector.c` | Motion策略，不是解析IK解存在性判据 |
+| `IK_SELECTOR_SOFT_LIMIT_FRACTION` | 关节限位软边界比例0.10 | 同上 | IK分支选解策略 |
+| `IK_SELECTOR_LIMIT_WEIGHT` / `SINGULAR_WEIGHT` | 选解评分权重0.35 / 0.50 | 同上 | IK分支选解策略 |
+| `IK_SELECTOR_SCORE_TIE_EPS` | 候选评分数值相等容差1e-5 | 同上 | IK分支选解策略 |
+| `kinematics_pose_within_tolerance()` | **唯一**FK姿态残差计算（位置L2 mm、旋转矩阵最大单元素差） | `kinematics_common.c`，声明于 `kinematics.h` | 近奇异IK、笛卡尔起点/航点，门限由各调用方提供 |
 
-注意：此前 Stage2 Driver 内的同名角度回绕数学逻辑已改为调用 Common 唯一实现；修订了其 QEMU / Host / Unity 构建依赖，避免重定义。
+重要：`KINEMATICS_SINGULARITY_EPSILON` 和 `IK_SELECTOR_HARD_SINGULAR_SIN` **不是同义参数**。前者仅判断解析算法可否独立求解，后者代表当前应用拒绝的奇异风险，不能为了“八解齐全”合并或放宽。
 
-### 笛卡尔安全门限与中止策略（补充）
+## 3. 应用控制默认值（单点配置）
 
-- `cartesian_start_tolerance_mm`、`cartesian_start_rotation_matrix_tolerance`：起点反馈姿态与请求起点一致性判据，统一由 `config/stage4_motion_config.c` 提供。
-- `cartesian_waypoint_position_tolerance_mm`、`cartesian_waypoint_rotation_matrix_tolerance`：每一个 IK+Selector 选中解的生产 FK 回代误差判据，统一由同一配置文件提供；**矩阵元素差不是角度误差**。
-- `reference_timeout_ms`：已生成 `TASK_PERIOD_TRAJECTORY_MS` 的倍数，声明于 Stage4 配置，Control Task 不自行复制常数。
-- `abort_requested`：Control Task 发现故障、反馈过期时请求 Trajectory Task 停止，属于 Application 运行态而非算法参数。
+下列值只在 `firmware/freertos_demo/config/stage4_motion_config.c` 定义，并经 `stage4_motion_default_config()`、`motion_stage4_config_t` 注入，不得复制进 `trajectory_task.c`、`control_task.c`、`pid.c` 或 Python 控制逻辑。
 
-## 跨阶段修复：J6近奇异参考条件化（2026-10-26）
-
-| 参数/接口 | 语义、单位 | 唯一声明位置 | 分类与约束 |
-|---|---|---|---|
-| `KINEMATICS_SEEDED_WRIST_SIN_THRESHOLD` | `abs(sin(J5)) < 0.001` 的近奇异数值敏感门限，无量纲 | `algorithms/kinematics/kinematics_private.h` | 算法可靠性常量，仅用于**带参考**的 IK，不改变数学可达域 |
-| `KINEMATICS_SEEDED_SHOULDER_MAX_ERROR_RAD` | 当前参考J1与候选J1可匹配的最大角差，rad | 同上 | 算法可靠性常量，拒绝不同肩部分支套用参考 |
-| `KINEMATICS_SEEDED_Q6_MAX_ERROR_RAD` | 参考J6与姿态反算J6允许的最大一致性偏差，rad | 同上 | 算法可靠性常量，拒绝远离参考的替代 |
-| `KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM` | 参考条件化后的IK候选必须通过的FK位置回代门限，mm | `algorithms/kinematics/kinematics.h` | 公开算法验收常量；Stage4默认运行配置由此派生 |
-| `KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL` | 同一候选的FK旋转矩阵最大单元素误差，无量纲 | 同上 | 公开算法验收常量；不能解释为角度 |
-| `KINEMATICS_TRIG_DOMAIN_EPSILON` | q3/q5 的反三角函数计算域容差 | **仍只在** `algorithms/kinematics/ur5_analytic_ik.c` 原位置定义 | **未放宽**，不被近奇异修复替代 |
-| `kinematics_inverse_with_reference()` | 显式引入当前Canonical关节参考，0.01°单位 | `algorithms/kinematics/kinematics.h` | 纯函数输入；不引入运行时全局状态 |
-| `current` → `reference` | 当前连续关节位置转换成Canonical参考 | `common/angle_utils.c` → `algorithms/trajectory/cartesian_waypoint.c` | 当前状态来自调用方，不在IK内部缓存 |
-
-设计保证：旧 `kinematics_inverse` 不受影响；新的IK接口只在近腕部奇异、与当前肩/腕符号匹配、J6与参考相近的条件下替代J6，随后按实际请求位姿执行生产FK回代门限。第4阶段 Cartesian 之后仍使用既有 Selector 的近奇异拒绝、关节行程检查和任务端速度跳变保护；**不绕过硬奇异保护，不代表零J5奇异点的连续运动已解决**。
-
-`config/stage4_motion_config.c` 的初始Waypoint FK门限现在从 Kinematics 两项常量派生，运行态允许用户注入更严格的门限；无相同语义硬编码副本。以上算法门限不是生产机器人经实测确认的安全参数。
-
-## 一次性验收批次：Joint Command Limiter（2026-10-26）
-
-| 参数/状态 | 语义 / 单位 | 唯一来源 | 消费模块 |
-|---|---|---|---|
-| `max_velocity_deg_s` | 各关节命令速度上限，°/s | 调用方 `motion_stage4_config_t` / 默认 `stage4_motion_config.c` | 既有轨迹、`joint_command_limiter.c` |
-| `max_acceleration_deg_s2` | 各关节命令加速度上限，°/s² | 同一份运行配置/默认配置 | 既有轨迹、`joint_command_limiter.c` |
-| `joint_command_limiter_t.command_raw` | 尚未取整的六轴命令累积值，0.01° raw | Control Task 私有实例 | `joint_command_limiter.c` |
-| `joint_command_limiter_t.velocity_deg_s` | 逐轴上一次命令速度，°/s | 同一个实例 | `joint_command_limiter.c` |
-| `task_stack_depth_words.control` | Control Task StackType_t 字数 | `config/robot_defaults.json` 的单点配置，目前768 | Config Generator → FreeRTOS xTaskCreate |
-
-控制命令算法输入校正量来自既有 Incremental PID。命令限速器为纯算法，依次约束**加速度变化率、绝对速度、模型关节位置限位**，最终仅在驱动边界量化为0.01°；内部保留小数位，否则低加速度与10ms更新周期会出现量化锁死。该算法不发送命令、不增加 UR5 常量和静态全局运行状态。
-
-Control Task 启动栈由512加到768 words以预留嵌套计算余量；该数值**不是最终满负载验证值**。运行初始/错误恢复后会重置速率累积状态，仍需用反馈真实执行、栈高水位与周期数据实测验证。
-
-Stage4默认 `cartesian_waypoint_*` 容差由 `kinematics.h` 定义的安全门限派生；即使应用层手动注入更宽松配置，`motion_pipeline_start()` 现在也会拒绝大于 IK 验收门限的运行配置，避免算法放行而应用忽略。
-
-以上改动全部保持 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF` 为默认；任何机械执行或 PyBullet 实际动作均需另外明确开启且检查仿真环境。
-
-## 第4阶段原生 PyBullet 控制链（2026-10-26）
-
-| 来源/参数 | 所有者 | 作用 |
+| 配置项 | 当前仿真初始值 / 单位 | 使用与归属 |
 |---|---|---|
-| `stage4_motion_default_config()` | `config/stage4_motion_config.c` | **唯一** PID 初始增益、积分限制、命令位置修正上限、速度/加速度上限、反馈超时等 |
-| `TASK_PERIOD_CONTROL_MS` | `config/robot_defaults.json` → 生成头文件 | 固件任务周期；PyBullet脚本从同一JSON读取周期，不再独立硬编码10ms |
-| UR5 DH、关节限位 | `model/ur5_model.c` | 原生控制桥调用 `robot_model_get_active()`，不复制真实模型参数 |
-| `START_RAW` / `GOAL_RAW` | `simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py` | 仿真测试**输入样本**，不是算法或本体参数，刻意与部署配置分离 |
-| PyBullet `physics-dt-s` / `motor-force` / `max-final-error-deg` | Python脚本命令行 | **测试台架**参数，不得解释为机器人硬件额定参数或新的嵌入式配置 |
+| `STAGE4_PID_STARTER_GAIN_P` | **0.2**；Ki=0、Kd=0 | 六轴增量式PID默认配置，基于小幅 PyBullet 对照；不是实体硬件标定 |
+| `STAGE4_PID_INTEGRAL_CAP_DEG_S` | 10，°·s（按 `pid_controller_t` 积分存储） | `pid.c` 积分限幅 |
+| `STAGE4_PID_COMMAND_CAP_DEG` | 3° | PID角度修正输出限幅 |
+| `STAGE4_PID_DEADBAND_DEG` | 0.02° | PID 死区 |
+| `STAGE4_SIM_VELOCITY_CAP_DEG_S` | 15°/s | 梯形规划、请求约束与输出限速器 |
+| `STAGE4_SIM_ACCEL_CAP_DEG_S2` | 30°/s² | 梯形规划、输出加减速限幅器 |
+| `STAGE4_FEEDBACK_TIMEOUT_MS` | 3000 ms | Trajectory、Control 反馈新鲜度门禁 |
+| `STAGE4_REFERENCE_TIMEOUT_MS` | `3*T​ASK_PERIOD_TRAJECTORY_MS` | Control目标参考最长保鲜时间；**派生量** |
+| `STAGE4_CARTESIAN_START_TOLERANCE_MM` | 0.5 mm | 请求起点 vs 实际反馈FK对比 |
+| `STAGE4_CARTESIAN_START_ROTATION_TOLERANCE` | 0.01，最大矩阵元素差 | 请求起点姿态容差 |
+| `STAGE4_CARTESIAN_WAYPOINT_TOLERANCE_MM` | 从 `KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM` 派生 | 每航点FK位置回代 |
+| `STAGE4_CARTESIAN_WAYPOINT_ROTATION_TOLERANCE` | 从 `KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL` 派生 | 每航点FK姿态回代 |
 
-`stage4_sim_bridge.c` 是仅限开发主机的包装，链接到**同一套生产轨迹、PID和限速源文件**，测试过程中没有隐藏共享可变配置；Python只调用C函数，不实现第二份PID/梯形算法。Cortex-M4固件不链接该桥接模块（不向嵌入式系统引入malloc）。
+控制指令中未量化的 `joint_command_limiter_t.command_raw`（0.01° raw）与 `velocity_deg_s`（°/s）是 **Control Task 私有运行态**，不能移进上述配置。加速度限幅在 `joint_command_limiter.c` 内按当前状态计算，不设第二份上限。
 
-## QEMU内部数据流诊断参数归属（第4阶段）
+## 4. 启动配置、协议和运行态
 
-`tests/qemu_target/stage4_rtos_selftest.c` 使用的关节起始样本和J2 +1°目标**仅用于仿真冒烟自检**，不是机器人运行默认配置；它们被保留在唯一的测试夹具源文件，不复制到生产应用任务。Self-Test任务周期复用 `TASK_PERIOD_CONTROL_MS`，内存栈使用既有 `TASK_STACK_DEPTH_MONITOR`，没有创建重复配置。CMake门控 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST` 默认 OFF 且命令输出必须 OFF。正式运行业务不会创建该任务。
+| 参数 / 状态 | 唯一来源 | 主要消费者和约束 |
+|---|---|---|
+| `task_priority.*` | `config/robot_defaults.json` → `tools/generate_firmware_defaults.py` → `task_config.h` | 5个 FreeRTOS 任务优先级；0..4 |
+| `task_period_ms.*` | 同一 JSON → generated header | Control 10ms、Trajectory 20ms、Monitor 100ms；单位毫秒 |
+| `task_stack_depth_words.*` | 同一 JSON → generated header | Control 768、Trajectory 1024、Monitor 384（words），未经满负载上界证明 |
+| `timer_frequency_hz`、`parser_benchmark_samples` | 同一 JSON | Timer/启动性能诊断 |
+| `initial_joint_targets_centideg` | 同一 JSON | 开机初始角度，不自动触发 Stage4 运动 |
+| `runtime_protocol_tx_period_ms` | `application/runtime_config.c` 的单一可变实例；初值来自生成头 | ProtocolRX SET_PARAMETER写；ProtocolTX读，运行态覆盖默认 |
+| `CMD_*`、`PROTOCOL_HEADER_*`、`PROTOCOL_JOINT_PAYLOAD_LEN` | `communications/protocol.h` | 固件收发格式/命令种类；**Python UART旧示例有镜像常量，须加跨语言一致性测试** |
+| `motor_state_observation_t`、`last_accepted_tick` | `application/motor_state.[ch]` | 持锁复制反馈与接收时间戳 |
+| `g_motion_runtime`、`abort_requested`、队列 | `application/services/motion_pipeline.c` 运行态 | 任务启动、请求/参考队列各1项、故障取消 |
+| `pid_controller_t`、`joint_command_limiter_t` 实例 | Control Task 栈上的私有状态 | 积分/导数、命令累积和上次速度 |
+| `trajectory_trapezoid_plan_t`、`cartesian_index` | Trajectory Task 私有状态 | 每次请求计算和迭代，不应变成配置 |
+| `ROBOT_ENABLE_STAGE4_TASKS` | `firmware/freertos_demo/CMakeLists.txt` | 默认 OFF，显式允许创建任务 |
+| `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT` | 同上 | 默认 OFF；允许电机目标写入需另外启用，不代表实体安全 |
+| `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST` | 同上 | 默认 OFF，强制 TASKS=ON/OUTPUT=OFF，绝不允许量产固件误触发 |
+
+## 5. 测试夹具和剩余重复风险
+
+| 对象 | 归属 | 不能替代的东西 |
+|---|---|---|
+| 近奇异 `IK_REFERENCE_TEST_MATCH_WINDOW_RAW` | `tests/kinematics/ik_reference_test_limits.h` | 候选匹配窗口，不是关节控制容差 |
+| QEMU 自检起始姿态与小幅J2目标 | `tests/qemu_target/stage4_rtos_selftest.c` | 非驱动固定反馈测试夹具，不是运动任务默认目标 |
+| PyBullet `TRIAL_GOALS`、`START_RAW` | `simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py` | 动力学小幅试验样本，不是UR5模型事实 |
+| PyBullet `max-final-error-deg` / `max-overshoot-j2-deg` / `max-tracking-rmse-j2-deg` | 同一测试脚本命令行 | 仿真验收指标，不是实物控制承诺 |
+| GDB `checks/failed` | `tests/qemu_target/stage4_rtos_selftest.c` | 软件仿真断言计数，不是机械/系统安全认证 |
+
+**尚存的跨语言镜像问题**：旧 `simulation/pybullet_ur5/src/qemu_uart_receiver.py` 单独写了帧头、命令ID、关节数量和角度缩放。它们必须与固件 `protocol.h` / `robot_types.h` 一致；未来协议扩展应通过单点schema/生成逻辑消除人工双维护。本轮全局审查将其作为待处理接口风险，而不是在没有端到端测试的情况下直接替换协议解析器。
+
+**安全边界**：真实UART↔PyBullet反馈闭环、丢包/延迟/错误帧故障注入、Control周期P99/WCET、长时运行、实物急停/碰撞约束仍需独立验收；此前6组Host/ARM-QEMU软件自检/PyBullet小幅实验全绿不等于整机可以上电运行。
