@@ -37,31 +37,19 @@ static int find_verified_reference(
     const kinematics_ik_solutions_t *solutions,
     const robot_joint_angles_t *reference)
 {
-    unsigned i, row, col;
+    unsigned i;
     for (i = 0; i < solutions->count; ++i)
     {
         robot_transform_t actual = {{{0}}};
-        double pos2 = 0.0, maxr = 0.0;
         if (!close_to_reference(&solutions->solutions[i], reference))
             continue;
         if (kinematics_forward(&solutions->solutions[i], &actual)
             != ROBOT_STATUS_OK) continue;
-        for (row = 0; row < 3; ++row)
-        {
-            double dp = (double)actual.matrix[row][3] -
-                (double)requested->matrix[row][3];
-            pos2 += dp * dp;
-            for (col = 0; col < 3; ++col)
-            {
-                double dr = fabs((double)actual.matrix[row][col] -
-                    (double)requested->matrix[row][col]);
-                if (dr > maxr) maxr = dr;
-            }
-        }
-        if (pos2 <=
-            (double)KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM *
-            KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM &&
-            maxr <= KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)
+        if (kinematics_pose_within_tolerance(
+                &actual, requested,
+                KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM,
+                KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)
+            == ROBOT_STATUS_OK)
             return 1;
     }
     return 0;
@@ -97,8 +85,41 @@ static void run_case(robot_joint_angle_t wrist_raw)
           == ROBOT_STATUS_ERROR_NULL_POINTER);
 }
 
+static void check_public_pose_gate(void)
+{
+    robot_transform_t expected={{{0}}};
+    robot_transform_t actual={{{0}}};
+    unsigned i;
+    for (i=0; i<4; ++i)
+        expected.matrix[i][i]=1.0F;
+    actual=expected;
+
+    CHECK(kinematics_pose_within_tolerance(
+        &actual,&expected,0.5F,0.003F)==ROBOT_STATUS_OK);
+    actual.matrix[0][3]=0.3F;
+    CHECK(kinematics_pose_within_tolerance(
+        &actual,&expected,0.5F,0.003F)==ROBOT_STATUS_OK);
+    actual.matrix[0][3]=0.6F;
+    CHECK(kinematics_pose_within_tolerance(
+        &actual,&expected,0.5F,0.003F)==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    actual=expected;
+    actual.matrix[1][1]=0.996F;
+    CHECK(kinematics_pose_within_tolerance(
+        &actual,&expected,0.5F,0.003F)==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    actual.matrix[1][1]=NAN;
+    CHECK(kinematics_pose_within_tolerance(
+        &actual,&expected,0.5F,0.003F)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    CHECK(kinematics_pose_within_tolerance(
+        NULL,&expected,0.5F,0.003F)==ROBOT_STATUS_ERROR_NULL_POINTER);
+    CHECK(kinematics_pose_within_tolerance(
+        &expected,&expected,0.0F,0.003F)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    CHECK(kinematics_pose_within_tolerance(
+        &expected,&expected,0.5F,NAN)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+}
+
 int main(void)
 {
+    check_public_pose_gate();
     run_case(-1);
     run_case(1);
     printf("Seeded IK regression: checks=%d failures=%d\n", checks, failures);
