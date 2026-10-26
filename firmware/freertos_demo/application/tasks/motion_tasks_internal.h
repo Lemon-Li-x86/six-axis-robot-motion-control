@@ -28,6 +28,7 @@ typedef struct {
     QueueHandle_t reference_queue;
     motion_stage4_config_t config;
     motion_stage4_diagnostics_t diagnostics;
+    volatile uint8_t abort_requested; /* controller-to-planner cancellation */
     TaskHandle_t trajectory_handle;
     TaskHandle_t control_handle;
     TaskHandle_t monitor_handle;
