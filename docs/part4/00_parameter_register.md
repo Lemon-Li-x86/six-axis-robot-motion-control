@@ -94,3 +94,7 @@ Stage4默认 `cartesian_waypoint_*` 容差由 `kinematics.h` 定义的安全门�
 | PyBullet `physics-dt-s` / `motor-force` / `max-final-error-deg` | Python脚本命令行 | **测试台架**参数，不得解释为机器人硬件额定参数或新的嵌入式配置 |
 
 `stage4_sim_bridge.c` 是仅限开发主机的包装，链接到**同一套生产轨迹、PID和限速源文件**，测试过程中没有隐藏共享可变配置；Python只调用C函数，不实现第二份PID/梯形算法。Cortex-M4固件不链接该桥接模块（不向嵌入式系统引入malloc）。
+
+## QEMU内部数据流诊断参数归属（第4阶段）
+
+`tests/qemu_target/stage4_rtos_selftest.c` 使用的关节起始样本和J2 +1°目标**仅用于仿真冒烟自检**，不是机器人运行默认配置；它们被保留在唯一的测试夹具源文件，不复制到生产应用任务。Self-Test任务周期复用 `TASK_PERIOD_CONTROL_MS`，内存栈使用既有 `TASK_STACK_DEPTH_MONITOR`，没有创建重复配置。CMake门控 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST` 默认 OFF 且命令输出必须 OFF。正式运行业务不会创建该任务。
