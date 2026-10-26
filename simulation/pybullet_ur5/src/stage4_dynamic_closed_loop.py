@@ -32,7 +32,11 @@ JOINT_NAMES = (
 )
 # Test FIXTURE ONLY, not the source of robot model safety limits.
 START_RAW = (3000, -4500, 6000, 2000, 500, -1000)
-GOAL_RAW = (3000, -4300, 6000, 2000, 500, -1000)
+TRIAL_GOALS = {
+    # Test fixtures only; these are not UR5 hardware limit definitions.
+    "joint2": (3000, -4300, 6000, 2000, 500, -1000),
+    "six_axis": (3050, -4300, 6100, 2050, 550, -900),
+}
 COUNT = len(JOINT_NAMES)
 IntJoints = ctypes.c_int32 * COUNT
 
@@ -82,7 +86,7 @@ def angles_raw(bullet, body: int, indices: list[int]) -> list[int]:
 
 def run(library: Path, output_dir: Path, max_final_error_deg: float,
         physics_dt_s: float, force_newton_m: float,
-        kp_scale: float = 1.0) -> dict:
+        kp_scale: float = 1.0, scenario: str = "joint2") -> dict:
     import pybullet as p
 
     config = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -94,9 +98,10 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                              abs_tol=1e-9)):
         raise ValueError("Physics timestep must exactly divide firmware control period")
 
+    goal_raw = TRIAL_GOALS[scenario]
     bridge = load_bridge(library)
     start = IntJoints(*START_RAW)
-    goal = IntJoints(*GOAL_RAW)
+    goal = IntJoints(*goal_raw)
     handle = bridge.stage4_sim_create_with_kp_scale(start, goal, kp_scale)
     if not handle:
         raise RuntimeError("Native trajectory/controller initialization failed")
@@ -149,18 +154,19 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                     p.stepSimulation()
 
                 feedback_after = angles_raw(p, body, indices)
-                samples.append({
-                    "time_s": round(elapsed + control_dt_s, 6),
-                    "reference_j2_deg": trajectory[1] / 100.0,
-                    "command_j2_deg": command[1] / 100.0,
-                    "actual_j2_deg": feedback_after[1] / 100.0,
-                    "tracking_error_j2_deg": (
-                        trajectory[1] - feedback_after[1]) / 100.0,
-                })
+                row = {"time_s": round(elapsed + control_dt_s, 6)}
+                for axis in range(COUNT):
+                    label = f"j{axis+1}"
+                    row[f"reference_{label}_deg"] = trajectory[axis] / 100.0
+                    row[f"command_{label}_deg"] = command[axis] / 100.0
+                    row[f"actual_{label}_deg"] = feedback_after[axis] / 100.0
+                    row[f"tracking_error_{label}_deg"] = (
+                        trajectory[axis] - feedback_after[axis]) / 100.0
+                samples.append(row)
 
             last = angles_raw(p, body, indices)
             goal_errors = [
-                abs(last[j] - GOAL_RAW[j]) / 100.0
+                abs(last[j] - goal_raw[j]) / 100.0
                 for j in range(COUNT)
             ]
             # Measurements on the sampled trajectory, NOT claims about
@@ -171,7 +177,7 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
             tracking_rmse = math.sqrt(
                 sum(x * x for x in tracking_errors) / len(samples))
             initial_j2_deg = START_RAW[1] / 100.0
-            goal_j2_deg = GOAL_RAW[1] / 100.0
+            goal_j2_deg = goal_raw[1] / 100.0
             direction = 1.0 if goal_j2_deg >= initial_j2_deg else -1.0
             overshoot_deg = max(
                 0.0, max(direction * (row["actual_j2_deg"] - goal_j2_deg)
@@ -184,8 +190,17 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                     settling_s = row["time_s"]
                     break
 
+            per_joint_tracking_rmse = [
+                math.sqrt(sum(row[f"tracking_error_j{axis+1}_deg"] ** 2
+                              for row in samples) / len(samples))
+                for axis in range(COUNT)
+            ]
             summary = {
                 "kind": "native_C_stage4_algorithms_to_PyBullet_DIRECT",
+                "scenario": scenario,
+                "start_raw": list(START_RAW),
+                "goal_raw": list(goal_raw),
+                "trajectory_tracking_rmse_deg_per_joint": per_joint_tracking_rmse,
                 "pid_kp_multiplier_of_authoritative_default": kp_scale,
                 "not_tested": [
                     "Cortex-M4 FreeRTOS scheduling",
@@ -235,6 +250,8 @@ def main() -> int:
     parser.add_argument("--max-final-error-deg", type=float, default=1.0,
                         help="Simulation acceptance criterion, not firmware config")
     parser.add_argument("--physics-dt-s", type=float, default=0.001)
+    parser.add_argument("--scenario", choices=tuple(TRIAL_GOALS),
+                        default="joint2")
     parser.add_argument("--kp-scale", type=float, default=1.0,
                         help="Host-only P gain sweep multiplier; default config stays authoritative")
     parser.add_argument("--motor-force", type=float, default=150.0,
@@ -247,7 +264,8 @@ def main() -> int:
         parser.error("Invalid simulation trial parameters")
     summary = run(
         args.library, args.output_dir, args.max_final_error_deg,
-        args.physics_dt_s, args.motor_force, args.kp_scale)
+        args.physics_dt_s, args.motor_force, args.kp_scale,
+        args.scenario)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0 if summary["passed"] else 1
 
