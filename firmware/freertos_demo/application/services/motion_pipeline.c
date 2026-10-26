@@ -91,6 +91,38 @@ robot_status_t motion_pipeline_submit_joint(const robot_joint_positions_t *goal)
     return ROBOT_STATUS_OK;
 }
 
+robot_status_t motion_pipeline_submit_polynomial(
+    const trajectory_polynomial_plan_t *plan)
+{
+    motion_request_t request;
+    uint32_t j;
+    if(plan==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    if((plan->degree!=3U && plan->degree!=5U) ||
+       !(plan->duration_s>0.0) || !isfinite(plan->duration_s))
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    if(motion_limits_check_positions(&plan->start_positions)!=ROBOT_STATUS_OK ||
+       motion_limits_check_positions(&plan->goal_positions)!=ROBOT_STATUS_OK)
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+        uint32_t k;
+        for(k=0U;k<6U;k++) {
+            if(!isfinite(plan->coefficients_deg[j][k]))
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    memset(&request,0,sizeof(request));
+    request.kind=MOTION_REQUEST_POLYNOMIAL;
+    request.polynomial=*plan;
+    if(xQueueOverwrite(g_motion_runtime.request_queue,&request)!=pdPASS)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    taskENTER_CRITICAL();
+    g_motion_runtime.diagnostics.requests_accepted++;
+    taskEXIT_CRITICAL();
+    return ROBOT_STATUS_OK;
+}
+
 robot_status_t motion_pipeline_submit_cartesian(
     const cartesian_trajectory_plan_t *plan)
 {
