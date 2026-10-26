@@ -221,7 +221,7 @@ try {
           'g_stage4_rtos_test_report.failed') `
         @{
           'g_stage4_rtos_test_finished'=1;
-          'g_stage4_rtos_test_report.checks'=11;
+          'g_stage4_rtos_test_report.checks'=13;
           'g_stage4_rtos_test_report.failed'=0
         } 'build/cmake-arm-stage4-selftest'
 
