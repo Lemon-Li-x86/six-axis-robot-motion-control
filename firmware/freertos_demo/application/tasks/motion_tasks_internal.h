@@ -8,12 +8,14 @@
 
 typedef enum {
     MOTION_REQUEST_JOINT = 1,
-    MOTION_REQUEST_CARTESIAN = 2
+    MOTION_REQUEST_CARTESIAN = 2,
+    MOTION_REQUEST_POLYNOMIAL = 3
 } motion_request_kind_t;
 typedef struct {
     motion_request_kind_t kind;
     robot_joint_positions_t joint_goal;
     cartesian_trajectory_plan_t cartesian;
+    trajectory_polynomial_plan_t polynomial;
 } motion_request_t;
 typedef struct {
     robot_joint_positions_t target;
