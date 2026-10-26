@@ -18,6 +18,7 @@
 #include "motion_pipeline.h"
 #include "motor_state.h"
 #include "task_config.h"
+#include "stage4_motion_config.h"
 
 typedef struct
 {
@@ -57,7 +58,9 @@ static void stage4_rtos_test_task(void *argument)
 {
     robot_joint_angles_t starting = {{3000,-4500,6000,2000,500,-1000}};
     robot_joint_positions_t goal = {{3000,-4400,6000,2000,500,-1000}};
-    motion_stage4_diagnostics_t diagnostics={0};
+    motion_stage4_diagnostics_t healthy={0};
+    motion_stage4_diagnostics_t stale={0};
+    motion_stage4_diagnostics_t after_stale={0};
     robot_status_t status=ROBOT_STATUS_OK;
     TickType_t last_wake=xTaskGetTickCount();
     const TickType_t cadence=pdMS_TO_TICKS(TASK_PERIOD_CONTROL_MS);
@@ -89,43 +92,74 @@ static void stage4_rtos_test_task(void *argument)
         vTaskDelayUntil(&last_wake,(cadence==0U)?1U:cadence);
     }
 
-    g_stage4_rtos_test_report.last_error=(int32_t)status;
-    if(motion_pipeline_get_diagnostics(&diagnostics)!=ROBOT_STATUS_OK)
-        g_stage4_rtos_test_report.failed++;
-    else
+    /*
+     * Phase 2: stop ALL simulated feedback. Hold beyond the same
+     * application-configured feedback timeout, without inventing a second
+     * timeout parameter. Trajectory/Control must fault and stop producing
+     * new commands even when the requested path hasn't converged.
+     */
+    if(status==ROBOT_STATUS_OK)
     {
-        g_stage4_rtos_test_report.requests_accepted=
-            diagnostics.requests_accepted;
-        g_stage4_rtos_test_report.trajectory_samples=
-            diagnostics.trajectory_samples;
-        g_stage4_rtos_test_report.controller_steps=
-            diagnostics.controller_steps;
-        g_stage4_rtos_test_report.monitoring_ticks=
-            diagnostics.monitoring_ticks;
-        g_stage4_rtos_test_report.controller_faults=
-            diagnostics.controller_faults;
-        g_stage4_rtos_test_report.planner_faults=
-            diagnostics.planner_faults;
-        g_stage4_rtos_test_report.feedback_stale_count=
-            diagnostics.feedback_stale_count;
-        g_stage4_rtos_test_report.control_stack_free_words=
-            diagnostics.control_stack_free_words;
-        g_stage4_rtos_test_report.trajectory_stack_free_words=
-            diagnostics.trajectory_stack_free_words;
-        g_stage4_rtos_test_report.monitor_stack_free_words=
-            diagnostics.monitor_stack_free_words;
+        const motion_stage4_config_t *cfg=stage4_motion_default_config();
+        if(motion_pipeline_get_diagnostics(&healthy)!=ROBOT_STATUS_OK)
+            status=ROBOT_STATUS_ERROR_INTERNAL;
+        else
+        {
+            vTaskDelay(pdMS_TO_TICKS(
+                cfg->feedback_timeout_ms+
+                (5U*TASK_PERIOD_TRAJECTORY_MS)));
+            if(motion_pipeline_get_diagnostics(&stale)!=ROBOT_STATUS_OK)
+                status=ROBOT_STATUS_ERROR_INTERNAL;
+            else
+            {
+                vTaskDelay(pdMS_TO_TICKS(5U*TASK_PERIOD_TRAJECTORY_MS));
+                if(motion_pipeline_get_diagnostics(&after_stale)!=ROBOT_STATUS_OK)
+                    status=ROBOT_STATUS_ERROR_INTERNAL;
+            }
+        }
     }
+
+    g_stage4_rtos_test_report.last_error=(int32_t)status;
+    g_stage4_rtos_test_report.requests_accepted=
+        after_stale.requests_accepted;
+    g_stage4_rtos_test_report.trajectory_samples=
+        after_stale.trajectory_samples;
+    g_stage4_rtos_test_report.controller_steps=
+        after_stale.controller_steps;
+    g_stage4_rtos_test_report.monitoring_ticks=
+        after_stale.monitoring_ticks;
+    g_stage4_rtos_test_report.controller_faults=
+        after_stale.controller_faults;
+    g_stage4_rtos_test_report.planner_faults=
+        after_stale.planner_faults;
+    g_stage4_rtos_test_report.feedback_stale_count=
+        after_stale.feedback_stale_count;
+    g_stage4_rtos_test_report.control_stack_free_words=
+        after_stale.control_stack_free_words;
+    g_stage4_rtos_test_report.trajectory_stack_free_words=
+        after_stale.trajectory_stack_free_words;
+    g_stage4_rtos_test_report.monitor_stack_free_words=
+        after_stale.monitor_stack_free_words;
+
+    /* Healthy phase: real tasks ran without faults, safe stack margins. */
     report_check(status==ROBOT_STATUS_OK);
-    report_check(diagnostics.requests_accepted==1U);
-    report_check(diagnostics.trajectory_samples>0U);
-    report_check(diagnostics.controller_steps>0U);
-    report_check(diagnostics.monitoring_ticks>0U);
-    report_check(diagnostics.controller_faults==0U);
-    report_check(diagnostics.planner_faults==0U);
-    report_check(diagnostics.feedback_stale_count==0U);
-    report_check(diagnostics.control_stack_free_words>0U);
-    report_check(diagnostics.trajectory_stack_free_words>0U);
-    report_check(diagnostics.monitor_stack_free_words>0U);
+    report_check(healthy.requests_accepted==1U);
+    report_check(healthy.trajectory_samples>0U);
+    report_check(healthy.controller_steps>0U);
+    report_check(healthy.monitoring_ticks>0U);
+    report_check(healthy.controller_faults==0U);
+    report_check(healthy.planner_faults==0U);
+    report_check(healthy.feedback_stale_count==0U);
+    report_check(healthy.control_stack_free_words>0U);
+    report_check(healthy.trajectory_stack_free_words>0U);
+    report_check(healthy.monitor_stack_free_words>0U);
+
+    /* Fault phase: at least one safety guardian reports loss of feedback
+     * and command computation no longer advances after shutdown. */
+    report_check(
+        (after_stale.controller_faults+after_stale.planner_faults)>0U);
+    report_check(
+        stale.controller_steps==after_stale.controller_steps);
     g_stage4_rtos_test_finished=1U;
     stage4_rtos_selftest_done();
 }
