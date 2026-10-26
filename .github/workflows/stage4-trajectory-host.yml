@@ -8,6 +8,7 @@ on:
       - 'firmware/freertos_demo/**'
       - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
       - 'tools/test_stage4_once.ps1'
+      - 'tools/ci_stage4_rtos_qemu.sh'
       - '.github/workflows/stage4-trajectory-host.yml'
   workflow_dispatch:
 
@@ -75,3 +76,35 @@ jobs:
             exit 1
           }
           Write-Host 'PowerShell acceptance script syntax OK'
+
+  stage4-arm-qemu-rtos-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native ARM/QEMU debugger toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm gdb-multiarch ninja-build
+      - name: Configure non-actuating Cortex-M4 RTOS integration test
+        run: |
+          cmake -S . -B build/ci-stage4-arm -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON
+      - name: Compile firmware test ELF with DWARF types
+        run: cmake --build build/ci-stage4-arm --target freertos_demo
+      - name: Actually run QEMU/FreeRTOS trajectory + control + monitor test
+        run: |
+          bash tools/ci_stage4_rtos_qemu.sh \
+            build/ci-stage4-arm/firmware/freertos_demo/freertos_demo.elf \
+            build/stage4-rtos-ci-gdb.log
+      - name: Keep ARM QEMU GDB evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-rtos-qemu-gdb
+          path: build/stage4-rtos-ci-gdb.log
+          if-no-files-found: ignore
