@@ -37,30 +37,14 @@ static robot_status_t verify_waypoint_fk(
     robot_joint_angles_t canonical={{0}};
     robot_transform_t reconstructed={{{0}}};
     robot_status_t status;
-    double position_squared=0.0;
-    double max_rotation_delta=0.0;
-    uint32_t row,col;
     status=robot_angles_canonicalize(chosen,&canonical);
     if(status!=ROBOT_STATUS_OK) return status;
     status=kinematics_forward(&canonical,&reconstructed);
     if(status!=ROBOT_STATUS_OK) return status;
-    for(row=0U;row<3U;row++) {
-        double dp=(double)reconstructed.matrix[row][3] -
-                   (double)requested->matrix[row][3];
-        position_squared+=dp*dp;
-        for(col=0U;col<3U;col++) {
-            double dr=fabs((double)reconstructed.matrix[row][col] -
-                           (double)requested->matrix[row][col]);
-            if(dr>max_rotation_delta) max_rotation_delta=dr;
-        }
-    }
-    if(position_squared>
-          (double)r->config.cartesian_waypoint_position_tolerance_mm*
-          (double)r->config.cartesian_waypoint_position_tolerance_mm ||
-       max_rotation_delta>
-          (double)r->config.cartesian_waypoint_rotation_matrix_tolerance)
-        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-    return ROBOT_STATUS_OK;
+    return kinematics_pose_within_tolerance(
+        &reconstructed,requested,
+        r->config.cartesian_waypoint_position_tolerance_mm,
+        r->config.cartesian_waypoint_rotation_matrix_tolerance);
 }
 
 static robot_status_t start_request(
@@ -103,31 +87,14 @@ static robot_status_t start_request(
          * are additionally checked by the first IK waypoint. */
         robot_joint_angles_t canonical;
         robot_transform_t actual;
-        double delta2=0.0;
-        double max_rotation_element=0.0;
-        uint32_t j,k;
         s=robot_angles_canonicalize(last_joint,&canonical);
         if(s!=ROBOT_STATUS_OK) return s;
         s=kinematics_forward(&canonical,&actual);
         if(s!=ROBOT_STATUS_OK) return s;
-        for(j=0U;j<3U;j++) {
-            double d=(double)actual.matrix[j][3] -
-                (double)request->cartesian.start.matrix[j][3];
-            delta2+=d*d;
-            for(k=0U;k<3U;k++) {
-                double rotation_delta=fabs(
-                    (double)actual.matrix[j][k] -
-                    (double)request->cartesian.start.matrix[j][k]);
-                if(rotation_delta>max_rotation_element)
-                    max_rotation_element=rotation_delta;
-            }
-        }
-        if(delta2>(double)r->config.cartesian_start_tolerance_mm*
-                   (double)r->config.cartesian_start_tolerance_mm ||
-           max_rotation_element >
-             (double)r->config.cartesian_start_rotation_matrix_tolerance)
-            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-        return ROBOT_STATUS_OK;
+        return kinematics_pose_within_tolerance(
+            &actual,&request->cartesian.start,
+            r->config.cartesian_start_tolerance_mm,
+            r->config.cartesian_start_rotation_matrix_tolerance);
     }
     return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
 }
