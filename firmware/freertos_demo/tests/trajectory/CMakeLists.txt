@@ -138,6 +138,7 @@ add_executable(stage3_reference_ik_host
     ${FIRMWARE_ROOT}/model/ur5_model.c
 )
 target_include_directories(stage3_reference_ik_host PRIVATE
+    ${FIRMWARE_ROOT}/tests/kinematics
     ${FIRMWARE_ROOT}/common
     ${FIRMWARE_ROOT}/model
     ${FIRMWARE_ROOT}/algorithms/math
