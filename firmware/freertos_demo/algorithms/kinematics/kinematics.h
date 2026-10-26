@@ -149,4 +149,39 @@ robot_status_t kinematics_inverse(
 );
 
 
+/*
+ * Numerical acceptance gate for the optional reference-conditioned IK
+ * branch recovery. These are the authoritative IK pose-validation limits.
+ * The Stage4 simulation defaults may initialize their independent runtime
+ * gate from these values, but applications may demand STRICTER limits.
+ */
+#define KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM 0.5F
+#define KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL 0.003F
+
+/**
+ * @brief Analytic IK with an optional near-wrist-singularity reference.
+ *
+ * Identical to kinematics_inverse outside the explicitly conditioned
+ * neighborhood. When a shoulder/wrist branch matches reference and the
+ * q6 angle recovery is ill-conditioned, a close reference q6 may be
+ * substituted BEFORE q3/p13 evaluation. Each substituted candidate
+ * must also pass a production FK pose-residual check after quantization.
+ *
+ * The reference is a nearby measured/commanded canonical joint pose,
+ * never an assumed hidden "ground truth" for the requested Cartesian
+ * pose. Unrelated shoulder/wrist branches are never seeded.
+ *
+ * An exactly singular wrist is still reported as singular by the underlying
+ * branch solver; this API does NOT bypass the selector's hard-singularity,
+ * joint-limit or velocity checks, and never guarantees eight solutions.
+ *
+ * @param reference Canonical [-180°,180°) joint reference, centidegrees.
+ * @return Same status semantics as kinematics_inverse.
+ */
+robot_status_t kinematics_inverse_with_reference(
+    const robot_transform_t *transform,
+    const robot_joint_angles_t *reference,
+    kinematics_ik_solutions_t *solutions);
+
+
 #endif
