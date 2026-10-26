@@ -9,6 +9,7 @@ on:
       - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
       - 'tools/test_stage4_once.ps1'
       - 'tools/ci_stage4_rtos_qemu.sh'
+      - 'tools/check_protocol_mirror.py'
       - '.github/workflows/stage4-trajectory-host.yml'
   workflow_dispatch:
 
@@ -20,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify firmware/Python UART constant consistency
+        run: python tools/check_protocol_mirror.py
       - name: Configure all isolated native motion tests
         run: cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory -G Ninja
       - name: Compile with strict warnings
