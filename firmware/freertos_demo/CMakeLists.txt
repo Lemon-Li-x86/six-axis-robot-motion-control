@@ -458,3 +458,45 @@ configure_qemu_target(qemu_kinematics_perf m)
 target_compile_options(qemu_kinematics_perf PRIVATE
     -O2
 )
+
+# Stage 4 algorithms are compiled in the ARM target even when the live
+# RTOS motion tasks are disabled. Pure planners never send actuator commands.
+target_sources(freertos_demo PRIVATE
+    common/angle_utils.c
+    algorithms/trajectory/polynomial_trajectory.c
+    algorithms/trajectory/trapezoidal_profile.c
+    algorithms/trajectory/cartesian_common.c
+    algorithms/trajectory/cartesian_line.c
+    algorithms/trajectory/cartesian_arc.c
+    algorithms/trajectory/cartesian_waypoint.c
+    algorithms/control/pid.c
+    algorithms/control/joint_controller.c
+    application/services/trajectory_request_adapter.c
+)
+target_include_directories(freertos_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/config
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/trajectory
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/control
+    ${CMAKE_CURRENT_SOURCE_DIR}/application/tasks
+)
+option(ROBOT_ENABLE_STAGE4_TASKS
+    "Create Stage 4 trajectory, control and monitor FreeRTOS tasks" OFF)
+option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
+    "Enable experimental Stage 4 PID targets to motor_state (sim only)" OFF)
+if(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT AND NOT ROBOT_ENABLE_STAGE4_TASKS)
+    message(FATAL_ERROR
+        "Stage4 actuator output requires ROBOT_ENABLE_STAGE4_TASKS=ON")
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE4_TASKS=$<BOOL:${ROBOT_ENABLE_STAGE4_TASKS}>
+    ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=$<BOOL:${ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT}>
+)
+if(ROBOT_ENABLE_STAGE4_TASKS)
+    target_sources(freertos_demo PRIVATE
+        config/stage4_motion_config.c
+        application/services/motion_pipeline.c
+        application/tasks/trajectory_task.c
+        application/tasks/control_task.c
+        application/tasks/monitor_task.c
+    )
+endif()
