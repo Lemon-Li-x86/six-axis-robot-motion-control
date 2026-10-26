@@ -520,3 +520,6 @@ target_include_directories(qemu_stage4_trajectory_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/control
 )
 configure_qemu_target(qemu_stage4_trajectory_tests m)
+
+# Stage2 QEMU motor boundary test now uses the shared canonical angle helper.
+target_sources(qemu_motor_tests PRIVATE common/angle_utils.c)
