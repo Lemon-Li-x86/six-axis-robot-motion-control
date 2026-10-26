@@ -35,7 +35,13 @@ robot_status_t motion_pipeline_start(const motion_stage4_config_t *cfg)
     if(r->request_queue!=NULL || r->reference_queue!=NULL)
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     if(cfg->feedback_timeout_ms==0U ||
-       cfg->feedback_timeout_ms > 0x7FFFFFFFU)
+       cfg->feedback_timeout_ms > 0x7FFFFFFFU ||
+       cfg->reference_timeout_ms==0U ||
+       cfg->reference_timeout_ms>0x7FFFFFFFU ||
+       !(cfg->cartesian_start_tolerance_mm>0.0F) ||
+       !isfinite((double)cfg->cartesian_start_tolerance_mm) ||
+       !(cfg->cartesian_start_rotation_matrix_tolerance>0.0F) ||
+       !isfinite((double)cfg->cartesian_start_rotation_matrix_tolerance))
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     s=joint_controller_init(&validation,cfg->pid);
     if(s!=ROBOT_STATUS_OK) return s;
