@@ -29,3 +29,32 @@ endif()
 
 enable_testing()
 add_test(NAME stage4_trajectory_host COMMAND trajectory_host_test)
+
+# Application adapter: reuses the authoritative Robot Model and Motion Limits.
+add_executable(trajectory_adapter_host_test
+    trajectory_adapter_test_main.c
+    ${FIRMWARE_ROOT}/application/services/trajectory_request_adapter.c
+    ${FIRMWARE_ROOT}/algorithms/trajectory/trapezoidal_profile.c
+    ${FIRMWARE_ROOT}/algorithms/motion/motion_limits.c
+    ${FIRMWARE_ROOT}/model/ur5_model.c
+)
+target_include_directories(trajectory_adapter_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/application/services
+    ${FIRMWARE_ROOT}/algorithms/trajectory
+    ${FIRMWARE_ROOT}/algorithms/kinematics
+    ${FIRMWARE_ROOT}/algorithms/motion
+    ${FIRMWARE_ROOT}/model
+)
+set_target_properties(trajectory_adapter_host_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(trajectory_adapter_host_test PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(trajectory_adapter_host_test PRIVATE m)
+endif()
+add_test(NAME stage4_trajectory_adapter_host COMMAND trajectory_adapter_host_test)
