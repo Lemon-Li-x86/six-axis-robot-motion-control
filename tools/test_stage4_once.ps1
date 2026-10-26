@@ -143,7 +143,9 @@ try {
         'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb','python'
     )) { Require-Tool $tool }
 
-    Write-Host '[1/8] Configure + build native host tests' -ForegroundColor Cyan
+    Write-Host '[1/8] Verify UART protocol mirror, then build native host tests' -ForegroundColor Cyan
+    & python tools/check_protocol_mirror.py
+    Assert-Exit 'Python UART receiver and firmware header consistency'
     & cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
     Assert-Exit 'Host CMake configure'
     & cmake --build build/stage4-trajectory --config Debug
