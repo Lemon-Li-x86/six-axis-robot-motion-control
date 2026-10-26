@@ -525,6 +525,13 @@ if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     target_sources(freertos_demo PRIVATE
         tests/qemu_target/stage4_rtos_selftest.c
     )
+
+    # The normal freertos_demo firmware target does not request DWARF
+    # symbols. The QEMU-only RTOS test MUST expose full C type metadata
+    # for GDB field access (g_stage4_rtos_test_report.checks/failed).
+    # Match the standalone QEMU test targets without modifying release
+    # or ordinary non-test firmware build flags.
+    target_compile_options(freertos_demo PRIVATE -O0 -g3)
 endif()
 target_compile_definitions(freertos_demo PRIVATE
     ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=$<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
