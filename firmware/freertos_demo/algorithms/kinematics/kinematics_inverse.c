@@ -612,38 +612,18 @@ static robot_status_t kinematics_inverse_implementation(
 
                 if (q6_conditioned[shoulder_index][wrist_index] != 0U)
                 {
-                    /*
-                     * Quantized candidate must reconstruct the REQUESTED
-                     * pose, not the reference pose. Never accept a seed
-                     * because it happens to keep cos(q3) in domain.
-                     */
-                    robot_transform_t verified = {{{0}}};
-                    double position_squared = 0.0;
-                    double rotation_max = 0.0;
-                    uint32_t row, column;
-                    status = kinematics_forward(&candidate, &verified);
-                    if (status != ROBOT_STATUS_OK)
+                    /* Quantized candidate must reconstruct the REQUESTED
+                     * pose. The finite-safe residual gate is shared with
+                     * the Cartesian trajectory consumer. */
+                    robot_transform_t verified={{{0}}};
+                    status=kinematics_forward(&candidate,&verified);
+                    if(status!=ROBOT_STATUS_OK)
                         continue;
-                    for (row = 0U; row < 3U; ++row)
-                    {
-                        double d = (double)verified.matrix[row][3] -
-                            (double)transform->matrix[row][3];
-                        position_squared += d * d;
-                        for (column = 0U; column < 3U; ++column)
-                        {
-                            double delta = fabs(
-                                (double)verified.matrix[row][column] -
-                                (double)transform->matrix[row][column]);
-                            if (delta > rotation_max) rotation_max = delta;
-                        }
-                    }
-                    if (!isfinite(position_squared) ||
-                        !isfinite(rotation_max) ||
-                        position_squared >
-                          (double)KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM *
-                          (double)KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM ||
-                        rotation_max >
-                          (double)KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)
+                    status=kinematics_pose_within_tolerance(
+                        &verified,transform,
+                        KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM,
+                        KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL);
+                    if(status!=ROBOT_STATUS_OK)
                         continue;
                 }
 
