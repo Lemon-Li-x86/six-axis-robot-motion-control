@@ -1,11 +1,12 @@
 # One-command, non-actuating Stage3/4 acceptance runner for Windows.
 # Run from anywhere: powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
-# Requires CMake, CTest, ARM GNU toolchain, QEMU and arm-none-eabi-gdb in PATH.
+# Requires CMake, CTest, ARM GNU toolchain, QEMU, GDB and Python+PyBullet.
 #
 # Intentional limits:
 # - Stage4 command output is forcibly OFF; this never drives motors.
-# - QEMU evidence covers bare-metal algorithms + FreeRTOS task startup,
-#   not real closed-loop PyBullet tracking, load/jitter, or PID tuning.
+# - Python/PyBullet runs actual native C planner/PID/limiter closed-loop.
+# - QEMU only covers bare-metal algorithms + FreeRTOS task startup,
+#   NOT live UART transport, real-time load/jitter or calibrated PID.
 # - Stops on first failure, retaining one transcript with all tool output.
 [CmdletBinding()]
 param()
@@ -138,20 +139,20 @@ function Run-QemuGdb {
 $passed = $false
 try {
     foreach ($tool in @(
-        'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb'
+        'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb','python'
     )) { Require-Tool $tool }
 
-    Write-Host '[1/5] Configure + build native host tests' -ForegroundColor Cyan
+    Write-Host '[1/7] Configure + build native host tests' -ForegroundColor Cyan
     & cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
     Assert-Exit 'Host CMake configure'
     & cmake --build build/stage4-trajectory --config Debug
     Assert-Exit 'Host build'
 
-    Write-Host '[2/5] Run six host CTest targets' -ForegroundColor Cyan
+    Write-Host '[2/7] Run six host CTest targets' -ForegroundColor Cyan
     & ctest --test-dir build/stage4-trajectory -C Debug --output-on-failure
     Assert-Exit 'Host CTest'
 
-    Write-Host '[3/5] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
+    Write-Host '[3/7] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
     & cmake --preset arm-qemu -DROBOT_ENABLE_STAGE4_TASKS=ON `
         -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF
     Assert-Exit 'ARM configure'
@@ -160,7 +161,7 @@ try {
         qemu_ik_near_singular_trace
     Assert-Exit 'ARM build'
 
-    Write-Host '[4/5] Run three independent algorithm suites under QEMU' -ForegroundColor Cyan
+    Write-Host '[4/7] Run three independent algorithm suites under QEMU' -ForegroundColor Cyan
     Run-QemuGdb 'qemu_stage4_trajectory_tests' 'qemu_stage4_test_done' `
         @('g_stage4_test_finished','g_stage4_test_report.failed',
           'g_stage4_test_report.checks','g_stage4_test_report.passed') `
@@ -197,10 +198,34 @@ try {
           'g_ik_reference_regression_failures'=0
         }
 
-    Write-Host '[5/5] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
+    Write-Host '[5/7] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
     # A breakpoint hit proves the task actually ran under the scheduler;
     # task handles are POINTERS, so they must not be compared to zero.
     Run-QemuGdb 'freertos_demo' 'task_monitor' @() @{}
+
+    Write-Host '[6/7] Build and smoke native C firmware algorithm bridge' -ForegroundColor Cyan
+    & cmake -S firmware/freertos_demo/tests/simulation -B build/stage4-simulation
+    Assert-Exit 'Native simulation bridge configure'
+    & cmake --build build/stage4-simulation --config Debug
+    Assert-Exit 'Native simulation bridge build'
+    & ctest --test-dir build/stage4-simulation -C Debug --output-on-failure
+    Assert-Exit 'Native simulation bridge smoke'
+
+    Write-Host '[7/7] PyBullet DIRECT closed-loop dynamic verification' -ForegroundColor Cyan
+    $candidates = @(
+        (Join-Path $root 'build/stage4-simulation/Debug/stage4_sim_bridge.dll'),
+        (Join-Path $root 'build/stage4-simulation/stage4_sim_bridge.dll'),
+        (Join-Path $root 'build/stage4-simulation/libstage4_sim_bridge.so'),
+        (Join-Path $root 'build/stage4-simulation/libstage4_sim_bridge.dylib')
+    )
+    $library = $candidates | Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+    if (-not $library) { throw 'Native Stage4 shared library not found after build' }
+    & python -c 'import pybullet'
+    Assert-Exit 'PyBullet Python dependency (install with python -m pip install pybullet)'
+    & python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py `
+        --library $library --output-dir build/stage4-closed-loop
+    Assert-Exit 'Native C to PyBullet dynamic closed loop'
 
     $passed=$true
 } catch {
