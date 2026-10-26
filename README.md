@@ -1,5 +1,6 @@
 # six-axis-robot-motion-control
 
+> **Stage4 开发分支说明（2026-10-26）**：本分支新增六轴关节/笛卡尔轨迹、增量式 PID、Control/Trajectory/Monitor FreeRTOS 任务及 Host/QEMU 测试入口。任务和运动输出分别默认为 OFF，必须单独启用。**尚未取得本地 ARM/QEMU/PyBullet 验证与 PID 实测调优记录**。第3阶段老师评语也仍待本地复测。完整说明见 [第4阶段集成与测试指南](docs/part4/02_stage4_full_implementation_guide.md)。本分支未合并 main，备份未修改。\n\n
 六轴工业机器人嵌入式运动控制固件开发与仿真验证。
 
 
