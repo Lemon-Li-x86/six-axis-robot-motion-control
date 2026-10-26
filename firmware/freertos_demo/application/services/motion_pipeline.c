@@ -12,6 +12,7 @@
 #include "motion_tasks_internal.h"
 #include "motion_limits.h"
 #include "joint_controller.h"
+#include "kinematics.h"
 #include "task_config.h"
 
 motion_runtime_t g_motion_runtime={0};
@@ -47,8 +48,12 @@ robot_status_t motion_pipeline_start(const motion_stage4_config_t *cfg)
        !isfinite((double)cfg->cartesian_start_rotation_matrix_tolerance) ||
        !(cfg->cartesian_waypoint_position_tolerance_mm>0.0F) ||
        !isfinite((double)cfg->cartesian_waypoint_position_tolerance_mm) ||
+       cfg->cartesian_waypoint_position_tolerance_mm >
+           KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM ||
        !(cfg->cartesian_waypoint_rotation_matrix_tolerance>0.0F) ||
-       !isfinite((double)cfg->cartesian_waypoint_rotation_matrix_tolerance))
+       !isfinite((double)cfg->cartesian_waypoint_rotation_matrix_tolerance) ||
+       cfg->cartesian_waypoint_rotation_matrix_tolerance >
+           KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     s=joint_controller_init(&validation,cfg->pid);
     if(s!=ROBOT_STATUS_OK) return s;
