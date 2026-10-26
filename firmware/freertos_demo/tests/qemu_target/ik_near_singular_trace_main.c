@@ -178,7 +178,7 @@ int main(void)
                     fabs((double)q1[shoulder] -
                          (double)result.input.value[0] *
                          (double)ROBOT_JOINT_ANGLE_UNIT_DEG *
-                         (3.14159265358979323846 / 180.0)) < 0.01 &&
+                         ((double)KINEMATICS_PI_F / 180.0)) < 0.01 &&
                     ((result.input.value[4] < 0 && q5[wrist] < 0.0F) ||
                      (result.input.value[4] > 0 && q5[wrist] > 0.0F)))
                 {
@@ -186,7 +186,7 @@ int main(void)
                     double expected_q6 =
                         (double)result.input.value[5] *
                         (double)ROBOT_JOINT_ANGLE_UNIT_DEG *
-                        (3.14159265358979323846 / 180.0);
+                        ((double)KINEMATICS_PI_F / 180.0);
                     robot_status_t ref_status =
                         ur5_analytic_ik_trace_elbow_cosine(
                             model,&dh,q1[shoulder],
