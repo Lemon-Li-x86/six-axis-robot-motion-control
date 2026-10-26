@@ -153,6 +153,20 @@ static void task_trajectory(void *arg)
         robot_status_t s=ROBOT_STATUS_OK;
         vTaskDelayUntil(&last_wake,(interval==0U)?1U:interval);
 
+        /* Any control-loop safety fault cancels the entire trajectory.
+         * Do not re-arm merely because the reference queue repeats data. */
+        if(r->abort_requested!=0U) {
+            taskENTER_CRITICAL();
+            r->abort_requested=0U;
+            taskEXIT_CRITICAL();
+            reference.enabled=0U;
+            reference.created_tick=xTaskGetTickCount();
+            (void)xQueueOverwrite(r->reference_queue,&reference);
+            armed=0U;
+            moving=0U;
+            continue;
+        }
+
         if(xQueueReceive(r->request_queue,&request,0U)==pdTRUE) {
             armed=0U;
             moving=0U;
@@ -173,6 +187,20 @@ static void task_trajectory(void *arg)
         }
 
         if(!armed) continue;
+
+        /* The planner must also stop on stale feedback; an old trajectory
+         * must not resume at a later, jumped setpoint after reconnect. */
+        {
+            motor_state_observation_t observation;
+            TickType_t now=xTaskGetTickCount();
+            if(motor_state_get_feedback(&observation)!=ROBOT_STATUS_OK ||
+               !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
+                    (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
+                cancel_motion(r,ROBOT_STATUS_ERROR_NOT_READY);
+                armed=0U; moving=0U;
+                continue;
+            }
+        }
 
         if(moving)
         {
