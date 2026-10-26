@@ -37,7 +37,7 @@
 
 GitHub Actions `.github/workflows/stage4-trajectory-host.yml` 配置自动运行原生库构建、C API smoke 和 Python/PyBullet 仿真；Windows 可以通过 `tools/test_stage4_once.ps1` 在最终一次性验收中执行。
 
-**状态声明**：截至源码提交，此次新增仿真尚未得到真实数据，因此不能填写上表中的超调、MAE、RMSE 或 PID 整定“通过”。本次为默认参数的**基线试验**，并未盲目自动调参；真正的 PID 增益需根据仿真曲线及运行稳定性有依据地修订单一配置。原有 FreeRTOS/UART 实机通信动态闭环仍不在此原生 DLL 的覆盖范围。
+**状态更新**：以下章节已记录云端实际动态基线和8组受控扫参，因此 MAE、RMSE、超调均已有量化观测；这仍只是小幅运动的仿真默认增益对照，不能当成全工作空间、不同负载或实体机器的完成整定。FreeRTOS/UART 动态闭环不在 Native C DLL 覆盖范围。
 
 ## 云端首轮动态基线实测（GitHub Actions，2026-10-26）
 
