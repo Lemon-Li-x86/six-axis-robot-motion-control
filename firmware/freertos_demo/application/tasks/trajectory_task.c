@@ -47,6 +47,18 @@ static robot_status_t start_request(
             &r->config.max_velocity_deg_s,
             &r->config.max_acceleration_deg_s2,joint_plan);
     }
+    if(request->kind==MOTION_REQUEST_POLYNOMIAL) {
+        uint32_t j;
+        if(motion_limits_check_positions(
+             &request->polynomial.goal_positions)!=ROBOT_STATUS_OK)
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        /* Trajectory must originate at the observed feedback snapshot.
+         * No silent instantaneous jump to a caller-selected start. */
+        for(j=0U;j<ROBOT_JOINT_COUNT;j++)
+            if(request->polynomial.start_positions.value[j]!=last_joint->value[j])
+                return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        return ROBOT_STATUS_OK;
+    }
     if(request->kind==MOTION_REQUEST_CARTESIAN) {
         /* Reject a large discontinuity between robot feedback and
          * prescribed first Cartesian point; otherwise the first command
@@ -135,6 +147,30 @@ static void task_trajectory(void *arg)
                 if(s==ROBOT_STATUS_OK) {
                     last=sample.positions;
                     if(t>=joint_plan.total_time_s) moving=0U;
+                }
+            } else if(mode==MOTION_REQUEST_POLYNOMIAL) {
+                trajectory_joint_sample_t sample;
+                double t=(double)(xTaskGetTickCount()-begun) /
+                    (double)configTICK_RATE_HZ;
+                uint32_t j;
+                s=trajectory_polynomial_sample(
+                    &request.polynomial,t,&sample);
+                if(s==ROBOT_STATUS_OK)
+                    s=motion_limits_check_positions(&sample.positions);
+                if(s==ROBOT_STATUS_OK) {
+                    for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+                        if(fabs((double)sample.velocities.value[j])>
+                               (double)r->config.max_velocity_deg_s.value[j] ||
+                           fabs((double)sample.accelerations.value[j])>
+                               (double)r->config.max_acceleration_deg_s2.value[j]) {
+                            s=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+                            break;
+                        }
+                    }
+                }
+                if(s==ROBOT_STATUS_OK) {
+                    last=sample.positions;
+                    if(t>=request.polynomial.duration_s) moving=0U;
                 }
             } else {
                 robot_joint_positions_t next={0};
