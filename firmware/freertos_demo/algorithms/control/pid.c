@@ -58,8 +58,9 @@ robot_status_t pid_step(pid_controller_t *state,double setpoint_deg,
     error=setpoint_deg-measured_deg;
     if(fabs(error)<=(double)next.config.deadband_deg) error=0.0;
     if(!next.initialized) {
-        next.prev_error_deg=error;
-        next.prev_prev_error_deg=error;
+        /* First sample applies proportional error without derivative kick. */
+        next.prev_error_deg=0.0;
+        next.prev_prev_error_deg=-error;
         next.initialized=1U;
     }
     ilim=(double)next.config.integral_limit_deg_s;
