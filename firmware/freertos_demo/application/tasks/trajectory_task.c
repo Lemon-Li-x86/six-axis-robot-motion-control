@@ -55,7 +55,8 @@ static robot_status_t start_request(
         robot_joint_angles_t canonical;
         robot_transform_t actual;
         double delta2=0.0;
-        uint32_t j;
+        double max_rotation_element=0.0;
+        uint32_t j,k;
         s=robot_angles_canonicalize(last_joint,&canonical);
         if(s!=ROBOT_STATUS_OK) return s;
         s=kinematics_forward(&canonical,&actual);
@@ -64,8 +65,19 @@ static robot_status_t start_request(
             double d=(double)actual.matrix[j][3] -
                 (double)request->cartesian.start.matrix[j][3];
             delta2+=d*d;
+            for(k=0U;k<3U;k++) {
+                double rotation_delta=fabs(
+                    (double)actual.matrix[j][k] -
+                    (double)request->cartesian.start.matrix[j][k]);
+                if(rotation_delta>max_rotation_element)
+                    max_rotation_element=rotation_delta;
+            }
         }
-        if(delta2>0.25) return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        if(delta2>(double)r->config.cartesian_start_tolerance_mm*
+                   (double)r->config.cartesian_start_tolerance_mm ||
+           max_rotation_element >
+             (double)r->config.cartesian_start_rotation_matrix_tolerance)
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
         return ROBOT_STATUS_OK;
     }
     return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
