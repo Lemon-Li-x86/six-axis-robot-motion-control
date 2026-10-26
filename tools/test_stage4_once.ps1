@@ -106,7 +106,7 @@ function Run-QemuGdb {
         $breakPattern = '(?m)^Breakpoint [0-9]+, ' +
             [regex]::Escape($breakpoint) + '\b'
         if ($stdout -notmatch $breakPattern) {
-            throw "$target: never reached $breakpoint"
+            throw "${target}: never reached $breakpoint"
         }
         foreach ($name in $fields) {
             if (-not $expected.ContainsKey($name)) {
@@ -115,12 +115,12 @@ function Run-QemuGdb {
             $match = [regex]::Match($stdout,
                 '(?m)^' + [regex]::Escape($name) + '=([0-9]+)\s*$')
             if (-not $match.Success) {
-                throw "$target: missing diagnostic: $name"
+                throw "${target}: missing diagnostic: $name"
             }
             $actual = [uint64]::Parse($match.Groups[1].Value)
             $wanted = [uint64]$expected[$name]
             if ($actual -ne $wanted) {
-                throw "$target: $name expected $wanted, got $actual"
+                throw "${target}: $name expected $wanted, got $actual"
             }
         }
         Write-Host "[PASS] $target" -ForegroundColor Green
