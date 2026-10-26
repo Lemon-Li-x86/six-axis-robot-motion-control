@@ -36,9 +36,10 @@ function Run-QemuGdb {
         [string]$target,
         [string]$breakpoint,
         [string[]]$fields,
-        [hashtable]$expected
+        [hashtable]$expected,
+        [string]$elfBuildDir = 'build/cmake-arm'
     )
-    $elf = Join-Path $root "build\cmake-arm\firmware\freertos_demo\$target.elf"
+    $elf = Join-Path $root "$elfBuildDir/firmware/freertos_demo/$target.elf"
     if (-not (Test-Path $elf)) { throw "ELF not built: $elf" }
 
     $tmp = Join-Path $build "gdb_stage4_$target"
@@ -142,26 +143,27 @@ try {
         'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb','python'
     )) { Require-Tool $tool }
 
-    Write-Host '[1/7] Configure + build native host tests' -ForegroundColor Cyan
+    Write-Host '[1/8] Configure + build native host tests' -ForegroundColor Cyan
     & cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
     Assert-Exit 'Host CMake configure'
     & cmake --build build/stage4-trajectory --config Debug
     Assert-Exit 'Host build'
 
-    Write-Host '[2/7] Run six host CTest targets' -ForegroundColor Cyan
+    Write-Host '[2/8] Run six host CTest targets' -ForegroundColor Cyan
     & ctest --test-dir build/stage4-trajectory -C Debug --output-on-failure
     Assert-Exit 'Host CTest'
 
-    Write-Host '[3/7] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
+    Write-Host '[3/8] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
     & cmake --preset arm-qemu -DROBOT_ENABLE_STAGE4_TASKS=ON `
-        -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF
+        -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF `
+        -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
     Assert-Exit 'ARM configure'
     & cmake --build --preset arm-qemu --target `
         freertos_demo qemu_stage4_trajectory_tests qemu_kinematics_perf `
         qemu_ik_near_singular_trace
     Assert-Exit 'ARM build'
 
-    Write-Host '[4/7] Run three independent algorithm suites under QEMU' -ForegroundColor Cyan
+    Write-Host '[4/8] Run three independent algorithm suites under QEMU' -ForegroundColor Cyan
     Run-QemuGdb 'qemu_stage4_trajectory_tests' 'qemu_stage4_test_done' `
         @('g_stage4_test_finished','g_stage4_test_report.failed',
           'g_stage4_test_report.checks','g_stage4_test_report.passed') `
@@ -198,12 +200,30 @@ try {
           'g_ik_reference_regression_failures'=0
         }
 
-    Write-Host '[5/7] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
+    Write-Host '[5/8] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
     # A breakpoint hit proves the task actually ran under the scheduler;
     # task handles are POINTERS, so they must not be compared to zero.
     Run-QemuGdb 'freertos_demo' 'task_monitor' @() @{}
 
-    Write-Host '[6/7] Build and smoke native C firmware algorithm bridge' -ForegroundColor Cyan
+    Write-Host '[6/8] Isolated FreeRTOS motion+feedback+PID RTOS test' -ForegroundColor Cyan
+    & cmake --preset arm-qemu -B build/cmake-arm-stage4-selftest `
+        -DROBOT_ENABLE_STAGE4_TASKS=ON `
+        -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF `
+        -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON
+    Assert-Exit 'QEMU-only motion smoke configure'
+    & cmake --build build/cmake-arm-stage4-selftest --target freertos_demo
+    Assert-Exit 'QEMU-only motion smoke build'
+    Run-QemuGdb 'freertos_demo' 'stage4_rtos_selftest_done' `
+        @('g_stage4_rtos_test_finished',
+          'g_stage4_rtos_test_report.checks',
+          'g_stage4_rtos_test_report.failed') `
+        @{
+          'g_stage4_rtos_test_finished'=1;
+          'g_stage4_rtos_test_report.checks'=11;
+          'g_stage4_rtos_test_report.failed'=0
+        } 'build/cmake-arm-stage4-selftest'
+
+    Write-Host '[7/8] Build and smoke native C firmware algorithm bridge' -ForegroundColor Cyan
     & cmake -S firmware/freertos_demo/tests/simulation -B build/stage4-simulation
     Assert-Exit 'Native simulation bridge configure'
     & cmake --build build/stage4-simulation --config Debug
@@ -211,7 +231,7 @@ try {
     & ctest --test-dir build/stage4-simulation -C Debug --output-on-failure
     Assert-Exit 'Native simulation bridge smoke'
 
-    Write-Host '[7/7] PyBullet DIRECT closed-loop dynamic verification' -ForegroundColor Cyan
+    Write-Host '[8/8] PyBullet DIRECT closed-loop dynamic verification' -ForegroundColor Cyan
     $candidates = @(
         (Join-Path $root 'build/stage4-simulation/Debug/stage4_sim_bridge.dll'),
         (Join-Path $root 'build/stage4-simulation/stage4_sim_bridge.dll'),
