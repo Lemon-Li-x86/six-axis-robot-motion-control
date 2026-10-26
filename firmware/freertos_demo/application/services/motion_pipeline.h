@@ -16,6 +16,9 @@ typedef struct {
     robot_joint_velocities_t max_velocity_deg_s;
     trajectory_joint_accelerations_t max_acceleration_deg_s2;
     uint32_t feedback_timeout_ms;
+    uint32_t reference_timeout_ms;
+    robot_real_t cartesian_start_tolerance_mm;
+    robot_real_t cartesian_start_rotation_matrix_tolerance;
 } motion_stage4_config_t;
 
 typedef struct {
