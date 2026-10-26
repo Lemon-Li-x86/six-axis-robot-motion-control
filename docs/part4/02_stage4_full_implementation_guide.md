@@ -243,3 +243,33 @@ cmake --build --preset arm-qemu --target qemu_ik_near_singular_trace
 使用此前相同的QEMU/GDB方式运行该ELF，关注 `g_ik_reference_regression_checks=2`、`g_ik_reference_regression_failures=0`，以及 `g_ik_trace[5].conditioned_fk_verified=1`。这些**尚未取得本机实测值**。
 
 更完整的数学取证、全部参数所属及局限，参见 `docs/part3/03_ik_review_remediation_2026-10-26.md` 与 `docs/part4/00_parameter_register.md`。
+
+## 2026-10-26 合并验收批次：先完成代码和自动回归，再安排一次本地测试
+
+第3阶段近奇异参考条件化、第4阶段 PID 命令**加速度+速度双限制**、参数单点管理、Host/QEMU回归已集中提交到 `feat/stage4-trajectory-2026-10-26`。**不触碰** main 和任何备份分支。
+
+单一 Windows PowerShell 验收入口（在仓库根目录，并先关闭旧 QEMU/GDB 以释放1234端口）：
+
+```powershell
+git fetch origin
+git switch feat/stage4-trajectory-2026-10-26
+git merge --ff-only origin/feat/stage4-trajectory-2026-10-26
+powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
+```
+
+脚本按序自动执行：
+
+1. Windows Host CMake 构建与6组CTest（原4组 + 参考IK回归 + 控制加减速限制回归）；
+2. ARM Cortex-M4 编译完整 FreeRTOS 固件（`ROBOT_ENABLE_STAGE4_TASKS=ON`、`ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF`）与3组QEMU独立目标；
+3. 自动启动/清理QEMU、GDB，读取 `g_stage4_test_report`（旧14项）、`g_kin_perf_report`（128/128回代）、`g_ik_reference_regression_*`（2个近奇异参考样本）；
+4. FreeRTOS `task_monitor` 断点命中，证明监测任务成功调度启动；
+5. 产生 `build/stage4-final-validation.log` 单个文本日志供代码复查。
+
+**注意**：脚本需要本机安装的 CMake、CTest、Arm GNU Toolchain、QEMU 与 GDB，且仅适用于 Windows PowerShell。它会在第一处失败时停止，不将编译成功等同于完整运行通过；它不主动发运动指令，最终电机命令输出始终关闭。
+
+**尚未由此覆盖、不得冒称通过**：
+- 有有效反馈且真实提交运动请求时 Trajectory/Control Task 的持续同步与周期抖动、满负载栈水位；
+- PyBullet 动态闭环 PID 初始参数整定、响应时间、超调和稳定性；目前 PyBullet 仓库只含基础 UR5 demo、QEMU UART 收包解析及FK交叉验证，没有用于第4阶段完整闭环的自动验收脚本；
+- J5严格为零的解析逆运动学奇异穿越与碰撞避障；它们需要独立安全设计，不通过容差扩张假装消失。
+
+验收状态：本批修订**已经提交，但本机 Windows/ARM/QEMU 统一脚本未运行**。只有用户最后的一次统一复测成功后，才能把相应状态从“待验”改成“通过”。
