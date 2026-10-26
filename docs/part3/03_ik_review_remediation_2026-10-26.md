@@ -80,6 +80,32 @@ p g_kin_perf_samples
 
 ## 验收状态
 
-截至本次远程修改，**尚无这批改动在用户本机 ARM 交叉编译、QEMU 执行、Host CTest 及 Python Robotics Toolbox 对照的实际运行记录**。因此状态是「源码已提交、待本地验证」，而不是「已完全验收」。尤其老师要求的逐级 p13 误差根因证据，尚需记录可复现的失败样本和差分追踪结果，不能以简单切换 double 代替根因分析。
+截至本整改记录初稿，**尚无这批改动在用户本机 ARM 交叉编译、QEMU 执行、Host CTest 及 Python Robotics Toolbox 对照的实际运行记录**。因此状态是「源码已提交、待本地验证」，而不是「已完全验收」。尤其老师要求的逐级 p13 误差根因证据，尚需记录可复现的失败样本和差分追踪结果，不能以简单切换 double 代替根因分析。
 
 后续正式验收前补齐：测试时间、提交 SHA、输入样本、p13 逐级误差表、解数变化、FK 回代误差、QEMU/Host 测试输出和编译器版本。
+
+
+## 用户本机实测更新（2026-10-26；第4阶段开发分支的第3阶段测试目标）
+
+用户从 Windows ARM GNU Toolchain / QEMU MPS2-AN386 环境运行 `qemu_kinematics_perf.elf`，于 `qemu_kinematics_perf_done` GDB 断点读取到以下**真实执行输出**（尚未附本机 `git rev-parse HEAD` 提交 SHA）：
+
+| GDB 变量 | 数值 |
+|---|---:|
+| `g_kin_perf_finished` | 1 |
+| `sample_count` | 128 |
+| `repetitions` | 8 |
+| `timer_frequency_hz` | 25000000 |
+| `fk_success` | 128 |
+| `ik_success` | 128 |
+| `selection_success` | 128 |
+| `roundtrip_passed` | 128 |
+| `roundtrip_failed` | 0 |
+| `roundtrip_skipped` | 0 |
+| `worst_position_error_mm` | 0.089311257 |
+| `worst_rotation_max_element_error` | 0.000167578459 |
+
+**评语2状态：该128组 QEMU FK→IK→Selector→FK回代验证已通过**（位置门限0.5mm、旋转矩阵元素差门限0.003）；全部已选中的样本均完成并通过回代。上表记录的旋转指标是**矩阵元素差**，不是角度误差。
+
+**评语1状态：未关闭。** 128/128 IK 成功只证明每组至少有一组可用候选，并未证明所有有效分支被正确保留。需继续做 q6 → p13 → cos(q3) 逐级差分、近奇异候选完整性和独立精度参考对照；不能将第二条通过冒充第一条也通过。
+
+另外，此轮实测未涉及完整 PyBullet PID 闭环或 FreeRTOS 满负载周期/栈/抖动验证。
