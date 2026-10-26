@@ -94,7 +94,9 @@ robot_status_t motion_pipeline_submit_cartesian(
         return ROBOT_STATUS_ERROR_NOT_READY;
     if((plan->kind!=CARTESIAN_PATH_LINE &&
         plan->kind!=CARTESIAN_PATH_ARC) ||
-       plan->interval_count==0U || !(plan->duration_s>0.0))
+       plan->interval_count==0U || !(plan->duration_s>0.0) ||
+       !isfinite(plan->period_s) ||
+       fabs(plan->period_s-((double)TASK_PERIOD_TRAJECTORY_MS/1000.0))>1e-9)
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     memset(&request,0,sizeof(request));
     request.kind=MOTION_REQUEST_CARTESIAN;
