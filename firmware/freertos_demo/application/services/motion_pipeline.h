@@ -45,6 +45,8 @@ robot_status_t motion_pipeline_start(const motion_stage4_config_t *cfg);
  */
 robot_status_t motion_pipeline_submit_joint(
     const robot_joint_positions_t *continuous_goal);
+robot_status_t motion_pipeline_submit_polynomial(
+    const trajectory_polynomial_plan_t *plan);
 robot_status_t motion_pipeline_submit_cartesian(
     const cartesian_trajectory_plan_t *plan);
 robot_status_t motion_pipeline_get_diagnostics(motion_stage4_diagnostics_t *out);
