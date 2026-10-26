@@ -26,6 +26,43 @@ static void cancel_motion(motion_runtime_t *r,robot_status_t status)
     motion_record_fault(status,0U);
 }
 
+/* Verify the actual chosen/quantized IK branch reconstructs its
+ * requested Cartesian waypoint. Merely having one IK solution is not enough.
+ * Thresholds are injected through the application config. */
+static robot_status_t verify_waypoint_fk(
+    const motion_runtime_t *r,
+    const robot_joint_positions_t *chosen,
+    const robot_transform_t *requested)
+{
+    robot_joint_angles_t canonical={{0}};
+    robot_transform_t reconstructed={{{0}}};
+    robot_status_t status;
+    double position_squared=0.0;
+    double max_rotation_delta=0.0;
+    uint32_t row,col;
+    status=robot_angles_canonicalize(chosen,&canonical);
+    if(status!=ROBOT_STATUS_OK) return status;
+    status=kinematics_forward(&canonical,&reconstructed);
+    if(status!=ROBOT_STATUS_OK) return status;
+    for(row=0U;row<3U;row++) {
+        double dp=(double)reconstructed.matrix[row][3] -
+                   (double)requested->matrix[row][3];
+        position_squared+=dp*dp;
+        for(col=0U;col<3U;col++) {
+            double dr=fabs((double)reconstructed.matrix[row][col] -
+                           (double)requested->matrix[row][col]);
+            if(dr>max_rotation_delta) max_rotation_delta=dr;
+        }
+    }
+    if(position_squared>
+          (double)r->config.cartesian_waypoint_position_tolerance_mm*
+          (double)r->config.cartesian_waypoint_position_tolerance_mm ||
+       max_rotation_delta>
+          (double)r->config.cartesian_waypoint_rotation_matrix_tolerance)
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    return ROBOT_STATUS_OK;
+}
+
 static robot_status_t start_request(
     motion_runtime_t *r, const motion_request_t *request,
     trajectory_trapezoid_plan_t *joint_plan,
@@ -180,6 +217,8 @@ static void task_trajectory(void *arg)
                  * blindly reusing the previous solution. */
                 s=cartesian_trajectory_joint_waypoint(&request.cartesian,
                     cartesian_index,&last,&next,&sampled_pose);
+                if(s==ROBOT_STATUS_OK)
+                    s=verify_waypoint_fk(r,&next,&sampled_pose);
                 if(s==ROBOT_STATUS_OK) {
                     double dt=(double)TASK_PERIOD_TRAJECTORY_MS/1000.0;
                     uint32_t j;
