@@ -109,3 +109,63 @@ p g_kin_perf_samples
 **评语1状态：未关闭。** 128/128 IK 成功只证明每组至少有一组可用候选，并未证明所有有效分支被正确保留。需继续做 q6 → p13 → cos(q3) 逐级差分、近奇异候选完整性和独立精度参考对照；不能将第二条通过冒充第一条也通过。
 
 另外，此轮实测未涉及完整 PyBullet PID 闭环或 FreeRTOS 满负载周期/栈/抖动验证。
+
+
+## 用户本机近奇异样本复查：2026-10-26
+
+同一 `qemu_kinematics_perf` 运行终点处，用户在 GDB 读取了下列原始报告：
+
+| 样本号 | J3 | J5 | 有效 IK 解数 | 最终选解 FK 回代位置误差 (mm) | 旋转矩阵最大元素差 |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 60° | -0.01° | 8 | 0.0603962317 | 0.000167578459 |
+| 9 | 60° | 0° | 4 | 0.064938955 | 0.000148564577 |
+| 10 | 60° | +0.01° | 8 | 0.021943666 | 0.0000274181366 |
+| 27 | 0° | -0.01° | 6 | 0.0592272617 | 0.0000225305557 |
+| 28 | 0° | 0° | 2 | 0.0484741069 | 0.00000011920929 |
+| 29 | 0° | +0.01° | 4 | 0.0442805737 | 0.0000222325325 |
+
+六组 `fk_status=ik_status=selection_status=roundtrip_status=0`。样本9/28位于 q5=0° 真实腕部奇异点；样本27/28/29也取 q3=0°，接近肘部奇异。完整解数不必恰好8，且最终 FK 回代成功**不能证明所有有效 IK 分支没有遗失**。
+
+**后续差分重点**：在相同 J3=0° 情况下，J5=-0.01/0/+0.01° 对应 `6/2/4` 个候选，出现不对称现象。仅凭数量不能判定是 q6 近奇异值、q3 余弦越界还是0.01°量化去重造成。因此新增**独立诊断目标** `qemu_ik_near_singular_trace`，仅这个目标编译 `ROBOT_KINEMATICS_ELBOW_TRACE=1`；正式固件编译行为、原有求解阈值和分支数学不变。
+
+该诊断直接复用生产 IK 的 `ur5_analytic_ik_compute_p13()`，将6组样本拆分成两个 shoulder 分支和各自两个 wrist 分支，记录：
+- q1、q5 的角度和求解状态；
+- q6 的输出角度及其是否因 `KINEMATICS_SINGULARITY_EPSILON` 拒绝；
+- 生产公式计算的 `p13_x_mm`、`p13_y_mm` 与**裁剪前** `raw_cos_q3`；
+- q3 求解状态及两条 q3 候选弧度；最终公共 IK 解数。
+
+GDB 操作（在仓库根目录，先关闭原 QEMU 以释放 1234 端口）：
+
+```powershell
+git fetch origin
+git switch feat/stage4-trajectory-2026-10-26
+git merge --ff-only origin/feat/stage4-trajectory-2026-10-26
+cmake --preset arm-qemu -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF
+cmake --build --preset arm-qemu --target qemu_ik_near_singular_trace
+
+qemu-system-arm `
+  -M mps2-an386 `
+  -kernel .\build\cmake-arm\firmware\freertos_demo\qemu_ik_near_singular_trace.elf `
+  -S -gdb tcp::1234 -serial null -monitor none -display none
+```
+
+在另一个 PowerShell 中：
+
+```powershell
+arm-none-eabi-gdb .\build\cmake-arm\firmware\freertos_demo\qemu_ik_near_singular_trace.elf
+```
+
+```gdb
+set pagination off
+target remote localhost:1234
+break qemu_ik_trace_done
+continue
+p g_ik_trace_done
+p g_ik_trace[3]
+p g_ik_trace[4]
+p g_ik_trace[5]
+```
+
+`g_ik_trace[0..5]` 分别映射原样本 `8,9,10,27,28,29`。优先查看3、4、5，若要比较 J3=60° 的对照组再读0、1、2。
+
+**必须保留待验收状态**：未有上述诊断的实际值前，不判定 6/2/4 是程序缺陷或真实退化；上述诊断记录尚不是独立 double 高精度参考实现，最终还要对已定位的可疑分支与独立几何解进行比较。
