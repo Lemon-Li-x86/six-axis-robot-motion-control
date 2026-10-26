@@ -47,3 +47,17 @@
 - 动态 DLL ↔ PyBullet 测试**不包括**真实 FreeRTOS 周期抖动、UART 故障恢复、硬实时 WCET、实机碰撞检测。它可以测量控制算法与 URDF 动力学交互，但不能宣称整个嵌入式系统闭环联调完成。
 
 因此第四阶段仍保留以下未通过结项门禁：真实QEMU/FreeRTOS运动请求贯通、UART闭环动态测试、丢包/旧反馈故障注入、周期P99与最坏值、完整长时负载和最终增益整定记录。拒绝用“能编译”或“Python GUI 能动”替代这些门禁。
+
+## FreeRTOS 三任务真实数据流自检（新增；执行状态待验）
+
+为了避免把“Monitor Task能命中断点”错误等同于“Controller实际执行”，新增 `tests/qemu_target/stage4_rtos_selftest.c`：
+
+- 独立 CMake 门控 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON`，强制 `ROBOT_ENABLE_STAGE4_TASKS=ON` 且 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF`，否则 CMake 配置阶段直接报错。
+- **QEMU专用**任务以小幅六轴反馈样本（J2 +1°目标）验证 `motor_state_update_feedback` → `motion_pipeline_submit_joint` → FreeRTOS Trajectory Task → Control PID → Monitor 三任务实际调度与队列贯通。
+- 这个测试明确采用**固定不动的假想反馈**，不会模拟真实机械运动；目的是检测 `requests_accepted=1`、`trajectory_samples>0`、`controller_steps>0`、`monitoring_ticks>0`、无fault及三任务栈的非零水位。
+- 在 `stage4_rtos_selftest_done` 断点处检查 `g_stage4_rtos_test_report.checks=11`、`failed=0`、`g_stage4_rtos_test_finished=1`。
+- 独立 `build/cmake-arm-stage4-selftest` 构建目录，**不会污染正常固件 `build/cmake-arm`**。默认开关 OFF，真正电机输出始终关闭。
+
+该自检和 PyBullet Native C 闭环是互补试验：前者测 FreeRTOS 内部实时任务间数据流，后者测算法和物理引擎相互作用；两者都不宣称完成真实 UART 闭环或 FreeRTOS 硬实时延迟测量。
+
+最新版统一验收脚本 `tools/test_stage4_once.ps1` 包含此测试以及 Native C/PyBullet，步骤变成8项；尚未收到新版本实际执行记录。
