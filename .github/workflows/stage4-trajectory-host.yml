@@ -6,6 +6,7 @@ on:
       - feat/stage4-trajectory-2026-10-26
     paths:
       - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
       - '.github/workflows/stage4-trajectory-host.yml'
   workflow_dispatch:
 
@@ -23,3 +24,28 @@ jobs:
         run: cmake --build build/stage4-trajectory
       - name: Run Stage3 + Stage4 CTest regression
         run: ctest --test-dir build/stage4-trajectory --output-on-failure
+
+  stage4-native-pybullet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install physics-only simulation dependency
+        run: python -m pip install pybullet
+      - name: Build production C motion algorithms as native shared library
+        run: cmake -S firmware/freertos_demo/tests/simulation -B build/stage4-simulation -G Ninja
+      - name: Compile bridge with strict warnings
+        run: cmake --build build/stage4-simulation
+      - name: Smoke-test native C API
+        run: ctest --test-dir build/stage4-simulation --output-on-failure
+      - name: Run PyBullet headless closed-loop dynamics
+        run: |
+          python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py \
+            --library build/stage4-simulation/libstage4_sim_bridge.so \
+            --output-dir build/stage4-closed-loop
+      - name: Keep diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-pybullet-diagnostics
+          path: build/stage4-closed-loop/*
+          if-no-files-found: ignore
