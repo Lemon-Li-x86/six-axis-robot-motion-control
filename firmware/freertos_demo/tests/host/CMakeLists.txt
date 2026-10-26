@@ -158,3 +158,9 @@ add_test(
     NAME ik_selector_host
     COMMAND ik_selector_host_test
 )
+
+# Stage2 motor implementation now references the Common normalizer.
+target_sources(motor_driver_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common/angle_utils.c)
+target_sources(motor_feedback_safety_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common/angle_utils.c)
