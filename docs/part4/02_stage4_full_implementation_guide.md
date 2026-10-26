@@ -75,7 +75,7 @@ Host/ProtocolRX       IK/Selector        motion_limits
 | ProtocolRX / ProtocolTX | 原有任务 | 原有 `task_config.h` |
 | 反馈过期阈值 | 3000ms（实验初值） | `config/stage4_motion_config.c` |
 | 六轴最高角速度/加速度 | 15°/s、30°/s²（实验初值） | 同上 |
-| PID Kp/Ki/Kd、死区、限幅 | 0.8/0/0，0.02°，3°等**未经整定初值** | 同上 |
+| PID Kp/Ki/Kd、死区、限幅 | 当前0.2/0/0，0.02°，3°；云端小幅运动对照后更新，仍非硬件整定 | 同上 |
 | 笛卡尔路径周期 | 必须与 Trajectory Task 20ms 一致 | API 参数与 Task Config 比较 |
 
 真实运动安全尚未验证。关节位置端点经过 Robot Model 限位，笛卡尔离散逆解也通过选解器、选中解的 FK 回代精度门限及速度跳变检查；但这**不等于完整连续空间碰撞检测、全部关节动力学/加速度约束都已验证**。绝对不能直接用在实体机器上。
