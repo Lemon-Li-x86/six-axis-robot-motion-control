@@ -37,7 +37,7 @@ robot_status_t trajectory_trapezoid_init(
         double v = (double)max_velocity_deg_s->value[j];
         double a = (double)max_acceleration_deg_s2->value[j];
         double distance = fabs((double)goal->value[j] -
-                               (double)start->value[j]) * 0.01;
+                               (double)start->value[j]) * (double)ROBOT_JOINT_ANGLE_UNIT_DEG;
         if (!(v > 0.0) || !(a > 0.0) ||
             !isfinite(v) || !isfinite(a))
             return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
@@ -143,8 +143,8 @@ robot_status_t trajectory_trapezoid_sample(
         double delta = ((double)plan->goal_positions.value[j] -
                         (double)plan->start_positions.value[j]);
         double raw = (double)plan->start_positions.value[j] + delta * s;
-        double velocity = delta * 0.01 * sd;
-        double accel = delta * 0.01 * sdd;
+        double velocity = delta * (double)ROBOT_JOINT_ANGLE_UNIT_DEG * sd;
+        double accel = delta * (double)ROBOT_JOINT_ANGLE_UNIT_DEG * sdd;
         if (elapsed_s >= T)
             raw = (double)plan->goal_positions.value[j];
         if (!isfinite(raw) || !isfinite(velocity) || !isfinite(accel) ||
