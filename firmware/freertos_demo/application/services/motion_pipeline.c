@@ -19,7 +19,10 @@ motion_runtime_t g_motion_runtime={0};
 void motion_record_fault(robot_status_t status,uint8_t is_controller)
 {
     taskENTER_CRITICAL();
-    if(is_controller) g_motion_runtime.diagnostics.controller_faults++;
+    if(is_controller) {
+        g_motion_runtime.diagnostics.controller_faults++;
+        g_motion_runtime.abort_requested=1U;
+    }
     else g_motion_runtime.diagnostics.planner_faults++;
     g_motion_runtime.diagnostics.last_fault=status;
     taskEXIT_CRITICAL();
