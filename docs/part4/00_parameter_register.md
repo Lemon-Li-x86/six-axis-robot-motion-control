@@ -64,3 +64,21 @@
 设计保证：旧 `kinematics_inverse` 不受影响；新的IK接口只在近腕部奇异、与当前肩/腕符号匹配、J6与参考相近的条件下替代J6，随后按实际请求位姿执行生产FK回代门限。第4阶段 Cartesian 之后仍使用既有 Selector 的近奇异拒绝、关节行程检查和任务端速度跳变保护；**不绕过硬奇异保护，不代表零J5奇异点的连续运动已解决**。
 
 `config/stage4_motion_config.c` 的初始Waypoint FK门限现在从 Kinematics 两项常量派生，运行态允许用户注入更严格的门限；无相同语义硬编码副本。以上算法门限不是生产机器人经实测确认的安全参数。
+
+## 一次性验收批次：Joint Command Limiter（2026-10-26）
+
+| 参数/状态 | 语义 / 单位 | 唯一来源 | 消费模块 |
+|---|---|---|---|
+| `max_velocity_deg_s` | 各关节命令速度上限，°/s | 调用方 `motion_stage4_config_t` / 默认 `stage4_motion_config.c` | 既有轨迹、`joint_command_limiter.c` |
+| `max_acceleration_deg_s2` | 各关节命令加速度上限，°/s² | 同一份运行配置/默认配置 | 既有轨迹、`joint_command_limiter.c` |
+| `joint_command_limiter_t.command_raw` | 尚未取整的六轴命令累积值，0.01° raw | Control Task 私有实例 | `joint_command_limiter.c` |
+| `joint_command_limiter_t.velocity_deg_s` | 逐轴上一次命令速度，°/s | 同一个实例 | `joint_command_limiter.c` |
+| `task_stack_depth_words.control` | Control Task StackType_t 字数 | `config/robot_defaults.json` 的单点配置，目前768 | Config Generator → FreeRTOS xTaskCreate |
+
+控制命令算法输入校正量来自既有 Incremental PID。命令限速器为纯算法，依次约束**加速度变化率、绝对速度、模型关节位置限位**，最终仅在驱动边界量化为0.01°；内部保留小数位，否则低加速度与10ms更新周期会出现量化锁死。该算法不发送命令、不增加 UR5 常量和静态全局运行状态。
+
+Control Task 启动栈由512加到768 words以预留嵌套计算余量；该数值**不是最终满负载验证值**。运行初始/错误恢复后会重置速率累积状态，仍需用反馈真实执行、栈高水位与周期数据实测验证。
+
+Stage4默认 `cartesian_waypoint_*` 容差由 `kinematics.h` 定义的安全门限派生；即使应用层手动注入更宽松配置，`motion_pipeline_start()` 现在也会拒绝大于 IK 验收门限的运行配置，避免算法放行而应用忽略。
+
+以上改动全部保持 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF` 为默认；任何机械执行或 PyBullet 实际动作均需另外明确开启且检查仿真环境。
