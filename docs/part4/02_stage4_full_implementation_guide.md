@@ -188,3 +188,31 @@ cmake --build --preset firmware
 Visual Studio 是多配置构建器，CTest 必须带 `-C Debug`，不能把缺少配置导致的 `Not Run` 当成函数测试不通过。
 
 > 状态：补丁已提交，需本机重新编译与实际执行 CTest；此处不宣称已经通过。 
+
+### ARM GNU Toolchain 15.3.1 / libm 符号兼容（2026-10-26）
+
+本机 ARM 链接报告：
+- `freertos_demo.elf` 链接来自 `libm.a(libm_a-w_acos.o)` / `libm.a(libm_a-w_sqrt.o)` 的 `undefined reference to __errno`；
+- `qemu_ik_batch.elf` 也因 `sqrt` 的相同 `__errno` 缺失失败。
+
+根因是全工程采用 `-nostdlib`，但仍明确链接 `-lm -lgcc`，较新的 GNU Arm/newlib 的 double 精度数学包装函数会调用 `__errno()`。过去大多使用 float 数学函数而未触发该库符号；近期 Stage3 数值精度修改及 Stage4 笛卡尔插补开始使用 double，暴露出运行时 ABI 缺口。
+
+**修复结构**：
+- 唯一提供者 `firmware/freertos_demo/platform/freestanding_errno.c`，只实现 `__errno(void)` 返回稳定的整数存储地址，不在算法和测试模块重复定义；
+- `firmware/freertos_demo/CMakeLists.txt` 在 `freertos_demo` 添加此源码；并通过现有 `configure_qemu_target()` 对**全部**独立 QEMU 目标添加同一源码；
+- 不改动运动学、轨迹/PID 数学公式、误差阈值、Robot Model 关节限位或生成配置。
+
+**限制**：该实现只为裸机 `libm` 提供 ABI 链接支持，不是支持各 FreeRTOS 任务独立 `errno` 的完整 libc 移植。工程算法必须显式检查参数有效性、数学定义域和返回码，不能把 `errno` 用作并发控制判断。将来迁移到完整 newlib/reentrant 运行时，需要移除此兼容实现并采用新运行时的线程/任务级 errno。
+
+**本地复测**：
+
+```powershell
+git fetch origin
+git switch feat/stage4-trajectory-2026-10-26
+git merge --ff-only origin/feat/stage4-trajectory-2026-10-26
+
+cmake --preset arm-qemu -DROBOT_ENABLE_STAGE4_TASKS=OFF -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF
+cmake --build --preset arm-qemu
+```
+
+重点确认 `freertos_demo.elf`、`qemu_ik_batch.elf` 和 `qemu_stage4_trajectory_tests.elf` 均无 `__errno` 未定义符号。此变更尚未在目标 ARM 工具链中取得实测成功日志。
