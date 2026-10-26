@@ -25,7 +25,7 @@
                               ↑          ↑
 Host/ProtocolRX       IK/Selector        motion_limits
         │                    │            │
-    [Application 请求接口 motion_pipeline_submit_joint/cartesian]
+    [Application 请求接口 motion_pipeline_submit_joint/polynomial/cartesian]
                        │
                 Queue: latest request (1)
                        │
@@ -60,7 +60,7 @@ Host/ProtocolRX       IK/Selector        motion_limits
 - `pid_init` / `pid_step` / `pid_reset`；
 - `joint_controller_init` / `joint_controller_step`；
 - `trajectory_request_from_ik`；
-- `motion_pipeline_start`、`motion_pipeline_submit_joint`、`motion_pipeline_submit_cartesian`、`motion_pipeline_get_diagnostics`；
+- `motion_pipeline_start`、`motion_pipeline_submit_joint`、`motion_pipeline_submit_polynomial`、`motion_pipeline_submit_cartesian`、`motion_pipeline_get_diagnostics`；
 - `robot_joint_angle_normalize_raw` / `robot_angles_canonicalize` 归属 Common，单位与宏均来自 `robot_types.h`。
 
 角度存储：continuous `int32_t`，每单位 0.01°；速度 °/s、加速度 °/s²、轨迹周期秒；笛卡尔平移 mm、旋转 `T_base_ee` 3×3，和第3阶段一致。
