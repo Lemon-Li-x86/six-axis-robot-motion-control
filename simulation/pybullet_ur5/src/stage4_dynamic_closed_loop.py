@@ -43,6 +43,12 @@ def load_bridge(path: Path):
     lib = ctypes.CDLL(str(path.resolve()))
     lib.stage4_sim_create.argtypes = [ctypes.POINTER(ctypes.c_int32)] * 2
     lib.stage4_sim_create.restype = ctypes.c_void_p
+    lib.stage4_sim_create_with_kp_scale.argtypes = [
+        ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32),
+        ctypes.c_double,
+    ]
+    lib.stage4_sim_create_with_kp_scale.restype = ctypes.c_void_p
     lib.stage4_sim_duration.argtypes = [ctypes.c_void_p]
     lib.stage4_sim_duration.restype = ctypes.c_double
     lib.stage4_sim_step.argtypes = [
@@ -75,7 +81,8 @@ def angles_raw(bullet, body: int, indices: list[int]) -> list[int]:
 
 
 def run(library: Path, output_dir: Path, max_final_error_deg: float,
-        physics_dt_s: float, force_newton_m: float) -> dict:
+        physics_dt_s: float, force_newton_m: float,
+        kp_scale: float = 1.0) -> dict:
     import pybullet as p
 
     config = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -90,7 +97,7 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
     bridge = load_bridge(library)
     start = IntJoints(*START_RAW)
     goal = IntJoints(*GOAL_RAW)
-    handle = bridge.stage4_sim_create(start, goal)
+    handle = bridge.stage4_sim_create_with_kp_scale(start, goal, kp_scale)
     if not handle:
         raise RuntimeError("Native trajectory/controller initialization failed")
     try:
@@ -179,6 +186,7 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
 
             summary = {
                 "kind": "native_C_stage4_algorithms_to_PyBullet_DIRECT",
+                "pid_kp_multiplier_of_authoritative_default": kp_scale,
                 "not_tested": [
                     "Cortex-M4 FreeRTOS scheduling",
                     "UART round-trip",
@@ -227,16 +235,19 @@ def main() -> int:
     parser.add_argument("--max-final-error-deg", type=float, default=1.0,
                         help="Simulation acceptance criterion, not firmware config")
     parser.add_argument("--physics-dt-s", type=float, default=0.001)
+    parser.add_argument("--kp-scale", type=float, default=1.0,
+                        help="Host-only P gain sweep multiplier; default config stays authoritative")
     parser.add_argument("--motor-force", type=float, default=150.0,
                         help="PyBullet trial fixture, not hardware torque rating")
     args = parser.parse_args()
     if (not 0 < args.max_final_error_deg <= 10 or
             not 0 < args.physics_dt_s <= 0.01 or
-            not 0 < args.motor_force <= 1000):
+            not 0 < args.motor_force <= 1000 or
+            not 0 < args.kp_scale <= 2.0):
         parser.error("Invalid simulation trial parameters")
     summary = run(
         args.library, args.output_dir, args.max_final_error_deg,
-        args.physics_dt_s, args.motor_force)
+        args.physics_dt_s, args.motor_force, args.kp_scale)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0 if summary["passed"] else 1
 
