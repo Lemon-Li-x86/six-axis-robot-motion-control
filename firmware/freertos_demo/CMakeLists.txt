@@ -497,6 +497,13 @@ option(ROBOT_ENABLE_STAGE4_TASKS
     "Create Stage 4 trajectory, control and monitor FreeRTOS tasks" OFF)
 option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
     "Enable experimental Stage 4 PID targets to motor_state (sim only)" OFF)
+option(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+    "QEMU-only synthetic feedback/planner/PID smoke, command output forced OFF" OFF)
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST AND
+   (NOT ROBOT_ENABLE_STAGE4_TASKS OR ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT))
+    message(FATAL_ERROR
+        "QEMU RTOS smoke requires TASKS=ON and COMMAND_OUTPUT=OFF")
+endif()
 if(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT AND NOT ROBOT_ENABLE_STAGE4_TASKS)
     message(FATAL_ERROR
         "Stage4 actuator output requires ROBOT_ENABLE_STAGE4_TASKS=ON")
@@ -514,6 +521,15 @@ if(ROBOT_ENABLE_STAGE4_TASKS)
         application/tasks/monitor_task.c
     )
 endif()
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+    target_sources(freertos_demo PRIVATE
+        tests/qemu_target/stage4_rtos_selftest.c
+    )
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=
+        $<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
+)
 
 # QEMU standalone Stage4 smoke tests, with GDB inspectable report.
 # Intentionally independent of the FreeRTOS task option.
