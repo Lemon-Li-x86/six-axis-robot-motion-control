@@ -184,4 +184,24 @@ robot_status_t kinematics_inverse_with_reference(
     kinematics_ik_solutions_t *solutions);
 
 
+/**
+ * Compare two public base->ee transforms with explicit independent limits.
+ * Translation residual is Euclidean distance in mm; rotation residual is
+ * maximum absolute 3x3 matrix-element difference (NOT angular radians).
+ *
+ * Pure calculation; no FK, IK, allocation, motor state or FreeRTOS.
+ * Always rejects nonfinite inputs and non-positive/nonfinite thresholds.
+ * Caller supplies possibly stricter application limits, never a second
+ * hardcoded algorithm tolerance.
+ *
+ * Returns OK for passing pose; OUT_OF_RANGE for failed residual;
+ * INVALID_ARGUMENT for malformed numeric inputs; NULL_POINTER if needed.
+ */
+robot_status_t kinematics_pose_within_tolerance(
+    const robot_transform_t *actual,
+    const robot_transform_t *requested,
+    robot_real_t maximum_position_error_mm,
+    robot_real_t maximum_rotation_element_error);
+
+
 #endif
