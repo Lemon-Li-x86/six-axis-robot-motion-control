@@ -14,7 +14,7 @@
     "protocol_tx": 1000
   },
   "task_stack_depth_words": {
-    "control": 512,
+    "control": 768,
     "protocol_rx": 256,
     "trajectory": 1024,
     "protocol_tx": 256,
