@@ -41,7 +41,11 @@ robot_status_t motion_pipeline_start(const motion_stage4_config_t *cfg)
        !(cfg->cartesian_start_tolerance_mm>0.0F) ||
        !isfinite((double)cfg->cartesian_start_tolerance_mm) ||
        !(cfg->cartesian_start_rotation_matrix_tolerance>0.0F) ||
-       !isfinite((double)cfg->cartesian_start_rotation_matrix_tolerance))
+       !isfinite((double)cfg->cartesian_start_rotation_matrix_tolerance) ||
+       !(cfg->cartesian_waypoint_position_tolerance_mm>0.0F) ||
+       !isfinite((double)cfg->cartesian_waypoint_position_tolerance_mm) ||
+       !(cfg->cartesian_waypoint_rotation_matrix_tolerance>0.0F) ||
+       !isfinite((double)cfg->cartesian_waypoint_rotation_matrix_tolerance))
         return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     s=joint_controller_init(&validation,cfg->pid);
     if(s!=ROBOT_STATUS_OK) return s;
