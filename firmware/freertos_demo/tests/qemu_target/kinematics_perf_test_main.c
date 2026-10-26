@@ -458,6 +458,12 @@ int main(void)
 
     g_kin_perf_report.selection_success =
         report.selection_success;
+    g_kin_perf_report.roundtrip_passed = report.roundtrip_passed;
+    g_kin_perf_report.roundtrip_failed = report.roundtrip_failed;
+    g_kin_perf_report.roundtrip_skipped = report.roundtrip_skipped;
+    g_kin_perf_report.worst_position_error_mm = report.worst_position_error_mm;
+    g_kin_perf_report.worst_rotation_max_element_error =
+        report.worst_rotation_max_element_error;
 
     g_kin_perf_report.fk = report.fk;
     g_kin_perf_report.ik = report.ik;
