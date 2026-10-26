@@ -81,6 +81,8 @@ typedef struct
 
 volatile ik_trace_sample_t g_ik_trace[6];
 volatile uint32_t g_ik_trace_done = 0U;
+volatile uint32_t g_ik_reference_regression_checks = 0U;
+volatile uint32_t g_ik_reference_regression_failures = 0U;
 
 static const uint32_t source_indices[6] = {8U,9U,10U,27U,28U,29U};
 static const robot_joint_angle_t test_q5_raw[6] =
@@ -272,6 +274,19 @@ int main(void)
         }
 record:
         g_ik_trace[sample]=result;
+    }
+    /*
+     * On-target PASS/FAIL flag for the two known nonzero near-singular
+     * wrist fixtures. Exact q5=0 is intentionally NOT expected to pass:
+     * the wrist is geometrically singular there.
+     */
+    for(sample=3U;sample<=5U;sample+=2U)
+    {
+        g_ik_reference_regression_checks++;
+        if(g_ik_trace[sample].conditioned_status != ROBOT_STATUS_OK ||
+           g_ik_trace[sample].conditioned_close_to_reference != 1U ||
+           g_ik_trace[sample].conditioned_fk_verified != 1U)
+            g_ik_reference_regression_failures++;
     }
     g_ik_trace_done=1U;
     qemu_ik_trace_done();
