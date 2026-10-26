@@ -86,7 +86,9 @@ def angles_raw(bullet, body: int, indices: list[int]) -> list[int]:
 
 def run(library: Path, output_dir: Path, max_final_error_deg: float,
         physics_dt_s: float, force_newton_m: float,
-        kp_scale: float = 1.0, scenario: str = "joint2") -> dict:
+        kp_scale: float = 1.0, scenario: str = "joint2",
+        max_overshoot_j2_deg: float = 0.15,
+        max_tracking_rmse_j2_deg: float = 0.25) -> dict:
     import pybullet as p
 
     config = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -223,7 +225,13 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                 "settled_within_threshold_after_s": settling_s,
                 "sample_count": len(samples),
                 "acceptance_error_deg": max_final_error_deg,
-                "passed": max(goal_errors) <= max_final_error_deg,
+                "acceptance_max_overshoot_j2_deg": max_overshoot_j2_deg,
+                "acceptance_max_tracking_rmse_j2_deg": max_tracking_rmse_j2_deg,
+                "passed": (
+                    max(goal_errors) <= max_final_error_deg
+                    and overshoot_deg <= max_overshoot_j2_deg
+                    and tracking_rmse <= max_tracking_rmse_j2_deg
+                ),
             }
         finally:
             p.disconnect()
@@ -247,8 +255,10 @@ def main() -> int:
                         help="Path to freshly built Stage4 C shared library")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage4-closed-loop")
-    parser.add_argument("--max-final-error-deg", type=float, default=1.0,
+    parser.add_argument("--max-final-error-deg", type=float, default=0.25,
                         help="Simulation acceptance criterion, not firmware config")
+    parser.add_argument("--max-overshoot-j2-deg", type=float, default=0.15)
+    parser.add_argument("--max-tracking-rmse-j2-deg", type=float, default=0.25)
     parser.add_argument("--physics-dt-s", type=float, default=0.001)
     parser.add_argument("--scenario", choices=tuple(TRIAL_GOALS),
                         default="joint2")
@@ -260,12 +270,15 @@ def main() -> int:
     if (not 0 < args.max_final_error_deg <= 10 or
             not 0 < args.physics_dt_s <= 0.01 or
             not 0 < args.motor_force <= 1000 or
-            not 0 < args.kp_scale <= 2.0):
+            not 0 < args.kp_scale <= 2.0 or
+            not 0 <= args.max_overshoot_j2_deg <= 10 or
+            not 0 < args.max_tracking_rmse_j2_deg <= 10):
         parser.error("Invalid simulation trial parameters")
     summary = run(
         args.library, args.output_dir, args.max_final_error_deg,
         args.physics_dt_s, args.motor_force, args.kp_scale,
-        args.scenario)
+        args.scenario, args.max_overshoot_j2_deg,
+        args.max_tracking_rmse_j2_deg)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0 if summary["passed"] else 1
 
