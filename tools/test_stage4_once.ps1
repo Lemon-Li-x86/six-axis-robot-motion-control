@@ -243,9 +243,14 @@ try {
     if (-not $library) { throw 'Native Stage4 shared library not found after build' }
     & python -c 'import pybullet'
     Assert-Exit 'PyBullet Python dependency (install with python -m pip install pybullet)'
-    & python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py `
-        --library $library --output-dir build/stage4-closed-loop
-    Assert-Exit 'Native C to PyBullet dynamic closed loop'
+    foreach ($trial in @('joint2','six_axis')) {
+        Write-Host "[PyBullet] $trial" -ForegroundColor Cyan
+        & python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py `
+            --library $library `
+            --scenario $trial `
+            --output-dir (Join-Path 'build/stage4-closed-loop' $trial)
+        Assert-Exit "Native C to PyBullet dynamic closed loop: $trial"
+    }
 
     $passed=$true
 } catch {
