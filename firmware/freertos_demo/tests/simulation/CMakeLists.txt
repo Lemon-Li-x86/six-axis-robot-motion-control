@@ -54,3 +54,8 @@ endif()
 if(NOT MSVC)
     target_link_libraries(stage4_sim_bridge PRIVATE m)
 endif()
+
+enable_testing()
+add_executable(stage4_sim_bridge_smoke stage4_sim_bridge_smoke.c)
+target_link_libraries(stage4_sim_bridge_smoke PRIVATE stage4_sim_bridge)
+add_test(NAME stage4_sim_bridge_smoke COMMAND stage4_sim_bridge_smoke)
