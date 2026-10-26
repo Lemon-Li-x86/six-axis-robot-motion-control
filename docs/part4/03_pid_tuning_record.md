@@ -38,3 +38,26 @@
 GitHub Actions `.github/workflows/stage4-trajectory-host.yml` 配置自动运行原生库构建、C API smoke 和 Python/PyBullet 仿真；Windows 可以通过 `tools/test_stage4_once.ps1` 在最终一次性验收中执行。
 
 **状态声明**：截至源码提交，此次新增仿真尚未得到真实数据，因此不能填写上表中的超调、MAE、RMSE 或 PID 整定“通过”。本次为默认参数的**基线试验**，并未盲目自动调参；真正的 PID 增益需根据仿真曲线及运行稳定性有依据地修订单一配置。原有 FreeRTOS/UART 实机通信动态闭环仍不在此原生 DLL 的覆盖范围。
+
+## 云端首轮动态基线实测（GitHub Actions，2026-10-26）
+
+测试来源：[Run #40320326975](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40320326975)，提交 `5872bb03`。经 GitHub Actions Job Log 实际记录确认：`stage3-stage4-host` 与 `stage4-native-pybullet` 均为 **success**；后者完成原生共享库严格编译、C Smoke 和 PyBullet DIRECT 动态测试。
+
+| 项目 | 云端实测 |
+|---|---:|
+| 固件默认 PID 初始 Kp / Ki / Kd | 0.8 / 0 / 0（均由配置源注入） |
+| 控制周期 / 物理步长 | 10 ms / 1 ms |
+| J2 测试总目标移动 | +2.00°（由 -45° 到 -43°） |
+| 梯形轨迹总时长 | 0.51639777 s |
+| 物理仿真总时长 | 2.53 s |
+| J2 最终目标误差 | 0.04° |
+| J2 轨迹 MAE | 0.42423° |
+| J2 轨迹 RMSE | 0.51217° |
+| J2 最大超调 | **1.07°** |
+| 首次进入并持续保持默认1°稳态容差带 | 0.76 s |
+| 动态样本数 | 253 |
+| 首轮测试 verdict | 通过 **1°最终位置粗门限**，不等同PID调优完成 |
+
+**解释**：J2 仅移动2°却超调1.07°，幅值相当于本次目标移动的53.5%，明显需要改善。末端误差0.04°不能掩盖动态超调。此结果只表示当前测试环境（URDF、PyBullet Position Control和测试力矩参数）下的观测，不代表机器人额定动态性能或真实固件UART实时闭环。
+
+下一步采用 `stage4_sim_create_with_kp_scale` **仅测试专用**的 Kp 因子扫描（0.25、0.50、0.75、1.00），其他生产控制常数不变。比对超调、RMSE、末端误差及稳定时间后，才决定是否修改 `config/stage4_motion_config.c` 中的唯一默认Kp。不允许直接把试验中的倍数当成新的第二份生产配置，也不允许将调参结果写成真实硬件标定。
