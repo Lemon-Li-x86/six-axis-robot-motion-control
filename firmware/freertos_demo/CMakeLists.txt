@@ -500,3 +500,23 @@ if(ROBOT_ENABLE_STAGE4_TASKS)
         application/tasks/monitor_task.c
     )
 endif()
+
+# QEMU standalone Stage4 smoke tests, with GDB inspectable report.
+# Intentionally independent of the FreeRTOS task option.
+add_executable(qemu_stage4_trajectory_tests
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/stage4_trajectory_test_main.c
+    memory.c
+    algorithms/trajectory/polynomial_trajectory.c
+    algorithms/trajectory/trapezoidal_profile.c
+    algorithms/trajectory/cartesian_common.c
+    algorithms/trajectory/cartesian_line.c
+    algorithms/trajectory/cartesian_arc.c
+    algorithms/control/pid.c
+)
+target_include_directories(qemu_stage4_trajectory_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/trajectory
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/control
+)
+configure_qemu_target(qemu_stage4_trajectory_tests m)
