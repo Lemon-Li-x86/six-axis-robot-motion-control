@@ -484,6 +484,7 @@ target_sources(freertos_demo PRIVATE
     algorithms/trajectory/cartesian_waypoint.c
     algorithms/control/pid.c
     algorithms/control/joint_controller.c
+    algorithms/control/joint_command_limiter.c
     application/services/trajectory_request_adapter.c
 )
 target_include_directories(freertos_demo PRIVATE
