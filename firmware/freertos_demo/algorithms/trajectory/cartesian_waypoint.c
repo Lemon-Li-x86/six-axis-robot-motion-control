@@ -3,6 +3,7 @@
 #include "kinematics.h"
 #include "ik_solution_selector.h"
 #include "motion_limits.h"
+#include "angle_utils.h"
 
 /* App supplies current joint continuity; no static pose, no caching. */
 robot_status_t cartesian_trajectory_joint_waypoint(
@@ -14,6 +15,7 @@ robot_status_t cartesian_trajectory_joint_waypoint(
 {
     robot_transform_t pose;
     kinematics_ik_solutions_t solutions = {0};
+    robot_joint_angles_t reference = {{0}};
     ik_selection_result_t selection = {0};
     robot_status_t status;
 
@@ -23,7 +25,9 @@ robot_status_t cartesian_trajectory_joint_waypoint(
     if(status!=ROBOT_STATUS_OK) return status;
     status=cartesian_trajectory_sample(plan,sample_index,&pose);
     if(status!=ROBOT_STATUS_OK) return status;
-    status=kinematics_inverse(&pose,&solutions);
+    status=robot_angles_canonicalize(current,&reference);
+    if(status!=ROBOT_STATUS_OK) return status;
+    status=kinematics_inverse_with_reference(&pose,&reference,&solutions);
     if(status!=ROBOT_STATUS_OK) return status;
     status=ik_solution_selector_select(&solutions,current,&selection);
     if(status!=ROBOT_STATUS_OK) return status;
