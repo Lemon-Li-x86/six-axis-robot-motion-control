@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include "kinematics.h"
+#include "ik_reference_test_limits.h"
 
 static int checks = 0, failures = 0;
 #define CHECK(expr) do { ++checks; if (!(expr)) { ++failures; \
@@ -25,7 +26,8 @@ static int close_to_reference(
     for (j = 0; j < ROBOT_JOINT_COUNT; ++j)
     {
         int difference = (int)a->value[j] - (int)b->value[j];
-        if (difference < -25 || difference > 25) return 0;
+        if (difference < -IK_REFERENCE_TEST_MATCH_WINDOW_RAW ||
+            difference > IK_REFERENCE_TEST_MATCH_WINDOW_RAW) return 0;
     }
     return 1;
 }
