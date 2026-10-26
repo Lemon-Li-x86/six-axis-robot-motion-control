@@ -100,6 +100,11 @@ function Run-QemuGdb {
         if ($gdb.ExitCode -ne 0) {
             throw "$target GDB failed with exit code $($gdb.ExitCode)"
         }
+        # Don't accept a clean GDB exit that failed to reach the test marker.
+        if ($stdout -notmatch '(?m)^Breakpoint [0-9]+, ' +
+              [regex]::Escape($breakpoint) + '\\b') {
+            throw "$target: never reached $breakpoint"
+        }
         foreach ($name in $fields) {
             if (-not $expected.ContainsKey($name)) {
                 throw "Test script has no expectation for $name"
@@ -192,11 +197,10 @@ try {
         }
 
     Write-Host '[5/5] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
-    Run-QemuGdb 'freertos_demo' 'task_monitor' `
-        @('g_motion_runtime.monitor_handle') `
-        @{'g_motion_runtime.monitor_handle'=0}
-    # NOTE: monitor task handle is a nonzero address; the check above is
-    # replaced below by an explicit GDB-only entry marker in this runner.
+    # A breakpoint hit proves the task actually ran under the scheduler;
+    # task handles are POINTERS, so they must not be compared to zero.
+    Run-QemuGdb 'freertos_demo' 'task_monitor' @() @{}
+
     $passed=$true
 } catch {
     Write-Host ('[FAIL] ' + $_.Exception.Message) -ForegroundColor Red
