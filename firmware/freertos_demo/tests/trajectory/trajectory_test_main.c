@@ -8,6 +8,22 @@
 #include <string.h>
 #include "trajectory.h"
 
+/*
+ * Public joint position scale is ROBOT_JOINT_ANGLE_UNIT_DEG (0.01F).
+ * Its binary32 representation is slightly smaller than mathematical 0.01,
+ * and conversion to double preserves that original rounding.
+ * As a result, the expected 1.5s, 2.5s and 1.0s timings vary by about
+ * 11-45 ns, so a 0.1 ns assertion is NOT valid for this public input type.
+ *
+ * One microsecond is still five orders of magnitude tighter than the
+ * configured 10-20 ms control/trajectory periods, and checks that the
+ * profile structure and total time remain mathematically correct.
+ *
+ * This constant applies to schedule time assertions only, never to
+ * physical position, velocity, acceleration or IK accuracy gates.
+ */
+#define TRAJECTORY_TEST_TIME_TOLERANCE_S 1e-6
+
 static int failures = 0;
 static int checks = 0;
 
@@ -82,8 +98,8 @@ static void test_trapezoid(void)
     CHECK(trajectory_trapezoid_init(
         &plan, &start, &goal, &vmax, &amax) == ROBOT_STATUS_OK);
     NEAR(plan.acceleration_time_s, 0.5, 1e-10);
-    NEAR(plan.cruise_time_s, 1.5, 1e-10);
-    NEAR(plan.total_time_s, 2.5, 1e-10);
+    NEAR(plan.cruise_time_s, 1.5, TRAJECTORY_TEST_TIME_TOLERANCE_S);
+    NEAR(plan.total_time_s, 2.5, TRAJECTORY_TEST_TIME_TOLERANCE_S);
     CHECK(trajectory_trapezoid_sample(&plan, 1.25, &sample) == ROBOT_STATUS_OK);
     CHECK(sample.positions.value[0] == 5000);
     CHECK(sample.positions.value[1] == -2500);
@@ -123,7 +139,7 @@ static void test_triangular_and_stationary(void)
     CHECK(trajectory_trapezoid_init(
         &plan, &a, &b, &vmax, &amax) == ROBOT_STATUS_OK);
     NEAR(plan.cruise_time_s, 0.0, 1e-10);
-    NEAR(plan.total_time_s, 1.0, 1e-10);
+    NEAR(plan.total_time_s, 1.0, TRAJECTORY_TEST_TIME_TOLERANCE_S);
     CHECK(trajectory_trapezoid_sample(&plan, 0.5, &sample) == ROBOT_STATUS_OK);
     CHECK(sample.positions.value[0] == 50);
 
