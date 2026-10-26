@@ -40,6 +40,19 @@
     (180.0F / KINEMATICS_PI_F)
 
 
+/* Near-wrist singularity conditioning policy for OPTIONAL seeded IK.
+ * These are numeric-reliability thresholds, not geometry tolerances.
+ * They do not relax KINEMATICS_TRIG_DOMAIN_EPSILON in ur5_analytic_ik.c.
+ *
+ * sin(q5)<0.001: small projections lead to unstable q6 from binary32 SO(3).
+ * Reference q1 must agree within 0.005 rad; reference q5 must share sign.
+ * A seeded q6 substitutes only if its deviation from orientation-derived q6
+ * is <=0.05 rad. FK verification independently prevents false candidates.
+ */
+#define KINEMATICS_SEEDED_WRIST_SIN_THRESHOLD 0.001F
+#define KINEMATICS_SEEDED_SHOULDER_MAX_ERROR_RAD 0.005F
+#define KINEMATICS_SEEDED_Q6_MAX_ERROR_RAD 0.05F
+
 /* =========================================================
  * Shared Math Helpers
  * ========================================================= */
