@@ -13,6 +13,7 @@
  */
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 
 #include "robot_model.h"
 #include "kinematics.h"
@@ -40,6 +41,18 @@ typedef struct
     double p13_x_mm;
     double p13_y_mm;
     double raw_cos_q3;  /* un-clamped: values >1 or < -1 matter */
+    /*
+     * Counterfactual: for the INPUT shoulder/wrist branch only,
+     * substitute the known fixture J6 into the exact production p13
+     * helper. This isolates error propagated by recovered q6.
+     * Other branches are deliberately not compared to fixture J6.
+     */
+    uint32_t matches_input_branch;
+    double input_q6_reference_rad;
+    double q6_error_vs_input_rad;
+    double p13_x_at_input_q6_mm;
+    double p13_y_at_input_q6_mm;
+    double cos_q3_at_input_q6;
     robot_real_t q3_rad[2];
 } ik_trace_wrist_t;
 
@@ -155,6 +168,39 @@ int main(void)
                 branch->p13_x_mm=px;
                 branch->p13_y_mm=py;
                 branch->raw_cos_q3=cos3;
+                /*
+                 * All six samples have the same input J1=+30 degrees
+                 * and J6=-10 degrees. Match shoulder and the true
+                 * wrist-sign branch, rather than comparing a distinct
+                 * valid shoulder/wrist IK solution to this fixture.
+                 */
+                if (sample != 4U &&
+                    fabs((double)q1[shoulder] -
+                         (double)result.input.value[0] *
+                         (double)ROBOT_JOINT_ANGLE_UNIT_DEG *
+                         (3.14159265358979323846 / 180.0)) < 0.01 &&
+                    ((result.input.value[4] < 0 && q5[wrist] < 0.0F) ||
+                     (result.input.value[4] > 0 && q5[wrist] > 0.0F)))
+                {
+                    double rx=0.0,ry=0.0,rc=0.0;
+                    double expected_q6 =
+                        (double)result.input.value[5] *
+                        (double)ROBOT_JOINT_ANGLE_UNIT_DEG *
+                        (3.14159265358979323846 / 180.0);
+                    robot_status_t ref_status =
+                        ur5_analytic_ik_trace_elbow_cosine(
+                            model,&dh,q1[shoulder],
+                            (robot_real_t)expected_q6,&rx,&ry,&rc);
+                    if (ref_status == ROBOT_STATUS_OK)
+                    {
+                        branch->matches_input_branch=1U;
+                        branch->input_q6_reference_rad=expected_q6;
+                        branch->q6_error_vs_input_rad=(double)q6-expected_q6;
+                        branch->p13_x_at_input_q6_mm=rx;
+                        branch->p13_y_at_input_q6_mm=ry;
+                        branch->cos_q3_at_input_q6=rc;
+                    }
+                }
                 status=ur5_analytic_ik_solve_q3_candidates(
                     model,&dh,q1[shoulder],q5[wrist],q6,q3);
                 branch->q3_status=(int32_t)status;
