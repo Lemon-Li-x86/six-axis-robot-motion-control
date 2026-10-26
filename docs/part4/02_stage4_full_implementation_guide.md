@@ -216,3 +216,30 @@ cmake --build --preset arm-qemu
 ```
 
 重点确认 `freertos_demo.elf`、`qemu_ik_batch.elf` 和 `qemu_stage4_trajectory_tests.elf` 均无 `__errno` 未定义符号。此变更尚未在目标 ARM 工具链中取得实测成功日志。
+
+### 第3阶段近奇异参考条件化修复（待新一轮本地验证）
+
+根据第3阶段实际QEMU样本27/29，`J5=±0.01°` 时单精度位姿的J6恢复误差沿 `p13` 传递，使 `cos(J3)` 在一个分支达到 `1.0002344`，即使真实输入J3=0。条件化入口 `kinematics_inverse_with_reference()` 仅在当前关节参考与解析解吻合时修正不稳定J6，并对其输出执行FK回代判据；默认无参考入口的行为不变。Stage4笛卡尔插补现在使用已有的 `current` 作为显式参考，随后照常执行Selector奇异筛选、关节限位和任务级速度门禁。
+
+仍**禁止**认为这就是完整奇异穿越算法：q5严格为零时J6不唯一，Selector继续拒绝 `abs(sin q3/q5)<0.01`；近奇异/绕过硬门限的连续运动尚未验收。此轮**没有**放宽任何三角函数定义域容差。
+
+只需复测 Host 5项：
+
+```powershell
+git fetch origin
+git switch feat/stage4-trajectory-2026-10-26
+git merge --ff-only origin/feat/stage4-trajectory-2026-10-26
+cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
+cmake --build build/stage4-trajectory --config Debug
+ctest --test-dir build/stage4-trajectory -C Debug --output-on-failure
+```
+
+再构建ARM特定的近奇异诊断目标：
+
+```powershell
+cmake --build --preset arm-qemu --target qemu_ik_near_singular_trace
+```
+
+使用此前相同的QEMU/GDB方式运行该ELF，关注 `g_ik_reference_regression_checks=2`、`g_ik_reference_regression_failures=0`，以及 `g_ik_trace[5].conditioned_fk_verified=1`。这些**尚未取得本机实测值**。
+
+更完整的数学取证、全部参数所属及局限，参见 `docs/part3/03_ik_review_remediation_2026-10-26.md` 与 `docs/part4/00_parameter_register.md`。
