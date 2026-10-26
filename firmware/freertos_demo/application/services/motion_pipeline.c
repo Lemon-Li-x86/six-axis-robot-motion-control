@@ -1,0 +1,119 @@
+/*
+ * Stage 4 RTOS-facing request queue and task startup.
+ * Data remains owned by callers; work is performed only in tasks.
+ */
+#include <stddef.h>
+#include <string.h>
+#include <math.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "motion_pipeline.h"
+#include "motion_tasks_internal.h"
+#include "motion_limits.h"
+#include "joint_controller.h"
+#include "task_config.h"
+
+motion_runtime_t g_motion_runtime={0};
+
+void motion_record_fault(robot_status_t status,uint8_t is_controller)
+{
+    taskENTER_CRITICAL();
+    if(is_controller) g_motion_runtime.diagnostics.controller_faults++;
+    else g_motion_runtime.diagnostics.planner_faults++;
+    g_motion_runtime.diagnostics.last_fault=status;
+    taskEXIT_CRITICAL();
+}
+
+robot_status_t motion_pipeline_start(const motion_stage4_config_t *cfg)
+{
+    motion_runtime_t *r=&g_motion_runtime;
+    joint_controller_t validation;
+    robot_status_t s;
+    uint32_t j;
+    if(cfg==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(r->request_queue!=NULL || r->reference_queue!=NULL)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    if(cfg->feedback_timeout_ms==0U ||
+       cfg->feedback_timeout_ms > 0x7FFFFFFFU)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    s=joint_controller_init(&validation,cfg->pid);
+    if(s!=ROBOT_STATUS_OK) return s;
+    for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+        if(!isfinite((double)cfg->max_velocity_deg_s.value[j]) ||
+           !isfinite((double)cfg->max_acceleration_deg_s2.value[j]) ||
+           !(cfg->max_velocity_deg_s.value[j]>0.0F) ||
+           !(cfg->max_acceleration_deg_s2.value[j]>0.0F))
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    }
+    r->config=*cfg;
+    memset(&r->diagnostics,0,sizeof(r->diagnostics));
+    r->request_queue=xQueueCreate(1U,sizeof(motion_request_t));
+    r->reference_queue=xQueueCreate(1U,sizeof(motion_reference_t));
+    if(r->request_queue==NULL || r->reference_queue==NULL)
+        goto fail;
+    if(trajectory_task_create()!=pdPASS) goto fail;
+    if(control_task_create()!=pdPASS) goto fail;
+    if(monitor_task_create()!=pdPASS) goto fail;
+    return ROBOT_STATUS_OK;
+fail:
+    if(r->monitor_handle!=NULL) vTaskDelete(r->monitor_handle);
+    if(r->control_handle!=NULL) vTaskDelete(r->control_handle);
+    if(r->trajectory_handle!=NULL) vTaskDelete(r->trajectory_handle);
+    if(r->request_queue!=NULL) vQueueDelete(r->request_queue);
+    if(r->reference_queue!=NULL) vQueueDelete(r->reference_queue);
+    memset(r,0,sizeof(*r));
+    return ROBOT_STATUS_ERROR_INTERNAL;
+}
+
+robot_status_t motion_pipeline_submit_joint(const robot_joint_positions_t *goal)
+{
+    motion_request_t request;
+    if(goal==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    if(motion_limits_check_positions(goal)!=ROBOT_STATUS_OK)
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    memset(&request,0,sizeof(request));
+    request.kind=MOTION_REQUEST_JOINT;
+    request.joint_goal=*goal;
+    if(xQueueOverwrite(g_motion_runtime.request_queue,&request)!=pdPASS)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    taskENTER_CRITICAL();
+    g_motion_runtime.diagnostics.requests_accepted++;
+    taskEXIT_CRITICAL();
+    return ROBOT_STATUS_OK;
+}
+
+robot_status_t motion_pipeline_submit_cartesian(
+    const cartesian_trajectory_plan_t *plan)
+{
+    motion_request_t request;
+    if(plan==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    if((plan->kind!=CARTESIAN_PATH_LINE &&
+        plan->kind!=CARTESIAN_PATH_ARC) ||
+       plan->interval_count==0U || !(plan->duration_s>0.0))
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    memset(&request,0,sizeof(request));
+    request.kind=MOTION_REQUEST_CARTESIAN;
+    request.cartesian=*plan;
+    if(xQueueOverwrite(g_motion_runtime.request_queue,&request)!=pdPASS)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    taskENTER_CRITICAL();
+    g_motion_runtime.diagnostics.requests_accepted++;
+    taskEXIT_CRITICAL();
+    return ROBOT_STATUS_OK;
+}
+
+robot_status_t motion_pipeline_get_diagnostics(motion_stage4_diagnostics_t *out)
+{
+    if(out==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    taskENTER_CRITICAL();
+    *out=g_motion_runtime.diagnostics;
+    taskEXIT_CRITICAL();
+    return ROBOT_STATUS_OK;
+}
