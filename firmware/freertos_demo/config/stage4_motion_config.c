@@ -16,6 +16,8 @@
 #define STAGE4_REFERENCE_TIMEOUT_MS (3U * TASK_PERIOD_TRAJECTORY_MS)
 #define STAGE4_CARTESIAN_START_TOLERANCE_MM 0.5F
 #define STAGE4_CARTESIAN_START_ROTATION_TOLERANCE 0.01F
+#define STAGE4_CARTESIAN_WAYPOINT_TOLERANCE_MM 0.5F
+#define STAGE4_CARTESIAN_WAYPOINT_ROTATION_TOLERANCE 0.003F
 
 #define STAGE4_PID_ENTRY { \
     STAGE4_PID_STARTER_GAIN_P, STAGE4_PID_STARTER_GAIN_I, \
@@ -34,7 +36,9 @@ static const motion_stage4_config_t g_stage4_config={
     .feedback_timeout_ms=STAGE4_FEEDBACK_TIMEOUT_MS,
     .reference_timeout_ms=STAGE4_REFERENCE_TIMEOUT_MS,
     .cartesian_start_tolerance_mm=STAGE4_CARTESIAN_START_TOLERANCE_MM,
-    .cartesian_start_rotation_matrix_tolerance=STAGE4_CARTESIAN_START_ROTATION_TOLERANCE
+    .cartesian_start_rotation_matrix_tolerance=STAGE4_CARTESIAN_START_ROTATION_TOLERANCE,
+    .cartesian_waypoint_position_tolerance_mm=STAGE4_CARTESIAN_WAYPOINT_TOLERANCE_MM,
+    .cartesian_waypoint_rotation_matrix_tolerance=STAGE4_CARTESIAN_WAYPOINT_ROTATION_TOLERANCE
 };
 
 const motion_stage4_config_t *stage4_motion_default_config(void)
