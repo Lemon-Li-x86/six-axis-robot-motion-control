@@ -8,14 +8,14 @@
  */
 
 #include "robot_model.h"
+#include "math_constants.h"
 
 
 /* =========================================================
  * Model Constants
  * ========================================================= */
 
-#define UR5_PI_F \
-    3.14159265358979323846F
+/* All geometry angles use the shared mathematical constant. */
 
 
 /* =========================================================
@@ -66,11 +66,11 @@ static const robot_model_t ur5_model =
      */
     .dh_alpha_rad =
     {
-        UR5_PI_F / 2.0F,
+        ROBOT_PI_F / 2.0F,
         0.0F,
         0.0F,
-        UR5_PI_F / 2.0F,
-        -UR5_PI_F / 2.0F,
+        ROBOT_PI_F / 2.0F,
+        -ROBOT_PI_F / 2.0F,
         0.0F
     },
 
