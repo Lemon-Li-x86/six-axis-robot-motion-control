@@ -31,6 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         kp_scale: [0.25, 0.50, 0.75, 1.00]
+        scenario: [joint2, six_axis]
     steps:
       - uses: actions/checkout@v4
       - name: Install physics-only simulation dependency
@@ -46,11 +47,12 @@ jobs:
           python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py \
             --library build/stage4-simulation/libstage4_sim_bridge.so \
             --kp-scale ${{ matrix.kp_scale }} \
+            --scenario ${{ matrix.scenario }} \
             --output-dir build/stage4-closed-loop
       - name: Keep diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage4-pybullet-kp-${{ matrix.kp_scale }}
+          name: stage4-pybullet-${{ matrix.scenario }}-kp-${{ matrix.kp_scale }}
           path: build/stage4-closed-loop/*
           if-no-files-found: ignore
