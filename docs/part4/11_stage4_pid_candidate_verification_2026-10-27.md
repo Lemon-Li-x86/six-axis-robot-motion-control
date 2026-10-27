@@ -41,7 +41,7 @@ firmware/freertos_demo/config/robot_defaults.json 中修改六轴仿真默认：
 ~~~powershell
 git fetch origin
 git switch --track origin/candidate/stage4-pid-20261027
-powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline
+powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline -IncludeGuiReplay
 ~~~
 
 如果已有本地候选分支，改用：
@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 ~~~powershell
 git switch candidate/stage4-pid-20261027
 git pull --ff-only
-powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline
+powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline -IncludeGuiReplay
 ~~~
 
 该入口验证：原 Stage4 Host 算法测试、C 桥接 smoke、18组敏感度矩阵、
@@ -68,6 +68,16 @@ cmake --build build/stage4-candidate-local-uart --target freertos_demo
 GUI 是**真实 QEMU/FreeRTOS/PyBullet DIRECT 实测角度的独立回放**，
 不声称 GUI 与实时固件控制同线程运行。执行前必须确认本候选分支的
 GitHub Actions 中 ARM/QEMU 端到端回归已经完成并成功，不能先写结论。
+
+## 云端 QEMU 候选版本正式回归（2026-10-27）
+
+[GitHub Actions Run #40492735418](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40492735418) 已在候选增益 Kp=0.25、Ki=0、Kd=0.025 下完成：
+- Stage4 原生 C 与 PyBullet 测试、原有 Host 6/6、C桥接Smoke：成功；
+- 重新编译的 ARM QEMU FreeRTOS UART 一次关节运动：PASS，最大最终关节误差0.01°；
+- 真实 QEMU UART ↔ PyBullet DIRECT 三段六轴运动：3/3完成，677目标帧，最大分段最终误差0.08°，控制和规划故障计数均0；
+- 试验配置仍只在本候选分支，冻结基线和主线未更改。
+
+以上是 Linux GitHub Actions 实测，不是对 Windows GUI 的观察。Windows 本地仍需运行上面的脚本，带 -IncludeGuiReplay 时，它会**重新编译候选 ELF**，录制真正的 UART 物理闭环，再独立慢速回放实测姿态。不得复用旧分支下的 ELF。
 
 ## 保留的工程限制
 
