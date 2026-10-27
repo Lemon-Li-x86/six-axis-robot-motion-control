@@ -11,6 +11,7 @@ from analyze_stage4_timing import parse_report  # noqa: E402
 
 def fixture() -> str:
     values = {"finished": 1, "checks": 29, "failed": 0,
+              "healthy_duration_ms": 1200,
               "timing_frequency_hz": 25000000}
     for name, ms in (("control", 10), ("trajectory", 20),
                      ("monitor", 100)):
@@ -37,6 +38,12 @@ class TimingReportTest(unittest.TestCase):
         self.assertEqual(control["interval_sample_count"], 60)
         self.assertEqual(report["stacks"]["control"]["allocated_words"], 768)
         self.assertEqual(report["stacks"]["control"]["peak_used_words"], 668)
+
+    def test_rejects_invalid_qemu_health_window(self):
+        damaged = fixture().replace(
+            "healthy_duration_ms=1200", "healthy_duration_ms=0")
+        with self.assertRaisesRegex(ValueError, "healthy run duration"):
+            parse_report(damaged)
 
     def test_requires_numeric_p99_fields(self):
         damaged = fixture().replace("control_jitter_p99_ticks=250", "")
