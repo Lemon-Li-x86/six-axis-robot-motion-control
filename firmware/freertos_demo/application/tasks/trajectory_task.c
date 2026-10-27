@@ -128,142 +128,142 @@ static void task_trajectory(void *arg)
         /* Each early exit still participates in period/execution records. */
         do {
 
-        /* Any control-loop safety fault cancels the entire trajectory.
-         * Do not re-arm merely because the reference queue repeats data. */
-        if(r->abort_requested!=0U) {
-            taskENTER_CRITICAL();
-            r->abort_requested=0U;
-            taskEXIT_CRITICAL();
-            reference.enabled=0U;
-            reference.created_tick=xTaskGetTickCount();
-            (void)xQueueOverwrite(r->reference_queue,&reference);
-            armed=0U;
-            moving=0U;
-            break;
-        }
-
-        if(xQueueReceive(r->request_queue,&request,0U)==pdTRUE) {
-            armed=0U;
-            moving=0U;
-            /* Invalidate previously streamed target BEFORE replanning. */
-            reference.enabled=0U;
-            reference.created_tick=xTaskGetTickCount();
-            (void)xQueueOverwrite(r->reference_queue,&reference);
-            s=start_request(r,&request,&joint_plan,&last);
-            if(s!=ROBOT_STATUS_OK) {
-                cancel_motion(r,s);
-                break;
-            }
-            mode=request.kind;
-            begun=xTaskGetTickCount();
-            cartesian_index=0U;
-            armed=1U;
-            moving=1U;
-        }
-
-        if(!armed) break;
-
-        /* The planner must also stop on stale feedback; an old trajectory
-         * must not resume at a later, jumped setpoint after reconnect. */
-        {
-            motor_state_observation_t observation;
-            TickType_t now=xTaskGetTickCount();
-            if(motor_state_get_feedback(&observation)!=ROBOT_STATUS_OK ||
-               !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
-                    (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
-                cancel_motion(r,ROBOT_STATUS_ERROR_NOT_READY);
-                armed=0U; moving=0U;
-                break;
-            }
-        }
-
-        if(moving)
-        {
-            if(mode==MOTION_REQUEST_JOINT) {
-                trajectory_joint_sample_t sample;
-                double t=(double)(xTaskGetTickCount()-begun) /
-                    (double)configTICK_RATE_HZ;
-                s=trajectory_trapezoid_sample(&joint_plan,t,&sample);
-                if(s==ROBOT_STATUS_OK) {
-                    last=sample.positions;
-                    if(t>=joint_plan.total_time_s) moving=0U;
-                }
-            } else if(mode==MOTION_REQUEST_POLYNOMIAL) {
-                trajectory_joint_sample_t sample;
-                double t=(double)(xTaskGetTickCount()-begun) /
-                    (double)configTICK_RATE_HZ;
-                uint32_t j;
-                s=trajectory_polynomial_sample(
-                    &request.polynomial,t,&sample);
-                if(s==ROBOT_STATUS_OK)
-                    s=motion_limits_check_positions(&sample.positions);
-                if(s==ROBOT_STATUS_OK) {
-                    for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
-                        if(fabs((double)sample.velocities.value[j])>
-                               (double)r->config.max_velocity_deg_s.value[j] ||
-                           fabs((double)sample.accelerations.value[j])>
-                               (double)r->config.max_acceleration_deg_s2.value[j]) {
-                            s=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-                            break;
-                        }
-                    }
-                }
-                if(s==ROBOT_STATUS_OK) {
-                    last=sample.positions;
-                    if(t>=request.polynomial.duration_s) moving=0U;
-                }
-            } else {
-                robot_joint_positions_t next={0};
-                robot_transform_t sampled_pose;
-                /* IK+selector runs at each exact interpolation index;
-                 * rejects unavailable/limit/singular samples without
-                 * blindly reusing the previous solution. */
-                s=cartesian_trajectory_joint_waypoint(&request.cartesian,
-                    cartesian_index,&last,&next,&sampled_pose);
-                if(s==ROBOT_STATUS_OK)
-                    s=verify_waypoint_fk(r,&next,&sampled_pose);
-                if(s==ROBOT_STATUS_OK) {
-                    double dt=(double)TASK_PERIOD_TRAJECTORY_MS/1000.0;
-                    uint32_t j;
-                    /* Rate discontinuity guard, joint 0.01deg -> deg/s.
-                     * Conservative rejection, not online re-timing. */
-                    for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
-                        double v=fabs((double)next.value[j]-
-                             (double)last.value[j])*
-                             (double)ROBOT_JOINT_ANGLE_UNIT_DEG/dt;
-                        double allowance=(double)ROBOT_JOINT_ANGLE_UNIT_DEG/dt;
-                        if(v>(double)r->config.max_velocity_deg_s.value[j]+
-                             allowance) {
-                            s=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-                            break;
-                        }
-                    }
-                    if(s==ROBOT_STATUS_OK) {
-                        last=next;
-                        if(cartesian_index>=request.cartesian.interval_count)
-                            moving=0U;
-                        else cartesian_index++;
-                    }
-                }
-            }
-            if(s!=ROBOT_STATUS_OK) {
-                cancel_motion(r,s);
+            /* Any control-loop safety fault cancels the entire trajectory.
+             * Do not re-arm merely because the reference queue repeats data. */
+            if(r->abort_requested!=0U) {
+                taskENTER_CRITICAL();
+                r->abort_requested=0U;
+                taskEXIT_CRITICAL();
+                reference.enabled=0U;
+                reference.created_tick=xTaskGetTickCount();
+                (void)xQueueOverwrite(r->reference_queue,&reference);
                 armed=0U;
                 moving=0U;
                 break;
             }
-        }
-        reference.target=last;
-        reference.sequence=++sequence;
-        reference.created_tick=xTaskGetTickCount();
-        reference.enabled=1U;
-        if(xQueueOverwrite(r->reference_queue,&reference)!=pdPASS)
-            motion_record_fault(ROBOT_STATUS_ERROR_INTERNAL,0U);
-        else {
-            taskENTER_CRITICAL();
-            r->diagnostics.trajectory_samples++;
-            taskEXIT_CRITICAL();
-        }
+
+            if(xQueueReceive(r->request_queue,&request,0U)==pdTRUE) {
+                armed=0U;
+                moving=0U;
+                /* Invalidate previously streamed target BEFORE replanning. */
+                reference.enabled=0U;
+                reference.created_tick=xTaskGetTickCount();
+                (void)xQueueOverwrite(r->reference_queue,&reference);
+                s=start_request(r,&request,&joint_plan,&last);
+                if(s!=ROBOT_STATUS_OK) {
+                    cancel_motion(r,s);
+                    break;
+                }
+                mode=request.kind;
+                begun=xTaskGetTickCount();
+                cartesian_index=0U;
+                armed=1U;
+                moving=1U;
+            }
+
+            if(!armed) break;
+
+            /* The planner must also stop on stale feedback; an old trajectory
+             * must not resume at a later, jumped setpoint after reconnect. */
+            {
+                motor_state_observation_t observation;
+                TickType_t now=xTaskGetTickCount();
+                if(motor_state_get_feedback(&observation)!=ROBOT_STATUS_OK ||
+                   !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
+                        (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
+                    cancel_motion(r,ROBOT_STATUS_ERROR_NOT_READY);
+                    armed=0U; moving=0U;
+                    break;
+                }
+            }
+
+            if(moving)
+            {
+                if(mode==MOTION_REQUEST_JOINT) {
+                    trajectory_joint_sample_t sample;
+                    double t=(double)(xTaskGetTickCount()-begun) /
+                        (double)configTICK_RATE_HZ;
+                    s=trajectory_trapezoid_sample(&joint_plan,t,&sample);
+                    if(s==ROBOT_STATUS_OK) {
+                        last=sample.positions;
+                        if(t>=joint_plan.total_time_s) moving=0U;
+                    }
+                } else if(mode==MOTION_REQUEST_POLYNOMIAL) {
+                    trajectory_joint_sample_t sample;
+                    double t=(double)(xTaskGetTickCount()-begun) /
+                        (double)configTICK_RATE_HZ;
+                    uint32_t j;
+                    s=trajectory_polynomial_sample(
+                        &request.polynomial,t,&sample);
+                    if(s==ROBOT_STATUS_OK)
+                        s=motion_limits_check_positions(&sample.positions);
+                    if(s==ROBOT_STATUS_OK) {
+                        for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+                            if(fabs((double)sample.velocities.value[j])>
+                                   (double)r->config.max_velocity_deg_s.value[j] ||
+                               fabs((double)sample.accelerations.value[j])>
+                                   (double)r->config.max_acceleration_deg_s2.value[j]) {
+                                s=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+                                break;
+                            }
+                        }
+                    }
+                    if(s==ROBOT_STATUS_OK) {
+                        last=sample.positions;
+                        if(t>=request.polynomial.duration_s) moving=0U;
+                    }
+                } else {
+                    robot_joint_positions_t next={0};
+                    robot_transform_t sampled_pose;
+                    /* IK+selector runs at each exact interpolation index;
+                     * rejects unavailable/limit/singular samples without
+                     * blindly reusing the previous solution. */
+                    s=cartesian_trajectory_joint_waypoint(&request.cartesian,
+                        cartesian_index,&last,&next,&sampled_pose);
+                    if(s==ROBOT_STATUS_OK)
+                        s=verify_waypoint_fk(r,&next,&sampled_pose);
+                    if(s==ROBOT_STATUS_OK) {
+                        double dt=(double)TASK_PERIOD_TRAJECTORY_MS/1000.0;
+                        uint32_t j;
+                        /* Rate discontinuity guard, joint 0.01deg -> deg/s.
+                         * Conservative rejection, not online re-timing. */
+                        for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+                            double v=fabs((double)next.value[j]-
+                                 (double)last.value[j])*
+                                 (double)ROBOT_JOINT_ANGLE_UNIT_DEG/dt;
+                            double allowance=(double)ROBOT_JOINT_ANGLE_UNIT_DEG/dt;
+                            if(v>(double)r->config.max_velocity_deg_s.value[j]+
+                                 allowance) {
+                                s=ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+                                break;
+                            }
+                        }
+                        if(s==ROBOT_STATUS_OK) {
+                            last=next;
+                            if(cartesian_index>=request.cartesian.interval_count)
+                                moving=0U;
+                            else cartesian_index++;
+                        }
+                    }
+                }
+                if(s!=ROBOT_STATUS_OK) {
+                    cancel_motion(r,s);
+                    armed=0U;
+                    moving=0U;
+                    break;
+                }
+            }
+            reference.target=last;
+            reference.sequence=++sequence;
+            reference.created_tick=xTaskGetTickCount();
+            reference.enabled=1U;
+            if(xQueueOverwrite(r->reference_queue,&reference)!=pdPASS)
+                motion_record_fault(ROBOT_STATUS_ERROR_INTERNAL,0U);
+            else {
+                taskENTER_CRITICAL();
+                r->diagnostics.trajectory_samples++;
+                taskEXIT_CRITICAL();
+            }
         } while(0);
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
         stage4_timing_end(STAGE4_TIMING_TRAJECTORY,timing_start);
