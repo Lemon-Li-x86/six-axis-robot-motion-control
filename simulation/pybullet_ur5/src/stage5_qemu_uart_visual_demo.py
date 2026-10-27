@@ -19,7 +19,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import qemu_uart_receiver as wire
 import stage5_qemu_uart_closed_loop as integration
@@ -218,7 +218,9 @@ def request_diagnostics(sock, name: str) -> None:
 
 
 def run(elf: Path, output_dir: Path, qemu_executable: str,
-        options: DemoOptions) -> dict:
+        options: DemoOptions,
+        on_measurement: Callable[[float, int, tuple[int, ...]], None] | None = None
+        ) -> dict:
     """启动真实 ARM 固件并与 PyBullet 双向交互，返回真实观测统计。"""
     import pybullet as p
 
@@ -398,6 +400,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 row[f"error_{name}_deg"] = (
                                     target - actual) / wire.JOINT_ANGLE_SCALE
                             trace.append(row)
+                            # Optional nonblocking stream of actual PyBullet
+                            # measurements. The receiver must never render or
+                            # wait here: UART feedback has already been sent.
+                            if on_measurement is not None:
+                                on_measurement(
+                                    row["simulated_time_s"], row["segment"],
+                                    tuple(measured),
+                                )
 
                             if sequencer.observe(measured):
                                 print(f"[SETTLED] Segment {sequencer.completed}/"
