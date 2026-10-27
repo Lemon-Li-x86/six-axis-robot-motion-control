@@ -41,6 +41,9 @@ TRIAL_GOALS = {
     "six_axis": (3050, -4300, 6100, 2050, 550, -900),
 }
 COUNT = len(JOINT_NAMES)
+# Trial-acceptance and physics defaults, not production control settings.
+DEFAULT_FINAL_ERROR_DEG = 0.25
+DEFAULT_PHYSICS_DT_S = 0.001
 IntJoints = ctypes.c_int32 * COUNT
 # Six rows of (Kp, Ki, Kd); this is a host-only test ABI.
 PidGains = (ctypes.c_double * 3) * COUNT
@@ -282,11 +285,11 @@ def main() -> int:
                         help="Path to freshly built Stage4 C shared library")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage4-closed-loop")
-    parser.add_argument("--max-final-error-deg", type=float, default=0.25,
+    parser.add_argument("--max-final-error-deg", type=float, default=DEFAULT_FINAL_ERROR_DEG,
                         help="Simulation acceptance criterion, not firmware config")
     parser.add_argument("--max-overshoot-j2-deg", type=float, default=0.15)
     parser.add_argument("--max-tracking-rmse-j2-deg", type=float, default=0.25)
-    parser.add_argument("--physics-dt-s", type=float, default=0.001)
+    parser.add_argument("--physics-dt-s", type=float, default=DEFAULT_PHYSICS_DT_S)
     parser.add_argument("--scenario", choices=tuple(TRIAL_GOALS),
                         default="joint2")
     parser.add_argument("--kp-scale", type=float, default=1.0,
