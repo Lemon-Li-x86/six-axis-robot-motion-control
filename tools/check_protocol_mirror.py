@@ -64,12 +64,12 @@ def main() -> None:
     if module.MOVE_ACK_PAYLOAD_LEN != 2:
         raise AssertionError("Move admission ACK payload drift")
     if not re.search(
-        r"#define\\s+PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN\\s+"
-        r"\\(1U\\s*\\+\\s*PROTOCOL_JOINT_PAYLOAD_LEN\\)", protocol
+        r"#define\s+PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN\s+"
+        r"\(1U\s*\+\s*PROTOCOL_JOINT_PAYLOAD_LEN\)", protocol
     ):
         raise AssertionError("C move request wire schema changed")
     if not re.search(
-        r"#define\\s+PROTOCOL_MOVE_ACK_PAYLOAD_LEN\\s+2U", protocol
+        r"#define\s+PROTOCOL_MOVE_ACK_PAYLOAD_LEN\s+2U", protocol
     ):
         raise AssertionError("C move ACK wire schema changed")
 
