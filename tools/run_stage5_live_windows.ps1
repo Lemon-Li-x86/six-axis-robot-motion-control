@@ -2,7 +2,7 @@ param(
     [string]$Python = "$PSScriptRoot/../.venv/Scripts/python.exe",
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-live-windows",
-    [Nullable[double]]$DiagnosticsTimeoutSeconds = $null,
+    [double]$DiagnosticsTimeoutSeconds = 0,  # 0 means use the Python default (5 s).
     [switch]$ObserveHold,
     [switch]$NoHold
 )
@@ -18,10 +18,15 @@ try {
         "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2")
     if ($NoHold) { $liveArgs += "--no-hold" }
     if ($ObserveHold) { $liveArgs += "--observe-hold" }
-    if ($null -ne $DiagnosticsTimeoutSeconds) {
-        $liveArgs += @("--diagnostics-timeout-s",
-            $DiagnosticsTimeoutSeconds.Value.ToString(
-                [System.Globalization.CultureInfo]::InvariantCulture))
+    if ($DiagnosticsTimeoutSeconds -ne 0) {
+        if ($DiagnosticsTimeoutSeconds -lt 5 -or $DiagnosticsTimeoutSeconds -gt 60) {
+            throw "DiagnosticsTimeoutSeconds must be between 5 and 60 seconds."
+        }
+        # PowerShell binds [double] as a scalar, not as Nullable<T>. Do not
+        # access .Value; serialize with invariant culture for argparse.
+        $timeoutArg = $DiagnosticsTimeoutSeconds.ToString(
+            [System.Globalization.CultureInfo]::InvariantCulture)
+        $liveArgs += @("--diagnostics-timeout-s", $timeoutArg)
     }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
     & $Python @liveArgs
