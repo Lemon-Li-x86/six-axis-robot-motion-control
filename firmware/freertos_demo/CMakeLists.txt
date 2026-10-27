@@ -497,6 +497,19 @@ option(ROBOT_ENABLE_STAGE4_TASKS
     "Create Stage 4 trajectory, control and monitor FreeRTOS tasks" OFF)
 option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
     "Enable experimental Stage 4 PID targets to motor_state (sim only)" OFF)
+# This switch is only for the QEMU↔PyBullet UART integration acceptance.
+# Unlike the Stage4 synthetic smoke, target output must reach the virtual
+# UART, so BOTH flags must be deliberately enabled. Never use on hardware.
+option(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    "Test-only inbound motion requests and virtual UART command output" OFF)
+if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
+    if(NOT ROBOT_ENABLE_STAGE4_TASKS OR
+       NOT ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT OR
+       ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+        message(FATAL_ERROR
+            "Stage5 QEMU UART test requires TASKS=ON, virtual OUTPUT=ON, STAGE4_SELFTEST=OFF")
+    endif()
+endif()
 option(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
     "QEMU-only synthetic feedback/planner/PID smoke, command output forced OFF" OFF)
 set(ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS "1200" CACHE STRING
@@ -524,6 +537,7 @@ endif()
 target_compile_definitions(freertos_demo PRIVATE
     ROBOT_ENABLE_STAGE4_TASKS=$<BOOL:${ROBOT_ENABLE_STAGE4_TASKS}>
     ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=$<BOOL:${ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT}>
+    ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=$<BOOL:${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION}>
 )
 if(ROBOT_ENABLE_STAGE4_TASKS)
     target_sources(freertos_demo PRIVATE
