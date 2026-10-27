@@ -45,3 +45,13 @@
 - `.github/workflows/stage5-system-integration.yml`：Stage5 CTest + 既有 Stage3/4 Host回归。
 
 这些源码在第五阶段新分支上开发、单独测试，**尚未**接入完整轨迹、UART、FreeRTOS或PyBullet闭环；不允许将测试构建成功误记为集成完成。
+
+## 5. 第五阶段首轮 CI 实际证据（2026-10-27）
+
+[GitHub Actions Run #40427456854](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40427456854) 对应 Stage5 **首批已提交的C避障内核与PyBullet静态长方体探针**：
+
+- `native-stage5-and-stage4-regression`：success。Stage5 APF严格C11编译与输入安全测试通过，并重新执行既有Stage3/4全部6个原生Host回归。
+- `pybullet-static-cuboid-c-apf`：success。PyBullet DIRECT加载UR5和真实静态长方体碰撞体，调用 `getAABB()` 将几何交给与固件同源的C APF共享库，计算下一航点，并记录JSON诊断。
+- 云端探针实测：`actual_step_mm=20.000000000000046`（数值舍入误差内符合20mm上限），最近表面距离`105.0mm`，`passed=true`。**只进行一段末端点无驱动航点计算，没有移动整台UR5。**
+
+此证据仅证明“静态场景输入→真实C APF单步→边界与单元回归”首个垂直切片成立。后续还需要完整路径、真实六连杆碰撞检测、IK选解、时间参数化、UART/RTOS数据链路与故障处理后，才能称第5阶段避障功能完成。
