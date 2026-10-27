@@ -17,6 +17,9 @@
 #include "motion_limits.h"
 #include "angle_utils.h"
 #include "robot_model.h"
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+#include "stage4_timing_probe.h"
+#endif
 
 static void task_control(void *arg)
 {
@@ -47,6 +50,11 @@ static void task_control(void *arg)
         const robot_model_t *model;
 
         vTaskDelayUntil(&last_wake,(period==0U)?1U:period);
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_CONTROL);
+#endif
+        /* Always sample after a fault/empty-reference early exit. */
+        do {
         now=xTaskGetTickCount();
         dt=(double)(now-previous_tick)/(double)configTICK_RATE_HZ;
         previous_tick=now;
@@ -57,14 +65,14 @@ static void task_control(void *arg)
                 joint_controller_reset(&controller);
             } else active=1U;
         }
-        if(!active) continue;
+        if(!active) break;
 
         if((now-reference.created_tick)>
              pdMS_TO_TICKS(r->config.reference_timeout_ms)) {
             motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
             active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
-            continue;
+            break;
         }
         status=motor_state_get_feedback(&observation);
         if(status!=ROBOT_STATUS_OK ||
@@ -76,7 +84,7 @@ static void task_control(void *arg)
             motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
             active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
-            continue;
+            break;
         }
         status=joint_controller_step(&controller,&reference.target,
              &observation.feedback.unwrapped_positions,dt,&correction);
@@ -84,7 +92,7 @@ static void task_control(void *arg)
             motion_record_fault(status,1U);
             active=0U; joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
-            continue;
+            break;
         }
         /*
          * The pure limiter owns fractional command state, applies BOTH
@@ -106,7 +114,7 @@ static void task_control(void *arg)
             active=0U;
             joint_command_limiter_reset(&limiter);
             joint_controller_reset(&controller);
-            continue;
+            break;
         }
         status=motion_limits_check_positions(&candidate);
         if(status==ROBOT_STATUS_OK)
@@ -114,7 +122,7 @@ static void task_control(void *arg)
         if(status!=ROBOT_STATUS_OK) {
             motion_record_fault(status,1U);
             active=0U; joint_command_limiter_reset(&limiter);
-            continue;
+            break;
         }
 
 #if ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
@@ -122,7 +130,7 @@ static void task_control(void *arg)
         if(status!=ROBOT_STATUS_OK) {
             motion_record_fault(status,1U);
             active=0U; joint_command_limiter_reset(&limiter);
-            continue;
+            break;
         }
 #else
         (void)canonical; /* algorithm/task dry-run; no actuator commands */
@@ -130,6 +138,10 @@ static void task_control(void *arg)
         taskENTER_CRITICAL();
         r->diagnostics.controller_steps++;
         taskEXIT_CRITICAL();
+        } while(0);
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        stage4_timing_end(STAGE4_TIMING_CONTROL,timing_start);
+#endif
     }
 }
 
