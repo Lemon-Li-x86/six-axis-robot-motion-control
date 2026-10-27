@@ -101,7 +101,7 @@ class LiveMeasurements:
         if (not math.isfinite(stamp) or stamp < 0 or
                 not 0 <= segment <= len(SCENARIOS["six_axis"]) or
                 len(raw) != len(JOINT_NAMES) or
-                any(not isinstance(v, int) for v in raw)):
+                any(type(v) is not int for v in raw)):
             raise ValueError("Invalid live measurement from worker")
         self.frames_received += 1
         if worker_alive:
