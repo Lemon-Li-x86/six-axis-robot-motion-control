@@ -134,6 +134,20 @@ def run_matrix(library: Path, output_dir: Path) -> dict:
         writer.writeheader()
         writer.writerows(rows)
 
+    # Emit the measured reason a trial missed the ORIGINAL small-step policy.
+    # These exploratory observations are not automatically production failures.
+    for row in rows:
+        if row["integration_executed"] and row["baseline_acceptance_passed"] is False:
+            print(
+                "[OUTSIDE_BASELINE_POLICY] "
+                f"{row['scenario']} force={row['motor_force_n_m']} "
+                f"gains={row['profile']} "
+                f"final={row['max_final_error_deg']:.4f}deg "
+                f"J2_RMSE={row['j2_rmse_deg']:.4f}deg "
+                f"J2_overshoot={row['j2_overshoot_deg']:.4f}deg",
+                flush=True,
+            )
+
     nominal = next(
         r for r in rows
         if r["scenario"] == NOMINAL_SCENARIO
