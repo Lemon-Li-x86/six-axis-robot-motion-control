@@ -52,3 +52,13 @@
 - **架构风险点**：`stage5_qemu_uart_visual_demo.py` 每收到一个 UART 目标帧，在同一个阻塞轮询中运行 10 次 PyBullet 步进、生成反馈再读取下一批串口数据；原生 GUI 的渲染/鼠标交互可能放大积压。C 的 `protocol_commands.c` 通过 `uart_tx_manager_send_frame()` 提交诊断响应，但忽略返回状态；缓冲区满时可能静默丢失诊断响应。此两点目前仅为**源码级候选原因**。
 - **只加取证，不改控制**：在 Python 复用已存在的 C 协议 `DIAGNOSTICS_METRIC_RX_DROP_COUNT=0`，以 `uart_rx_dropped_bytes` 查询 UART RX 溢出，并在 `uart_live.jsonl` 输出 `uart_batch_delay` 事件（帧数、处理墙钟耗时和 ACK 滞后），不降低 UART 频率、不丢弃目标帧、不掩盖故障、不修改 FreeRTOS/PID/URDF。补丁提交 `612b02fa`、`8ad479fc`。
 - **下一步验证**：如 RX 丢字节快速增加，检查控制器调度/输入环形缓冲区；如处理批次耗时长且 ACK 滞后增加，检查 GUI 同步物理步进造成的 UART 积压；如两者正常却诊断丢失，再审查 TX 缓冲与诊断回包发送返回值。不能简单增大超时宣称已修复。
+
+
+### 2026-10-27 S5-013 第二轮日志与定向优化（待 Windows 验收）
+
+- **无需拖拽即可复现**：Windows `p.GUI --opengl2 --no-hold`，`segments_settled=0`，在 `monitoring_ticks` 查询超时退出；最后 `target_frames=730`, `feedback_acks=382`、`uart_rx_dropped_bytes=0`（历史查询）。
+- **实际积压实证**：同一 `uart_live.jsonl` 中 `uart_batch_delay` 由 26帧/0.172s -> 73帧/0.750s -> 109帧/1.563s -> 236帧/3.953s -> **481帧/7.172s**。接收与GUI物理推进在同一线程串行，吞吐低于固件持续输出时，处理大批次阻塞诊断超时检查。此处是可观测的同步批处理瓶颈，不等价于已经证明某条UART帧丢失。
+- **关键对照**：同机 Windows `--headless-observer --no-hold` 获得 `passed=true`，`segments_settled=3`，末端误差最高0.07°，`target_frames=640`, `feedback_acks=641`, `uart_rx_dropped_bytes=0`, 三类固件故障均0。问题高度关联GUI路径，而非基本C运动算法。
+- **定向优化 `c1ff3e83`**：保留权威的 `FEEDBACK_STEP_S=0.01s`、`PHYSICS_STEP_S=0.001s`。GUI通过Bullet原生 `setPhysicsEngineParameter(numSubSteps=10)` 使每个UART帧**仅调用一次** `stepSimulation()`，而该调用内部仍积分10个1ms子步；原来的10次跨GUI线程命令成为1次。DIRECT原有10次1ms步进不变。启动预热总物理时间同为0.1秒。调试轨迹显示已独立节流到10Hz。
+- **回归 `602a4b02`**：采用Mock检查两种模式调用步长、子步和启动预热步数。**这项Mock测试不等同于Windows GUI端到端性能通过。**
+- **后续验收**：先执行仅GUI无鼠标的三段闭环并检查 `uart_batch_delay` 是否消失、`target_frames-feedback_acks` 是否不再持续增长、`result.json.passed`。不合格时再排查原生OpenGL2、UART实时协调，不可宣称拖拽恢复通过。
