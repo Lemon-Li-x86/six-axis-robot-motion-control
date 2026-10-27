@@ -23,6 +23,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     FEEDBACK_STEP_S,
     TRACE_HEADER,
     configure_physics_stepping,
+    assess_clock_alignment,
     joint_feedback_frame,
     validate_goals,
     write_trace,
@@ -31,6 +32,19 @@ import qemu_uart_receiver as wire  # noqa: E402
 
 
 class MotionSequencerTests(unittest.TestCase):
+    def test_physics_time_must_match_firmware_trajectory_samples(self) -> None:
+        # DIRECT reference: 319 * 20ms ~= 640 * 10ms physical integration.
+        ratio, accepted = assess_clock_alignment(319, 640, 0.020)
+        self.assertTrue(accepted)
+        self.assertAlmostEqual(ratio, 0.996875)
+        # Native GUI reference: a visually settled end pose must not
+        # conceal ~7.24s of RTOS trajectories vs only ~1.96s of physics.
+        ratio, accepted = assess_clock_alignment(362, 196, 0.020)
+        self.assertFalse(accepted)
+        self.assertGreater(ratio, 3.0)
+        self.assertEqual(assess_clock_alignment(None, 100, 0.020),
+                         (None, False))
+
     def test_gui_native_substeps_preserve_physics_interval_and_reduce_api_calls(self) -> None:
         """Native GUI gets one API call per UART frame, with 1ms internal steps."""
         from unittest.mock import Mock
