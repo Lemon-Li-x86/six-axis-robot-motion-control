@@ -76,6 +76,27 @@ static void test_pid(void)
     cfg.kp=-1.0F;
     ASSERT(pid_init(&pid,&cfg)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
 }
+/* Stage4 PDF explicitly requires independently configurable D gain.
+ * A derivative-only controller must NEVER create a spurious impulse
+ * merely because a nonzero error remains constant for two samples. */
+static void test_pid_derivative_startup(void)
+{
+    pid_config_t cfg={0.0F,0.0F,0.5F,10.0F,100.0F,0.0F};
+    pid_controller_t pid={0};
+    robot_real_t correction=-999.0F;
+    ASSERT(pid_init(&pid,&cfg)==ROBOT_STATUS_OK);
+    ASSERT(pid_step(&pid,1.0,0.0,0.1,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction)<1e-6);
+    /* Same error: derivative remains zero after initialization. */
+    ASSERT(pid_step(&pid,1.0,0.0,0.1,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction)<1e-6);
+    /* A step down in error should change output, then settle at zero. */
+    ASSERT(pid_step(&pid,0.5,0.0,0.1,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction+2.5)<1e-5);
+    ASSERT(pid_step(&pid,0.5,0.0,0.1,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction)<1e-5);
+}
+
 static void test_joint_wrapper(void)
 {
     pid_config_t gains[ROBOT_JOINT_COUNT]={{0}};
@@ -96,7 +117,7 @@ static void test_joint_wrapper(void)
 }
 int main(void)
 {
-    test_line();test_arc();test_so3();test_pid();test_joint_wrapper();
+    test_line();test_arc();test_so3();test_pid();test_pid_derivative_startup();test_joint_wrapper();
     printf("Cartesian and PID checks: %u failures / %u\n",failed,checks);
     return failed==0U?0:1;
 }
