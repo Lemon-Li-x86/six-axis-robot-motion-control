@@ -340,6 +340,50 @@ robot_status_t protocol_parse_joint_state(
 }
 
 
+/* Stage5 simulation move requests are never decoded as feedback. Only
+ * canonical signed six-axis values use the existing 0.01-degree encoding.
+ * Payload shares the authoritative constants, not a second angle scale. */
+robot_status_t protocol_parse_joint_move_request(
+    const protocol_frame_t *frame,
+    uint8_t *sequence,
+    robot_joint_angles_t *canonical_goal)
+{
+    robot_joint_angles_t tmp={{0}};
+    uint32_t i;
+    if(frame==NULL || sequence==NULL || canonical_goal==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(frame->command!=CMD_REQUEST_JOINT_MOVE)
+        return ROBOT_STATUS_ERROR_INVALID_COMMAND;
+    if(frame->length!=PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN)
+        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
+    for(i=0U;i<ROBOT_JOINT_COUNT;i++) {
+        uint16_t raw=(uint16_t)frame->payload[1U+2U*i]
+          | ((uint16_t)frame->payload[2U+2U*i]<<8U);
+        tmp.value[i]=(robot_joint_angle_t)raw;
+        if(tmp.value[i] < -ROBOT_JOINT_HALF_TURN_RAW ||
+           tmp.value[i] >= ROBOT_JOINT_HALF_TURN_RAW)
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    }
+    *sequence=frame->payload[0];
+    *canonical_goal=tmp;
+    return ROBOT_STATUS_OK;
+}
+
+robot_status_t protocol_build_joint_move_ack_frame(
+    uint8_t sequence,
+    robot_status_t status,
+    uint8_t frame[PROTOCOL_MOVE_ACK_FRAME_LEN])
+{
+    uint8_t payload[PROTOCOL_MOVE_ACK_PAYLOAD_LEN];
+    if(frame==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(status<INT8_MIN || status>INT8_MAX)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    payload[0]=sequence;
+    payload[1]=(uint8_t)((int8_t)status);
+    return protocol_build_frame(CMD_JOINT_MOVE_ACK,payload,
+        PROTOCOL_MOVE_ACK_PAYLOAD_LEN,frame);
+}
+
 /* =========================================================
  * Parameter Protocol
  * ========================================================= */
