@@ -103,10 +103,6 @@ robot_status_t robot_apf_step(
             hi[axis]=raw_hi+config->clearance_mm;
             if(!isfinite(lo[axis]) || !isfinite(hi[axis]))
                 return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
-            /* Goal must not be inside any inflated cuboid. */
-            if(goal->mm[axis]<lo[axis] || goal->mm[axis]>hi[axis]) {
-                /* Mark one outside axis via a later box-wide check. */
-            }
             away[axis]=current->mm[axis]-
                 clamp_double(current->mm[axis],lo[axis],hi[axis]);
             distance_squared+=away[axis]*away[axis];
@@ -137,9 +133,11 @@ robot_status_t robot_apf_step(
     info.nearest_surface_distance_mm=nearest_distance;
 
     if(goal_distance<=config->goal_tolerance_mm) {
-        candidate=*goal;
+        /* Within tolerance: hold position; do not jump farther than a
+         * configured step merely to snap to an exact floating-point goal. */
+        candidate=*current;
         info.reached_goal=1U;
-        step_length=goal_distance;
+        step_length=0.0;
     } else {
         for(axis=0U;axis<3U;++axis)
             force[axis]+=config->attraction_gain*
