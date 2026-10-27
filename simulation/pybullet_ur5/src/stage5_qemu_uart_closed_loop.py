@@ -235,9 +235,9 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 angles_raw(p, arm, joints)[1] / 100.0 - first_sim_joint2_deg)
             accepted = move_ack_status == 0
             debug_pass = (
-                diagnostics.get("requests_accepted",0) >= 1 and
-                diagnostics.get("trajectory_samples",0) > 0 and
-                diagnostics.get("controller_steps",0) > 0 and
+                (diagnostics.get("requests_accepted") or 0) >= 1 and
+                (diagnostics.get("trajectory_samples") or 0) > 0 and
+                (diagnostics.get("controller_steps") or 0) > 0 and
                 diagnostics.get("controller_faults") == 0 and
                 diagnostics.get("planner_faults") == 0
             )
