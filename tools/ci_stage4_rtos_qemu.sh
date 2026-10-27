@@ -30,6 +30,7 @@ target remote localhost:1234
 break stage4_rtos_selftest_done
 continue
 printf "finished=%u\n", g_stage4_rtos_test_finished
+printf "healthy_duration_ms=%u\n", g_stage4_rtos_healthy_duration_ms
 printf "checks=%u\n", g_stage4_rtos_test_report.checks
 printf "failed=%u\n", g_stage4_rtos_test_report.failed
 printf "accepted=%u\n", g_stage4_rtos_test_report.requests_accepted
@@ -78,7 +79,7 @@ if ! kill -0 "$qemu_pid" 2>/dev/null; then
 fi
 
 set +e
-timeout 100s gdb-multiarch -nx -batch -x "$gdb_script" "$elf" > "$out" 2>&1
+timeout "${STAGE4_QEMU_GDB_TIMEOUT_SEC:-100}s" gdb-multiarch -nx -batch -x "$gdb_script" "$elf" > "$out" 2>&1
 result=$?
 set -e
 cat "$out"
@@ -88,6 +89,9 @@ if [[ "$result" -ne 0 ]]; then
 fi
 grep -Eq '^Breakpoint [0-9]+, stage4_rtos_selftest_done' "$out"
 grep -qx 'finished=1' "$out"
+if [[ -n "${STAGE4_QEMU_EXPECT_HEALTHY_MS:-}" ]]; then
+    grep -qx "healthy_duration_ms=${STAGE4_QEMU_EXPECT_HEALTHY_MS}" "$out"
+fi
 grep -qx 'checks=29' "$out"
 grep -qx 'failed=0' "$out"
 grep -qx 'accepted=1' "$out"
