@@ -27,6 +27,12 @@ jobs:
             -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Verify production UART parser against corrupt, partial and lost-byte streams
+        run: |
+          cmake -S firmware/freertos_demo/tests/host \
+            -B build/stage5-host -G Ninja
+          cmake --build build/stage5-host
+          ctest --test-dir build/stage5-host --output-on-failure
       - name: Re-run unchanged Stage3/4 native contract suite
         run: |
           cmake -S firmware/freertos_demo/tests/trajectory \
