@@ -29,11 +29,10 @@
  *
  * 注意：
  *
- * 当前只有 ProtocolRX 和 ProtocolTX
- * 任务实际创建并运行。
- *
- * 其他任务参数属于预留配置，
- * 并不意味着对应功能已经完成。
+ * ProtocolRX / ProtocolTX 仍照常创建；Stage4的 Control、
+ * Trajectory 和 Monitor 仅在 ROBOT_ENABLE_STAGE4_TASKS=ON
+ * 时由 motion_pipeline_start() 创建。
+ * 所有任务堆栈和周期仍只有同一份JSON默认配置。
  */
 
 #ifndef TASK_CONFIG_H
@@ -69,7 +68,7 @@
 
 /*
  * Control：
- * 未来 PID / Motion Control Task。
+ * Stage4 PID / Motion Control Task（按编译门控启用）。
  */
 #define TASK_PRIORITY_CONTROL \
     FW_DEFAULT_TASK_PRIORITY_CONTROL
@@ -168,9 +167,9 @@
  *
  * JSON 中保存的是 words。
  *
- * 当前只定义初始预留值，
- * 后续仍需通过 High Water Mark
- * 实测栈使用量。
+ * 这些值是JSON声明的静态栈分配。
+ * 阶段4 QEMU诊断通过 uxTaskGetStackHighWaterMark()
+ * 记录高水位，但短时数据不是最坏情况下的栈上界。
  */
 
 /*
