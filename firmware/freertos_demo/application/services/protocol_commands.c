@@ -283,6 +283,37 @@ static robot_status_t get_diagnostics_value(
             break;
     }
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    /* Existing UART diagnostic frame; QEMU test only extends selectors,
+     * with all values read from the authoritative motion pipeline. */
+    if(selector>=DIAGNOSTICS_METRIC_MOTION_ACCEPTED &&
+       selector<=DIAGNOSTICS_METRIC_MOTION_LAST_FAULT)
+    {
+        motion_stage4_diagnostics_t motion={0};
+        status=motion_pipeline_get_diagnostics(&motion);
+        if(status!=ROBOT_STATUS_OK) return status;
+        switch(selector) {
+            case DIAGNOSTICS_METRIC_MOTION_ACCEPTED:
+                *value=motion.requests_accepted; break;
+            case DIAGNOSTICS_METRIC_TRAJECTORY_SAMPLES:
+                *value=motion.trajectory_samples; break;
+            case DIAGNOSTICS_METRIC_CONTROLLER_STEPS:
+                *value=motion.controller_steps; break;
+            case DIAGNOSTICS_METRIC_CONTROLLER_FAULTS:
+                *value=motion.controller_faults; break;
+            case DIAGNOSTICS_METRIC_PLANNER_FAULTS:
+                *value=motion.planner_faults; break;
+            case DIAGNOSTICS_METRIC_FEEDBACK_STALE:
+                *value=motion.feedback_stale_count; break;
+            case DIAGNOSTICS_METRIC_MOTION_LAST_FAULT:
+                *value=(uint32_t)(int32_t)motion.last_fault; break;
+            default:
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        }
+        return ROBOT_STATUS_OK;
+    }
+#endif
+
     /* Unknown selectors must not trigger an unnecessary metrics snapshot. */
     switch (selector)
     {
