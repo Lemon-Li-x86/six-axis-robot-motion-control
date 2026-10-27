@@ -87,3 +87,11 @@
 - **撤回流控**：`72b03aee` 在唯一生产 `firmware/freertos_demo/application/protocol_tasks.c` 中精确恢复流控前源码，不改变PID与URDF。
 - **验收加固**：`c38a971c`、`96453585` 添加每次 C `trajectory_samples` × JSON唯一参数源中的20ms 与 PyBullet物理时间比值，默认差异超过25%就记录 `clock_alignment_failed` 和 `passed=false`；这一量只是任务样本数对应的**名义时间估计**，并非高精度硬件计时，但足以揭示上面的3～4倍明显错位。旧版 DIRECT 用户实测 319样本×20ms=6.38s 与6.40s物理时间匹配。
 - **当前结论**：最强实证是**GUI/QEMU异步时间轴不对齐导致闭环动态不能被现有终点误差证明**；Windows大幅振荡的每关节时域根因仍须用用户失败的`joint_trace.csv`查证。解决方向需让QEMU虚拟控制时钟与实际物理步进一致、或明确拆分可验证的DIRECT控制物理与异步GUI交互；不能再用目标帧背压或视觉帧节流代替正确的同步设计。
+
+
+### 2026-10-28 S5-013 修复候选：QMP 暂停虚拟时钟期间执行物理批次
+
+- **修复分支**：`fix/stage5-qmp-physics-clock-gate-20261028`，基于 `2dfb19e`；源分支和备份均未直接更改。
+- **修改范围**：`simulation/pybullet_ur5/src/qemu_clock_gate.py` 新增标准 QMP 控制接口，`stage5_qemu_uart_visual_demo.py` 在消费 UART 目标帧对应的 PyBullet 物理批次前调用 `stop`，确认 `query-status=paused`，批次结束后 `cont` 并确认运行。即使 Python 物理回调抛错也尝试恢复运行；故障会使本次测试失败。仅限 Stage5 QEMU 仿真平台，不改 PID、轨迹规划、URDF、数据源或真实电机的调度路径。
+- **设计边界**：这是针对“物理引擎阻塞时固件虚拟时钟继续推进”的时间门控，不是声称 QEMU 与 PyBullet 已获得精确硬实时锁步。QMP 交互发生在已收到 UART 帧之后，不能消除停机前已排队的旧数据；因此继续保留最终时间比值、故障计数与慢消费端测试，不得仅凭终点误差验收。
+- **回归**：`tools/tests/test_stage5_visual_demo.py` 新增 QMP 停/启与物理异常时恢复的模拟测试；现有 Actions `stage5-live-gui.yml` 对新分支运行 Linux/Windows 单元测试、固件回归、原生 GUI 无拖拽、真实 QEMU/UART 三段闭环及 18ms 处理延迟。首轮 CI：<https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809>。应逐项查看测试步骤；外部力扰动仍为独立问题，Windows 本机原生鼠标拖拽回位仍需独立验收。
