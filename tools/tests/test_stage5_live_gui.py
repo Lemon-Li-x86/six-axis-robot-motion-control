@@ -104,6 +104,48 @@ class LiveTransportTests(unittest.TestCase):
         self.assertTrue(captured["options"].opengl2)
         self.assertTrue(captured["options"].interactive_hold)
 
+    def test_passive_hold_preserves_failed_convergence_without_aborting(self):
+        """Observation completion is distinct from physical PASS."""
+        report = dict(passed=False, segments_settled=3, segments_requested=3,
+                      bad_checksum_frames=0, hold_final_error_deg=17.0,
+                      fault_counters=dict(controller_faults=0, planner_faults=0,
+                                          feedback_stale_count=0))
+        observed = []
+        def fake_run(elf, output, qemu, options, **kwargs):
+            observed.append(options)
+            return report
+
+        with (tempfile.TemporaryDirectory() as output,
+              patch("stage5_qemu_uart_live_gui.os.dup2"),
+              patch("stage5_qemu_uart_live_gui.sys.stdout", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.sys.stderr", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.run", side_effect=fake_run),
+              patch("faulthandler.enable") as enable):
+            capture_worker("unused.elf", output, "qemu", "six_axis", 60,
+                           Mock(), Mock(), interactive=True,
+                           observe_hold=True, diagnostics_timeout_s=30.0)
+            enable.call_args.args[0].close()
+        self.assertEqual(observed[0].diagnostics_timeout_s, 30.0)
+        self.assertTrue(observed[0].hold_observe_only)
+        self.assertFalse(report["passed"])
+
+    def test_passive_hold_never_ignores_firmware_faults(self):
+        """Observation mode must not swallow real RTOS control failures."""
+        report = dict(passed=False, segments_settled=3, segments_requested=3,
+                      bad_checksum_frames=0,
+                      fault_counters=dict(controller_faults=1, planner_faults=0))
+        with (tempfile.TemporaryDirectory() as output,
+              patch("stage5_qemu_uart_live_gui.os.dup2"),
+              patch("stage5_qemu_uart_live_gui.sys.stdout", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.sys.stderr", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.run", return_value=report),
+              patch("faulthandler.enable") as enable):
+            with self.assertRaisesRegex(RuntimeError, "physics verdict failed"):
+                capture_worker("unused.elf", output, "qemu", "six_axis", 60,
+                               Mock(), Mock(), interactive=True,
+                               observe_hold=True, diagnostics_timeout_s=30.0)
+            enable.call_args.args[0].close()
+
     def test_headless_disturbance_uses_pybullet_torque_not_mouse_ipc(self):
         """A repeatable software force tests recovery without synthetic picking."""
         class Bullet:
