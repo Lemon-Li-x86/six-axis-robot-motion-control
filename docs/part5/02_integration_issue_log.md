@@ -71,3 +71,9 @@
 - **最小修复 `9a4bca1c`**：仅当编译宏 `ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION` 开启时，`task_protocol_tx()` 才按现有 `motor_state_observation_t.feedback.sample_sequence` 的真实被接受反馈变化发给 GUI **最多一个**新 UART 目标帧；没有新反馈时仍保持10ms调度，但不重复发目标；如完整 UART 目标帧无法入 TX Ring Buffer，不消耗该次信用，下一周期重试。无需新增全局状态、协议命令、PID或限位常量；真实固件路径原样。**这不代表无限等待或禁用安全门禁。**
 - **自动压测 `19ae5318`、`5e5b5296`**：在 DIRECT 下主动模拟每帧18ms额外工作耗时，保持 PyBullet 真实10个1ms物理步进和实际 QEMU/FreeRTOS/UART反馈，用于测试生产者不会因慢消费者而积攒历史命令。Windows/Linux workflow 在原有 3段 DIRECT 验收后再运行压测并保留产物。需确认真实 CI 结果；与 `p.GUI --opengl2` Windows 鼠标交互不可划等号。
 - **仍待验证**：校验新固件 DIRECT 基准及慢消费者压测，之后才应由用户本机执行单次 **GUI 无拖拽** 复验；大扰动抓取与回位必须单独验收，不能通过增加 GUI 超时宣称问题解决。旧版 `0.07°` 终点误差仅为修改流控前的 DIRECT 基线。
+
+
+#### 2026-10-28 验证进度更新
+- <https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40538029092> Linux CI：C固件编译、三段 DIRECT 闭环、`--headless-step-delay-ms 18` 慢消费端压力测试均 **success**；UART流控至少在此环境没有破坏正常闭环，且压力条件下可以完结。
+- 同一 Linux CI 中原有三次 PyBullet 外部转矩注入/回位断言为 **failure**。历史记录证明该测试的外力未产生预期位移（`peak_displacement_deg` 过小），不可将它视为大幅拖拽回位验收。完整 workflow 结论因此仍为 failure，不隐瞒。
+- 同轮 Windows CI 安装/运行步骤尚未得到最终结果；Windows 原生 `p.GUI` 鼠标拾取、大扰动、实际回位不属于 CI DIRECT 验证范围，必须另行确认。
