@@ -178,7 +178,8 @@ def capture_worker(
         if clean_observation and report.get("passed") is not True:
             print("[OBSERVE] Finished outside target tolerance; result.json passed=false",
                   flush=True)
-        print(f"[LIVE] PASS {report['segments_settled']}/"
+        verdict = "PASS" if report.get("passed") is True else "OBSERVED (NOT PASS)"
+        print(f"[LIVE] {verdict} {report['segments_settled']}/"
               f"{report['segments_requested']} segments", flush=True)
     except Exception:
         traceback.print_exc()
