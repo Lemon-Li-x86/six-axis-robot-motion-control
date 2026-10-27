@@ -24,7 +24,8 @@ from stage4_dynamic_closed_loop import (
 )
 
 GOAL_RAW = (3000, -4400, 6000, 2000, 500, -1000)
-SIM_DURATION_S = 9.0
+MAX_WALL_DURATION_S = 50.0
+MAX_TARGET_FRAMES = 130
 PHYSICS_DT_S = 0.001
 FEEDBACK_PERIOD_S = 0.01
 MIN_JOINT_MOVEMENT_DEG = 0.20
@@ -132,25 +133,27 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
 
             incoming = FrameStream()
             started = time.monotonic()
-            last_send = started - FEEDBACK_PERIOD_S
             received_targets = 0
             received_feedback_acks = 0
             move_ack_status = None
             move_request_sent = False
             max_target_change_deg = 0.0
-            first_sim_joint2_deg = angles_raw(p, arm, joints)[1] / 100
+            first_sim_joint2_deg = angles_raw(p, arm, joints)[1] / 100.0
             output = []
             tx_frames = 0
             seq = 41
-            tick = 0
             diag_items = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS.items())
             diag_index = 0
             diag_pending = None
             diag_sent_at = 0.0
             diagnostics = {}
 
-            while time.monotonic() - started < SIM_DURATION_S:
-                tick_start = time.monotonic()
+            # QEMU can run its virtual Cortex-M4 MUCH slower than host wall
+            # time. Each firmware ProtocolTX frame represents a real
+            # scheduled CONTROL PERIOD on the emulated RTOS. Physics and
+            # feedback advance once per such frame, never at a separately
+            # guessed host 100Hz that floods the virtual UART with interrupts.
+            while time.monotonic() - started < MAX_WALL_DURATION_S:
                 if qemu.poll() is not None:
                     raise RuntimeError("QEMU exited while moving")
 
@@ -170,67 +173,78 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                             if move_ack_status == 0:
                                 p.setJointMotorControlArray(
                                     arm, joints, p.POSITION_CONTROL,
-                                    targetPositions=[math.radians(v / wire.JOINT_ANGLE_SCALE)
-                                                     for v in values],
+                                    targetPositions=[
+                                        math.radians(v / wire.JOINT_ANGLE_SCALE)
+                                        for v in values
+                                    ],
                                     forces=[150.0] * len(joints))
                                 max_target_change_deg = max(
                                     max_target_change_deg,
                                     abs(values[1] / wire.JOINT_ANGLE_SCALE
                                         - first_sim_joint2_deg),
                                 )
+                            for _ in range(round(FEEDBACK_PERIOD_S / PHYSICS_DT_S)):
+                                p.stepSimulation()
+                            feedback = angles_raw(p, arm, joints)
+                            sock.sendall(frame(
+                                wire.CMD_JOINT_STATE,
+                                struct.pack("<" + str(wire.JOINT_COUNT) + "h",
+                                            *feedback)))
+                            tx_frames += 1
+                            if received_targets % 10 == 0:
+                                output.append({
+                                    "elapsed_wall_s": round(time.monotonic()-started, 3),
+                                    "simulated_physics_s": round(
+                                        received_targets*FEEDBACK_PERIOD_S,3),
+                                    "joint2_actual_deg": feedback[1]/100.0,
+                                    "received_targets": received_targets,
+                                    "feedback_acks": received_feedback_acks,
+                                    "move_ack": move_ack_status,
+                                })
                         elif (command == wire.CMD_JOINT_STATE_ACK
                               and len(payload) == wire.JOINT_PAYLOAD_LEN):
                             received_feedback_acks += 1
+                            if (not move_request_sent and
+                                    received_feedback_acks >= 3):
+                                body = bytes((seq,)) + struct.pack(
+                                    "<" + str(wire.JOINT_COUNT) + "h",
+                                    *GOAL_RAW)
+                                sock.sendall(
+                                    frame(wire.CMD_REQUEST_JOINT_MOVE,body))
+                                move_request_sent = True
                         elif (command == wire.CMD_JOINT_MOVE_ACK
                               and len(payload) == wire.MOVE_ACK_PAYLOAD_LEN):
                             if payload[0] == seq:
-                                move_ack_status = struct.unpack("<b",payload[1:])[0]
+                                move_ack_status = struct.unpack(
+                                    "<b",payload[1:])[0]
                         elif (command == wire.CMD_DIAGNOSTICS_RESPONSE
                               and len(payload) == 4 and diag_pending is not None):
-                            diagnostics[diag_pending] = struct.unpack("<I",payload)[0]
+                            diagnostics[diag_pending] = struct.unpack(
+                                "<I",payload)[0]
                             diag_pending = None
 
                 now = time.monotonic()
-                if (now - started >= 4.0 and move_ack_status is not None
+                if (move_ack_status is not None and received_targets >= 25
                         and diag_pending is None and diag_index < len(diag_items)):
                     diag_name, diag_selector = diag_items[diag_index]
-                    sock.sendall(frame(wire.CMD_GET_DIAGNOSTICS,
-                                       bytes((diag_selector,))))
+                    sock.sendall(frame(
+                        wire.CMD_GET_DIAGNOSTICS,bytes((diag_selector,))))
                     diag_index += 1
                     diag_pending = diag_name
                     diag_sent_at = now
-                elif diag_pending is not None and now - diag_sent_at > 0.6:
+                elif diag_pending is not None and now - diag_sent_at > 2.0:
                     diagnostics[diag_pending] = None
                     diag_pending = None
 
-                if now - last_send >= FEEDBACK_PERIOD_S:
-                    feedback = angles_raw(p, arm, joints)
-                    sock.sendall(frame(
-                        wire.CMD_JOINT_STATE,
-                        struct.pack("<" + str(wire.JOINT_COUNT) + "h", *feedback)))
-                    last_send = now
-                    tx_frames += 1
-                    if (not move_request_sent and
-                            received_feedback_acks >= 3):
-                        body = bytes((seq,)) + struct.pack(
-                            "<" + str(wire.JOINT_COUNT) + "h", *GOAL_RAW)
-                        sock.sendall(frame(wire.CMD_REQUEST_JOINT_MOVE,body))
-                        move_request_sent = True
-                for _ in range(round(FEEDBACK_PERIOD_S / PHYSICS_DT_S)):
-                    p.stepSimulation()
-                last_j2 = angles_raw(p, arm, joints)[1] / 100.0
-                tick += 1
-                if tick % 25 == 0:
-                    output.append({
-                        "elapsed_wall_s": round(time.monotonic()-started, 3),
-                        "joint2_actual_deg": last_j2,
-                        "received_targets": received_targets,
-                        "feedback_acks": received_feedback_acks,
-                        "move_ack": move_ack_status,
-                    })
-                remaining = FEEDBACK_PERIOD_S - (time.monotonic() - tick_start)
-                if remaining > 0:
-                    time.sleep(remaining)
+                # Finish on a measured number of QEMU control ticks, after
+                # the serial diagnostics have been returned, not wall time.
+                if (received_targets >= MAX_TARGET_FRAMES and
+                        diag_index == len(diag_items) and
+                        diag_pending is None):
+                    break
+                if not data:
+                    time.sleep(0.001)
+
             movement = abs(
                 angles_raw(p, arm, joints)[1] / 100.0 - first_sim_joint2_deg)
             accepted = move_ack_status == 0
@@ -251,6 +265,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 "motor_commands": "virtual_serial_only",
                 "command_output_compile_gate": "ON only for QEMU test",
                 "elapsed_wall_s": round(time.monotonic()-started,3),
+                "simulated_physics_s": round(tx_frames*FEEDBACK_PERIOD_S,3),
+                "feedback_pacing": "one measured feedback per QEMU ProtocolTX control-period frame",
                 "feedback_frames_sent": tx_frames,
                 "feedback_acks_received": received_feedback_acks,
                 "target_frames_received": received_targets,
