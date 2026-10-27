@@ -499,6 +499,19 @@ option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
     "Enable experimental Stage 4 PID targets to motor_state (sim only)" OFF)
 option(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
     "QEMU-only synthetic feedback/planner/PID smoke, command output forced OFF" OFF)
+set(ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS "1200" CACHE STRING
+    "QEMU-only simulated-feedback duration (ms); release builds ignore it")
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+    if(NOT ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS MATCHES "^[1-9][0-9]*$"
+       OR ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS LESS 1200
+       OR ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS GREATER 1800000)
+        message(FATAL_ERROR
+            "QEMU healthy test duration must be an integer from 1200 to 1800000 ms")
+    endif()
+    target_compile_definitions(freertos_demo PRIVATE
+        ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=${ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS}U
+    )
+endif()
 if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST AND
    (NOT ROBOT_ENABLE_STAGE4_TASKS OR ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT))
     message(FATAL_ERROR
