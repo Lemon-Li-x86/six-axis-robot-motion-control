@@ -218,10 +218,16 @@ try {
     Run-QemuGdb 'freertos_demo' 'stage4_rtos_selftest_done' `
         @('g_stage4_rtos_test_finished',
           'g_stage4_rtos_test_report.checks',
-          'g_stage4_rtos_test_report.failed') `
+          'g_stage4_rtos_test_report.failed',
+          'g_stage4_timing_frequency_hz',
+          'g_stage4_timing_summary[0].interval_sample_count',
+          'g_stage4_timing_summary[0].p99_abs_period_jitter_ticks',
+          'g_stage4_timing_summary[0].maximum_processing_ticks',
+          'g_stage4_timing_summary[1].interval_sample_count',
+          'g_stage4_timing_summary[2].interval_sample_count') `
         @{
           'g_stage4_rtos_test_finished'=1;
-          'g_stage4_rtos_test_report.checks'=13;
+          'g_stage4_rtos_test_report.checks'=29;
           'g_stage4_rtos_test_report.failed'=0
         } 'build/cmake-arm-stage4-selftest'
 
