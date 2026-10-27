@@ -128,9 +128,11 @@ class BufferedUART:
         self.sock.close()
 
 
-def join_qemu_serial(port: int, process: subprocess.Popen) -> BufferedUART:
+def join_qemu_serial(port: int, process: subprocess.Popen, stop_requested=None) -> BufferedUART:
     deadline = time.monotonic() + TIMEOUT_CONNECT_S
     while time.monotonic() < deadline:
+        if stop_requested is not None and stop_requested():
+            raise InterruptedError("UART startup cancelled by observer")
         if process.poll() is not None:
             raise RuntimeError(f"QEMU quit at startup (exit {process.returncode})")
         try:

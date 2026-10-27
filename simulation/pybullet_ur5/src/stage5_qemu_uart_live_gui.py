@@ -15,6 +15,7 @@ import argparse
 import json
 import math
 import multiprocessing as mp
+import os
 import queue
 import sys
 import time
@@ -86,6 +87,9 @@ def capture_worker(
 
     Path(output).mkdir(parents=True, exist_ok=True)
     log = (Path(output) / "worker.log").open("w", encoding="utf-8", buffering=1)
+    # Redirect native extension writes too (PyBullet uses C stdout/stderr).
+    os.dup2(log.fileno(), 1)
+    os.dup2(log.fileno(), 2)
     sys.stdout = log
     sys.stderr = log
     import faulthandler
@@ -326,7 +330,9 @@ def run_live(
         print("[LIVE] Measured joint ranges: " + ", ".join(
             f"J{i+1}={angle:.2f}deg" for i, angle in enumerate(motion)
         ), flush=True)
-        if (not motion or min(motion) < MIN_OBSERVED_MOTION_DEG or
+        required_axes = [i for i in range(len(JOINT_NAMES))
+                         if any(goal[i] != START_RAW[i] for goal in SCENARIOS[scenario])]
+        if (not motion or any(motion[i] < MIN_OBSERVED_MOTION_DEG for i in required_axes) or
                 measurements.frames_received < 10):
             raise RuntimeError("Insufficient live physical movement was observed")
         if measurements.frames_while_worker_alive == 0:

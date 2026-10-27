@@ -293,7 +293,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             stdout=subprocess.DEVNULL,
             stderr=qemu_error,
         )
-        with integration.join_qemu_serial(port, qemu) as sock:
+        with integration.join_qemu_serial(port, qemu, stop_requested) as sock:
             client = p.connect(p.DIRECT if options.headless else p.GUI)
             if client < 0:
                 raise RuntimeError("PyBullet connection failed")
@@ -323,6 +323,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             ready_deadline = time.monotonic() + 5.0
             ready = False
             while time.monotonic() < ready_deadline:
+                if stop_requested is not None and stop_requested():
+                    raise InterruptedError("UART readiness cancelled by observer")
                 try:
                     ready_bytes = sock.recv(4096)
                 except BlockingIOError:
