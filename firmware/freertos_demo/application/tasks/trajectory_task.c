@@ -16,6 +16,9 @@
 #include "kinematics.h"
 #include "motion_limits.h"
 #include "angle_utils.h"
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+#include "stage4_timing_probe.h"
+#endif
 
 static void cancel_motion(motion_runtime_t *r,robot_status_t status)
 {
@@ -119,6 +122,11 @@ static void task_trajectory(void *arg)
     {
         robot_status_t s=ROBOT_STATUS_OK;
         vTaskDelayUntil(&last_wake,(interval==0U)?1U:interval);
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_TRAJECTORY);
+#endif
+        /* Each early exit still participates in period/execution records. */
+        do {
 
         /* Any control-loop safety fault cancels the entire trajectory.
          * Do not re-arm merely because the reference queue repeats data. */
@@ -131,7 +139,7 @@ static void task_trajectory(void *arg)
             (void)xQueueOverwrite(r->reference_queue,&reference);
             armed=0U;
             moving=0U;
-            continue;
+            break;
         }
 
         if(xQueueReceive(r->request_queue,&request,0U)==pdTRUE) {
@@ -144,7 +152,7 @@ static void task_trajectory(void *arg)
             s=start_request(r,&request,&joint_plan,&last);
             if(s!=ROBOT_STATUS_OK) {
                 cancel_motion(r,s);
-                continue;
+                break;
             }
             mode=request.kind;
             begun=xTaskGetTickCount();
@@ -153,7 +161,7 @@ static void task_trajectory(void *arg)
             moving=1U;
         }
 
-        if(!armed) continue;
+        if(!armed) break;
 
         /* The planner must also stop on stale feedback; an old trajectory
          * must not resume at a later, jumped setpoint after reconnect. */
@@ -165,7 +173,7 @@ static void task_trajectory(void *arg)
                     (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
                 cancel_motion(r,ROBOT_STATUS_ERROR_NOT_READY);
                 armed=0U; moving=0U;
-                continue;
+                break;
             }
         }
 
@@ -242,7 +250,7 @@ static void task_trajectory(void *arg)
                 cancel_motion(r,s);
                 armed=0U;
                 moving=0U;
-                continue;
+                break;
             }
         }
         reference.target=last;
@@ -256,6 +264,10 @@ static void task_trajectory(void *arg)
             r->diagnostics.trajectory_samples++;
             taskEXIT_CRITICAL();
         }
+        } while(0);
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        stage4_timing_end(STAGE4_TIMING_TRAJECTORY,timing_start);
+#endif
     }
 }
 
