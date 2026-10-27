@@ -9,6 +9,8 @@ on:
       - 'firmware/freertos_demo/tests/simulation/**'
       - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
       - 'tools/stage4_pid_study.py'
+      - 'tools/stage4_pid_gain_sweep.py'
+      - 'tools/tests/test_stage4_pid_gain_sweep.py'
       - 'tools/tests/test_stage4_pid_study.py'
       - 'firmware/freertos_demo/config/**'
   workflow_dispatch:
@@ -19,7 +21,7 @@ permissions:
 jobs:
   stage4-native-pid-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -54,10 +56,23 @@ jobs:
             --library build/stage4-closure-simulation/libstage4_sim_bridge.so \
             --output-dir build/stage4-closure-pid-matrix
 
+      - name: Validate split-sweep trial definitions
+        run: |
+          python -m unittest discover -s tools/tests \
+            -p test_stage4_pid_gain_sweep.py -v
+
+      - name: Explore candidate gains with held-out simulation cases
+        run: |
+          python tools/stage4_pid_gain_sweep.py \
+            --library build/stage4-closure-simulation/libstage4_sim_bridge.so \
+            --output-dir build/stage4-pid-sweep
+
       - name: Archive real simulation traces even when a trial fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage4-native-pid-sensitivity-traces
-          path: build/stage4-closure-pid-matrix/**
+          path: |
+            build/stage4-closure-pid-matrix/**
+            build/stage4-pid-sweep/**
           if-no-files-found: ignore
