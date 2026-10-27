@@ -11,11 +11,16 @@ typedef enum {
     MOTION_REQUEST_CARTESIAN = 2,
     MOTION_REQUEST_POLYNOMIAL = 3
 } motion_request_kind_t;
+/* Exactly ONE request kind is active at a time. A union avoids wasting
+ * the ProtocolRX 256-word stack on three mutually exclusive plans.
+ * Keep public field access unchanged for Stage4 task consumers. */
 typedef struct {
     motion_request_kind_t kind;
-    robot_joint_positions_t joint_goal;
-    cartesian_trajectory_plan_t cartesian;
-    trajectory_polynomial_plan_t polynomial;
+    union {
+        robot_joint_positions_t joint_goal;
+        cartesian_trajectory_plan_t cartesian;
+        trajectory_polynomial_plan_t polynomial;
+    };
 } motion_request_t;
 typedef struct {
     robot_joint_positions_t target;
