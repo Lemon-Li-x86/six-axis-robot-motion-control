@@ -15,7 +15,7 @@ PyBullet 的 `.venv/Scripts/python.exe`。可用 `-Python`、`-Qemu` 指定路�
 
 1. PowerShell 显示每轴 `目标角/当前角`（度），以及 UART 目标 RX、反馈 ACK、
    实际绘制数、显示丢帧数、校验错误和最新样本年龄。
-2. PyBullet 原生 GUI 实时镜像 DIRECT 物理引擎的实测姿态和末端轨迹。
+2. PyBullet GUI **就是实际物理仿真世界**：原生鼠标拾取、关节电机和实际测量在同一个客户端。Headless CI 使用相同仿真入口的 DIRECT 模式。
 
 目标角来自 C 固件发出的 UART 帧，当前角来自 PyBullet 实测；不从 CSV 回放。
 C 固件继续负责轨迹、PID、限幅和 FreeRTOS 调度，没有修改 PID 或机器人配置。
@@ -66,14 +66,14 @@ shift 指令计数模式**。每个 UART 目标仍推进原有物理步数，再
 | --- | --- |
 | `joint_trace.csv` | 每个目标的六轴 UART 目标/物理实测/误差，运行中持续写入 |
 | `uart_live.jsonl` | 每秒墙钟/物理时间、RX/ACK，以及持续轮询的真实固件计数器 |
-| `observer.jsonl` | 显示样本序号、目标/当前角、延迟、接收/绘制/丢帧 |
-| `observer_result.json` | 本轮最终显示统计，headless 时 rendered=0 |
+| `observer.jsonl` | 控制进程非阻塞遥测快照、目标/当前角、采样年龄、观察者跳帧；不伪报 GUI 绘制帧数 |
+| `observer_result.json` | 遥测接收和观察者丢帧统计；GUI 由物理引擎自行渲染 |
 | `worker.log` | 接受/到位事件、错误堆栈；不启动定时后台线程栈采样 |
 | `qemu_stderr.log` | QEMU 本身的错误输出 |
 | `run_metadata.json` | ELF、当前配置和 URDF 的 SHA256，Python/平台和时钟模式 |
 | `result.json` | 真实闭环验收；只有全部到位且固件故障计数为 0 才通过 |
 
-`display_dropped` 是发布样本被覆盖或锁竞争丢弃的显示帧，不是 UART 丢帧。
+`observer_drop` 是非阻塞观察者未看到的遥测更新，不是 UART 丢帧；原生 PyBullet GUI 的实际渲染帧数不在这里计算。
 UART 短写和暂不可写次数在 `result.json`；校验错误单独统计。
 最终固件诊断重新采集完整一轮，不能用中途旧值冒充最终诊断。
 
@@ -87,54 +87,58 @@ UART 短写和暂不可写次数在 `result.json`；校验错误单独统计。
 CI `.github/workflows/stage5-live-gui.yml` 在 Windows 和 Linux 上分别运行
 IPC/协议单元测试及真实 ARM/QEMU/UART/DIRECT 闭环并上传日志。
 CI 使用 `--headless-observer`，不证明 OpenGL 可见画面。
-GUI 的 render 调用计数也只证明提交了姿态更新，不能替代逐帧视觉验收。
+无头 CI 只检验物理反馈/协议/状态，不检验原生 GUI 的鼠标拾取；Windows 实际 GUI 需要单独手工验收。
 
 
-## 持续交互：拉偏后松手回位
+## 2026-10-27 架构清理：恢复原生 PyBullet 交互（待桌面验收）
 
-默认 `./tools/run_stage5_live_windows.ps1` 现在在三段结束后进入 HOLD，
-不会停止 QEMU/FreeRTOS/UART。等终端出现 `[HOLD]`，在 GUI 中用**鼠标左键
-按住机械臂的连杆并拖动**，松手后回到最后一个请求目标。
-底座固定，拖空白区域不产生扰动。按 **Q** 或关闭 GUI 结束会话。
-`-NoHold` 保留原有三段自动退出行为。
+第五阶段曾将物理仿真放在 `DIRECT` worker，同时在父进程创建另一个
+`GUI` 机器人镜像。旧版调用 `resetJointState()` 显示收到的测量角，
+并禁用 `COV_ENABLE_MOUSE_PICKING`，因此不得不额外维护
+`MouseDrag / DragMailbox / PhysicalDrag` 以及鼠标事件收发。
+这是模拟器架构导致的人为复杂度，**不是 FreeRTOS/PID 必须识别鼠标松手**。
 
-鼠标事件通过独立非阻塞共享内存传到 DIRECT，创建有限力的物理抓取约束；
-没有用 resetJointState 修改后台物理姿态。测量值仍由真实物理引擎产生并
-通过 UART 写给原 C 固件。GUI 停顿/失联超过 0.4 秒会释放物理抓取。
+新分支 `fix/stage5-native-pybullet-interaction-20261027`：
 
-释放抓取后，通过 UART 重新请求**同一个最终目标**，由既有 C 轨迹模块
-从当前实测姿态重新规划回位。若不再运动却有残余偏差，会有界重试该目标
-（最多 8 次），每次请求和 ACK 都写入 `uart_live.jsonl`；不是额外 Python PID。
-请求目标、C PID 算法/参数和机器人限制不变。固件任务为每个运动请求携带
-持久 generation，避免单槽参考队列覆盖瞬时 disable 消息、漏掉控制器重置。
+- worker 仍为独立进程，负责 QEMU、UART 和唯一 PyBullet 物理世界；桌面
+  使用 `p.GUI`，CI 使用 `p.DIRECT`，二者运行同一条固件闭环数据流。
+- 原生 `COV_ENABLE_MOUSE_PICKING=1`。GUI 鼠标左键直接作用于真实
+  PyBullet 物理世界，取消第二个显示机器人、伪造姿态、跨进程鼠标邮箱
+  和自写 point-to-point 约束。
+- 保留现有 C 轨迹规划、PID、速度/加速度限制、`0x01/0x81` UART
+  反馈和固定的最终关节请求目标。控制从来不依赖 Python 的鼠标位姿。
+- HOLD 时若真实反馈关节偏离最终请求位置超过 0.5°，记录
+  `hold_deviation`；优先允许既有 PID 消除误差，若剩余误差长期停滞，
+  则有界地通过 `0x03` 向 C 规划器重新提交**同一个目标**。
+  不再把“松开鼠标”作为重新规划的必要条件。
+- GUI 中的历史轨迹线改为有限 `lifeTime=10s`，避免连续 HOLD 无界增长。
+- 父进程只接收最新遥测并输出控制台；`observer_drop` 属于可视化观察
+  丢样，不反映 UART 断流。按 Q（GUI 焦点内）或 Ctrl+C 退出。
 
-长时间会话不再使用三段演示的总时限退出；UART 断流和请求 ACK 仍有超时。
-图形轨迹只保留最近 10 秒，内存绘图样本有界；CSV 继续保存全部实际样本。
-`drag_events.jsonl` 记录物理抓取开始/释放；结束时 `result.json` 记录
-`hold_rearms`、`hold_rearm_acks` 和 `drag_recovery`。若仍未回位就退出，
-会返回失败，不能把早先三段通过作为回位通过。
-
-自动物理扰动测试（有界运行，不需要鼠标或 OpenGL）：
+正常桌面命令：
 
 ```powershell
-.\.venv\Scripts\python.exe simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-drag-recovery --hold-seconds 16 --no-hold --output-dir build/stage5-drag-recovery
+./tools/run_stage5_live_windows.ps1
 ```
 
-它经相同输入邮箱和物理抓取路径施加扰动，要求至少拉偏 2°、UART 目标有
-实际响应、释放后连续至少 15 帧全轴误差不超过 0.25°，且固件故障为零。
-这项测试验证物理链路；真实桌面鼠标事件的验收需另外记录。
+无 GUI 物理扰动回归改用 PyBullet 自带的 `applyExternalTorque`，
+而不是模拟鼠标点击和自己造约束：
 
-本轮桌面验收使用 Windows 兼容图形路径：真实鼠标拾取 link 2，按下/松开
-合并事件也成功作用于物理引擎，释放后两次同目标请求均收到 ACK，
-`drag_recovered` 记录全轴最大误差 0.07°。相关本机证据在
-`build/stage5-drag-rapid-mouse/`，包含鼠标射线拾取、实际抓取和 UART 轨迹。
-原生 PowerShell 入口默认使用 OpenGL2 兼容路径，并隐藏无关的相机调试面板。
-直接运行 Python 入口可加 `--opengl2` 选择同一图形路径。
+```powershell
+.\.venv\Scripts\python.exe simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-disturbance-recovery --disturbance-cycles 3 --hold-seconds 65 --no-hold --output-dir build/stage5-disturbance
+```
 
-非常快速的拖拽可能被 Bullet 合并成同时按下和松开的事件；此时会施加
-至多 80ms 的有界物理抓取脉冲，避免整次鼠标拖拽被忽略。普通长按拖动
-始终在松开时释放，GUI 失联仍受 0.4 秒租约约束。
+这条 CI 测试只证明施加仿真外力、UART 状态反馈和目标恢复。**不能用
+DIRECT 外力测试冒充桌面鼠标操作通过**。桌面仍需记录左键拖拽、释放、
+归位误差、Q 关闭以及异常退出后的 `worker.log`、`joint_trace.csv`。
+新分支代码写入不等于已取得 Windows GUI 验收结果。
 
+### 历史证据（旧的双 PyBullet 世界实现）
+
+此前使用鼠标事件共享内存和自写约束，记录在
+`build/stage5-drag-rapid-mouse/` 等旧路径，历史数据不因本次修改而改变。
+但这些记录**不能**当作原生 GUI 新架构的验收结论。旧版
+`drag_events.jsonl`、`mouse_events.jsonl` 及相关自定义拖拽测试现已弃用。
 
 ## Windows 原生退出 3221225477 / 0xC0000005
 
