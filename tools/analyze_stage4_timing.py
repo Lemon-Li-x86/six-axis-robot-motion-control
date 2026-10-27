@@ -61,6 +61,25 @@ def parse_report(log: str) -> dict:
         if not all(math.isfinite(v) for v in metrics[kind].values()):
             raise ValueError(f"{kind} produced nonfinite timing metrics")
 
+    # Use the same JSON task-stack default source as the ARM firmware.
+    # Stack high-water mark denotes the MINIMUM remaining stack in words.
+    defaults_path = (
+        Path(__file__).resolve().parents[1]
+        / "firmware/freertos_demo/config/robot_defaults.json"
+    )
+    defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+    stacks = {}
+    for kind in ("control", "trajectory", "monitor"):
+        remaining = require(f"stack_words_{kind}")
+        total = int(defaults["task_stack_depth_words"][kind])
+        if remaining <= 0 or remaining > total:
+            raise ValueError(f"{kind} stack high-water mark is invalid")
+        stacks[kind] = {
+            "allocated_words": total,
+            "minimum_free_words": remaining,
+            "peak_used_words": total - remaining,
+        }
+
     return {
         "measurement": "QEMU_MPS2_AN386_CMSDK_TIMER0_VIRTUAL_CYCLES",
         "not_measured": [
@@ -75,6 +94,7 @@ def parse_report(log: str) -> dict:
         "processing_definition": "wall elapsed simulated Timer0 ticks from after vTaskDelayUntil to activation end, including preemption",
         "samples": "first up to 128 healthy activations per task, no heap or artificial busy-work",
         "tasks": metrics,
+        "stacks": stacks,
     }
 
 
