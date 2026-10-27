@@ -39,6 +39,8 @@ TRIAL_GOALS = {
 }
 COUNT = len(JOINT_NAMES)
 IntJoints = ctypes.c_int32 * COUNT
+# Six rows of (Kp, Ki, Kd); this is a host-only test ABI.
+PidGains = (ctypes.c_double * 3) * COUNT
 
 
 def load_bridge(path: Path):
@@ -53,6 +55,12 @@ def load_bridge(path: Path):
         ctypes.c_double,
     ]
     lib.stage4_sim_create_with_kp_scale.restype = ctypes.c_void_p
+    lib.stage4_sim_create_with_pid_gains.argtypes = [
+        ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_double * 3),
+    ]
+    lib.stage4_sim_create_with_pid_gains.restype = ctypes.c_void_p
     lib.stage4_sim_duration.argtypes = [ctypes.c_void_p]
     lib.stage4_sim_duration.restype = ctypes.c_double
     lib.stage4_sim_step.argtypes = [
@@ -88,7 +96,8 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
         physics_dt_s: float, force_newton_m: float,
         kp_scale: float = 1.0, scenario: str = "joint2",
         max_overshoot_j2_deg: float = 0.15,
-        max_tracking_rmse_j2_deg: float = 0.25) -> dict:
+        max_tracking_rmse_j2_deg: float = 0.25,
+        pid_gains: tuple[tuple[float, float, float], ...] | None = None) -> dict:
     import pybullet as p
 
     config = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -104,7 +113,16 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
     bridge = load_bridge(library)
     start = IntJoints(*START_RAW)
     goal = IntJoints(*goal_raw)
-    handle = bridge.stage4_sim_create_with_kp_scale(start, goal, kp_scale)
+    if pid_gains is not None:
+        if len(pid_gains) != COUNT or any(len(gains) != 3 for gains in pid_gains):
+            raise ValueError("Expected six (Kp, Ki, Kd) test gain triples")
+        if kp_scale != 1.0:
+            raise ValueError("Kp multiplier and explicit PID gains are exclusive")
+        handle = bridge.stage4_sim_create_with_pid_gains(
+            start, goal, PidGains(*(tuple(gains) for gains in pid_gains))
+        )
+    else:
+        handle = bridge.stage4_sim_create_with_kp_scale(start, goal, kp_scale)
     if not handle:
         raise RuntimeError("Native trajectory/controller initialization failed")
     try:
@@ -203,7 +221,13 @@ def run(library: Path, output_dir: Path, max_final_error_deg: float,
                 "start_raw": list(START_RAW),
                 "goal_raw": list(goal_raw),
                 "trajectory_tracking_rmse_deg_per_joint": per_joint_tracking_rmse,
-                "pid_kp_multiplier_of_authoritative_default": kp_scale,
+                "pid_kp_multiplier_of_authoritative_default": (
+                    kp_scale if pid_gains is None else None
+                ),
+                "experimental_pid_gains_per_joint": (
+                    [list(gains) for gains in pid_gains]
+                    if pid_gains is not None else None
+                ),
                 "not_tested": [
                     "Cortex-M4 FreeRTOS scheduling",
                     "UART round-trip",
