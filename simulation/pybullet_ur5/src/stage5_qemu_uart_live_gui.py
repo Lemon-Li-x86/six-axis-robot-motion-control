@@ -26,6 +26,11 @@ from stage5_qemu_uart_visual_demo import DemoOptions, SCENARIOS, run
 # Observer polling never changes the physics timestep or UART pacing.
 REFRESH_HZ = 30.0
 MIN_OBSERVED_MOTION_DEG = 2.0
+# Test fixture only. Physical motor limits remain in firmware config.
+TEST_TORQUE_NM = 300.0
+TEST_PERIOD_S = 12.0
+TEST_FORCE_START_S = 1.0
+TEST_FORCE_END_S = 1.8
 RawFrame = tuple[float, int, tuple[int, ...]]
 
 
@@ -33,7 +38,7 @@ class LatestMailbox:
     """Single latest sample; no pipe, feeder thread, queue drain, or blocking lock.
 
     Producer/consumer acquire the shared lock with blocking=False. A stalled
-    renderer can only lose display samples, never stall UART or child shutdown.
+    observer can lose telemetry samples but never stalls UART or physics.
     """
     def __init__(self, context):
         self.data = context.Array("d", 19, lock=False)
@@ -105,11 +110,12 @@ def capture_worker(
             # Headless regression uses PyBullet's native external-torque
             # API, not a second implementation of mouse dragging.
             elapsed = sim_time - hold_at
-            cycle = int(elapsed // 12.0)
-            phase = elapsed - 12.0 * cycle
-            if cycle < disturbance_cycles and 1.0 <= phase < 1.8:
+            cycle = int(elapsed // TEST_PERIOD_S)
+            phase = elapsed - TEST_PERIOD_S * cycle
+            if (cycle < disturbance_cycles and
+                    TEST_FORCE_START_S <= phase < TEST_FORCE_END_S):
                 axis = bullet.getJointInfo(arm, joints[1])[13]
-                torque = [300.0 * component for component in axis]
+                torque = [TEST_TORQUE_NM * component for component in axis]
                 bullet.applyExternalTorque(
                     arm, joints[1], torque, bullet.LINK_FRAME)
 
@@ -165,6 +171,7 @@ def capture_worker(
     finally:
         log.flush()
 
+
 class LiveMeasurements:
     """Incremental diagnostics based only on sampled *actual* joint angles."""
 
@@ -205,7 +212,6 @@ class LiveMeasurements:
         )
 
 
-
 def run_live(
     elf: Path, output_dir: Path, qemu: str, scenario: str,
     timeout_s: float, refresh_hz: float, headless_observer: bool,
@@ -232,6 +238,8 @@ def run_live(
     if interactive is None:
         interactive = not headless_observer and hold_window
     if test_disturbance:
+        if not headless_observer:
+            raise ValueError("Disturbance regression requires --headless-observer")
         interactive = True
     if headless_observer and interactive and hold_seconds is None:
         raise ValueError("Headless hold requires --hold-seconds")
@@ -255,7 +263,7 @@ def run_live(
     hold_announced = False
     hold_wall = None
     output_dir.mkdir(parents=True, exist_ok=True)
-    for stale in ("observer_result.json", "worker_exit.json",
+    for stale in ("result.json", "observer_result.json", "worker_exit.json",
                   "mouse_events.jsonl", "drag_events.jsonl"):
         (output_dir / stale).unlink(missing_ok=True)
     audit = (output_dir / "observer.jsonl").open(
@@ -281,8 +289,11 @@ def run_live(
 
             now = time.monotonic()
             if ready.is_set() and not hold_announced:
-                print("[HOLD] Native GUI: left-drag a link and release; "
-                      "press Q or Ctrl+C to exit", flush=True)
+                if not headless_observer:
+                    print("[HOLD] Native PyBullet: left-drag a link and release; "
+                          "press Q or Ctrl+C to exit", flush=True)
+                else:
+                    print("[HOLD] Headless disturbance observation started", flush=True)
                 hold_announced = True
                 hold_wall = now
 
@@ -387,6 +398,7 @@ def run_live(
         if worker.pid is not None:
             worker.join(timeout=5.0)
         audit.close()
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
