@@ -501,7 +501,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     p.addUserDebugLine(
                                         last_tool_xyz, tool_xyz,
                                         [0.1, 0.7, 1.0], lineWidth=2,
-                                        lifeTime=0,
+                                        lifeTime=10.0,  # Native GUI: bounded trail during HOLD.
                                     )
                                 last_tool_xyz = tuple(tool_xyz)
                                 if target_frames % 10 == 0:
