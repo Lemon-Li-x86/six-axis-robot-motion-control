@@ -16,7 +16,7 @@ static void task_monitor(void *arg)
     TickType_t period=pdMS_TO_TICKS(TASK_PERIOD_MONITOR_MS);
     for(;;) {
         uint32_t control_free, trajectory_free,monitor_free;
-        vTaskDelayUntil(&wake,(period==0U)?1U:period);
+        motion_task_wait_next_period(&wake,period);
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
         uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_MONITOR);
 #endif
