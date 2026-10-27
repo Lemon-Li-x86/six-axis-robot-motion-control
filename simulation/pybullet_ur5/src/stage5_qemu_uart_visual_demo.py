@@ -543,24 +543,28 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 arm, p.getNumJoints(arm) - 1,
                                 computeForwardKinematics=True,
                             )[4]
-                            if not options.headless:
+                            # Render trail/text at 10 Hz, not at the
+                            # 100 Hz UART rate. The C controller, PyBullet
+                            # physics, feedback and CSV stay per target frame.
+                            # With a 10 s lifetime this also bounds visible
+                            # trail objects to roughly 100 instead of 1000.
+                            if not options.headless and target_frames % 10 == 0:
                                 if last_tool_xyz is not None:
                                     p.addUserDebugLine(
                                         last_tool_xyz, tool_xyz,
                                         [0.1, 0.7, 1.0], lineWidth=2,
-                                        lifeTime=HOLD_TRACE_LIFETIME_S,  # Bounded during HOLD.
+                                        lifeTime=HOLD_TRACE_LIFETIME_S,
                                     )
                                 last_tool_xyz = tuple(tool_xyz)
-                                if target_frames % 10 == 0:
-                                    debug_text_id = p.addUserDebugText(
-                                        f"Segment {sequencer.index + 1}/"
-                                        f"{len(sequencer.goals)} | "
-                                        f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
-                                        [-0.65, -0.65, 0.85],
-                                        textColorRGB=[0.1, 0.9, 0.2],
-                                        textSize=1.25,
-                                        replaceItemUniqueId=debug_text_id,
-                                    )
+                                debug_text_id = p.addUserDebugText(
+                                    f"Segment {sequencer.index + 1}/"
+                                    f"{len(sequencer.goals)} | "
+                                    f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
+                                    [-0.65, -0.65, 0.85],
+                                    textColorRGB=[0.1, 0.9, 0.2],
+                                    textSize=1.25,
+                                    replaceItemUniqueId=debug_text_id,
+                                )
                             row = {
                                 "simulated_time_s": round(
                                     target_frames * FEEDBACK_STEP_S, 3),
