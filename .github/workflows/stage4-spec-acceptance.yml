@@ -33,7 +33,7 @@ jobs:
           cmake -S firmware/freertos_demo/tests/host \
             -B build/stage2-host -G Ninja
           cmake --build build/stage2-host
-      - name: Execute all four Stage 2 Host tests
+      - name: Execute Stage2 safety and Stage5 protocol byte-stream tests
         run: ctest --test-dir build/stage2-host --output-on-failure
       - name: Build Stage 3-4 trajectory, IK, Cartesian and PID tests
         run: |
@@ -72,7 +72,7 @@ jobs:
           bash tools/ci_stage4_algorithm_qemu.sh \
             build/ci-stage4-spec-arm/firmware/freertos_demo \
             build/stage4-spec-qemu
-      - name: Run real QEMU FreeRTOS 13-check stale-feedback injection
+      - name: Run real QEMU FreeRTOS 29-check timing and stale-feedback selftest
         run: |
           bash tools/ci_stage4_rtos_qemu.sh \
             build/ci-stage4-spec-arm/firmware/freertos_demo/freertos_demo.elf \
