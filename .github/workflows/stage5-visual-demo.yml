@@ -1,0 +1,58 @@
+name: Stage5 QEMU PyBullet multi-segment visual demo
+
+on:
+  push:
+    branches:
+      - feat/qemu-pybullet-visual-demo-20261027
+    paths:
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
+      - 'tools/tests/test_stage5_visual_demo.py'
+      - '.github/workflows/stage5-visual-demo.yml'
+      - 'firmware/freertos_demo/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo-state-machine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated UART and sequencer tests
+        run: python -m unittest discover -s tools/tests -p test_stage5_visual_demo.py -v
+
+  qemu-pybullet-multi-segment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM toolchain, QEMU, and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build
+          python -m pip install pybullet
+      - name: Build QEMU-only firmware with UART command output enabled
+        run: |
+          cmake -S . -B build/stage5-visual-uart -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON \
+            -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+          cmake --build build/stage5-visual-uart --target freertos_demo
+      - name: Verify real UART and FreeRTOS multi-segment control in PyBullet DIRECT
+        run: |
+          timeout 240s python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --headless --scenario six_axis --timeout-s 210 \
+            --elf build/stage5-visual-uart/firmware/freertos_demo/freertos_demo.elf \
+            --output-dir build/stage5-visual-evidence
+      - name: Preserve measured joint traces and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-qemu-pybullet-multi-segment-evidence
+          path: build/stage5-visual-evidence/*
+          if-no-files-found: ignore
