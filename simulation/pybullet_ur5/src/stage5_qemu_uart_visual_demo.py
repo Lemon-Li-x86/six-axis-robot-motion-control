@@ -67,6 +67,9 @@ HOLD_DEVIATION_TRIGGER_DEG = 0.5
 HOLD_STAGNANT_PERIOD_S = 0.5
 HOLD_MAX_REPLAN_ATTEMPTS = 8
 HOLD_TRACE_LIFETIME_S = 10.0
+# Log costly UART batches at most once a second. Diagnostic-only, no pacing.
+UART_BATCH_WARNING_FRAMES = 24
+UART_BATCH_WARNING_S = 0.15
 DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 MAX_PAYLOAD_RAW = 32767
@@ -280,6 +283,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     (output_dir / "result.json").unlink(missing_ok=True)
     audit = (output_dir / "uart_live.jsonl").open("w", encoding="utf-8", buffering=1)
     last_audit = 0.0
+    last_uart_batch_warning = 0.0
     next_diagnostic = 0.0
     final_diagnostics = False
     hold_started = None
@@ -429,7 +433,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     audit.write(json.dumps(dict(
                         event="diagnostics_timeout", selector=diagnostics_pending,
                         last_diagnostics=diagnostic_values, target_frames=target_frames,
-                        feedback_acks=feedback_acks, bad_checksum=parser.bad_checksum,
+                        feedback_acks=feedback_acks,
+                        feedback_ack_lag=target_frames-feedback_acks,
+                        bad_checksum=parser.bad_checksum,
                         elapsed_s=time.monotonic() - diagnostics_pending_at,
                     )) + "\n")
                     raise TimeoutError(f"Diagnostics timeout: {diagnostics_pending}; "
@@ -443,7 +449,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     raise RuntimeError("QEMU UART disconnected")
                 if data:
                     last_frame_wall = time.monotonic()
-                    for command, payload in parser.consume(data):
+                    batch_started = last_frame_wall
+                    parsed_frames = parser.consume(data)
+                    for command, payload in parsed_frames:
                         if (command == wire.CMD_SET_JOINT_TARGETS and
                                 len(payload) == wire.JOINT_PAYLOAD_LEN):
                             targets = struct.unpack(
@@ -587,6 +595,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             if wall - last_audit >= 1.0:
                                 audit.write(json.dumps(dict(wall_s=wall-start_wall,
                                     target_frames=target_frames, feedback_acks=feedback_acks,
+                                    feedback_ack_lag=target_frames-feedback_acks,
                                     bad_checksum=parser.bad_checksum, **row)) + "\n")
                                 last_audit = wall
                                 live_trace.flush()
@@ -626,6 +635,22 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 value=diagnostic_values[diagnostics_pending],
                                 wall_s=time.monotonic()-start_wall)) + "\n")
                             diagnostics_pending = None
+                    # A large GUI physics batch can delay the next socket
+                    # read and feedback ACK processing. Measure it without
+                    # dropping any motor command or altering the control loop.
+                    batch_duration_s = time.monotonic() - batch_started
+                    if ((len(parsed_frames) >= UART_BATCH_WARNING_FRAMES or
+                         batch_duration_s >= UART_BATCH_WARNING_S) and
+                            time.monotonic() - last_uart_batch_warning >= 1.0):
+                        audit.write(json.dumps(dict(
+                            event="uart_batch_delay",
+                            frames=len(parsed_frames), bytes_received=len(data),
+                            processing_wall_s=round(batch_duration_s, 3),
+                            target_frames=target_frames,
+                            feedback_acks=feedback_acks,
+                            feedback_ack_lag=target_frames-feedback_acks,
+                        )) + "\n")
+                        last_uart_batch_warning = time.monotonic()
 
                 live_polling = not sequencer.done or (options.interactive_hold and not ending)
                 if live_polling and not diagnostics_pending and time.monotonic() >= next_diagnostic:
