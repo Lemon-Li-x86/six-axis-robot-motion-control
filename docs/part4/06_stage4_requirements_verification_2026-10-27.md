@@ -59,3 +59,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
 上面的历史段落反映创建本报告时的状态。当前更新以本机九步统一脚本 `tools/test_stage4_once.ps1` 为准：Stage2 Unity 25/25、Stage2 ARM/QEMU协议8/8、Stage3/4 Host CTest 6/6、Stage4轨迹QEMU14/14、IK选解并FK回代128/128、参考近奇异IK 2/2、FreeRTOS自检29项失败0、Native C Smoke通过，PyBullet单轴与六轴两场景通过。详细运行状态和指标定义见 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md) 与 [`08_stage4_qemu_timing_and_stack_2026-10-27.md`](08_stage4_qemu_timing_and_stack_2026-10-27.md)。
 
 更新不改变本报告中对多负载PID、长时高负载、任务CPU占比和实物实时性的限制判断。
+
+
+## 阶段4收尾补测追踪（独立审查分支）
+
+工作分支 review/stage4-closure-evidence-20261027 补充了 test-only C PID 独立增益覆写、18组 PyBullet DIR​ECT 工况矩阵、Python 状态/配置单测及单独 GitHub Actions 工作流。原 Stage4 冻结备份不动，生产 PID/FreeRTOS 代码不变。真实结果须以 CI 测试日志和 artifacts 为准，代码提交不等于新增工况通过。
+
+本补测解决的是“此前只有小幅默认负载 P 增益对照”的**证据覆盖不足**，仍不等于 PID 全工作空间最优整定，也不验证高负载时的真实硬件实时性。现有 QEMU P99/最大处理经过时间/栈水位的实测记录继续以 08_stage4_qemu_timing_and_stack_2026-10-27.md 为准。CPU 独占占比、30分钟复杂负载和物理硬件 WCET 未测量，不应填写推测数字。
