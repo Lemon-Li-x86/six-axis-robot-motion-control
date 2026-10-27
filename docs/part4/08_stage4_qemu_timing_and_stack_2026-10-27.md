@@ -63,3 +63,32 @@
 4. 真实UART请求到PyBullet反馈闭环、异常帧与硬件安全停机仍属于第5阶段系统集成门禁。
 
 **阶段结论**：已经为第四阶段的调度报告补充了可审计的短时QEMU周期偏差P99、最大处理时间、栈水位与ELF内存分段**实测**，但是满负载/长时间/硬件级实时性仍需独立验收。
+
+## 6. 独立60秒QEMU稳定性基线（实际运行2026-10-27）
+
+[GitHub Actions Run #40446109227](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40446109227) 实际编译 `ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=60000`，并由GDB读回 `healthy_duration_ms=60000`；电机命令输出始终关闭。
+
+| 原始QEMU/GDB观测项 | 数值 |
+|---|---:|
+| `finished/checks/failed` | **1 / 29 / 0** |
+| `requests_accepted` | 1 |
+| `trajectory_samples` | **3150** |
+| `controller_steps` | **6298** |
+| `monitoring_ticks` | **632** |
+| `controller_faults` / `feedback_stale_count` | **1 / 1** |
+| Control/Trajectory/Monitor剩余最小栈 | 375 / 609 / 349 words |
+| 三任务最近计时窗口样本 | 各128次 |
+
+| 最近128次观测（每任务） | 周期偏差P99 | 最大处理经过时间 |
+|---|---:|---:|
+| Control | 19.56 μs | 128.12 μs |
+| Trajectory | 35.60 μs | 9.24 μs |
+| Monitor | 51.64 μs | 64.40 μs |
+
+本次新增 `stage4_timing_probe.c` 固定大小128样本**循环缓冲**：延长运行时始终保留最近128次观测，而不是首128次。数值因而主要反映临近60秒的稳定状态，**不能拿这些更小的处理耗时覆盖1.2秒试验中曾观测到的启动/规划峰值**。先前短测的Control最大处理经过时间2.081ms仍需在性能分析中保留。
+
+60秒测试继续进行原先的“停止注入模拟反馈→等待生产配置的超时→确认控制停止下发新目标”的13项安全检查，扩展后总计29项；云端结果PASS。
+
+**证据边界**：这里的60秒是QEMU虚拟时钟中的运行时间。场景为周期性**静止**模拟关节反馈、单次运动请求和无电机输出；不包含UART持续收发、多次目标切换、PyBullet动力学反馈、高CPU占用笛卡尔连续逆解或30分钟稳定性。因此这是新的**延长稳定性基线**，而不是项目第6阶段的完整长时间系统测试。
+
+参数唯一来源：`firmware/freertos_demo/CMakeLists.txt` 提供测试专用 `ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS`（快速测试默认1200，扩展试验60000），由编译定义送入唯一QEMU测试任务；非测试固件没有这项行为或计时采样内存。
