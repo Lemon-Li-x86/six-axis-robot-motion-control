@@ -89,6 +89,42 @@ jobs:
           path: build/stage5-live-evidence/*
           if-no-files-found: ignore
 
+  native-gui-no-drag-xvfb:
+    # Real p.GUI stepping (not DIRECT), software-rendered under Xvfb.
+    # Separate from the known-unreliable external-torque disturbance check.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, Bullet and virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Compile virtual-only firmware for UART loop
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+      - name: Run full three-segment native GUI without mouse input
+        run: |
+          timeout 120s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis --opengl2 --no-hold --timeout-s 60 \
+            --output-dir build/stage5-ci-gui-nodrag
+      - name: Preserve GUI physical motion and latency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-nodrag-xvfb
+          path: build/stage5-ci-gui-nodrag/*
+          if-no-files-found: ignore
+
   native-firmware-regression:
     runs-on: ubuntu-latest
     steps:
