@@ -102,3 +102,18 @@
 **尚存的跨语言镜像问题**：旧 `simulation/pybullet_ur5/src/qemu_uart_receiver.py` 单独写了帧头、命令ID、关节数量和角度缩放。它们必须与固件 `protocol.h` / `robot_types.h` 一致；未来协议扩展应通过单点schema/生成逻辑消除人工双维护。本轮全局审查将其作为待处理接口风险，而不是在没有端到端测试的情况下直接替换协议解析器。
 
 **安全边界**：真实UART↔PyBullet反馈闭环、丢包/延迟/错误帧故障注入、Control周期P99/WCET、长时运行、实物急停/碰撞约束仍需独立验收；此前6组Host/ARM-QEMU软件自检/PyBullet小幅实验全绿不等于整机可以上电运行。
+
+## 2026-10-27 第四阶段 QEMU 时间计量参数补录
+
+新增的 `application/tasks/stage4_timing_probe.[ch]` **仅用于非驱动QEMU自检**，不属于正式运动控制参数或硬件性能承诺：
+
+| 对象 | 单位/语义 | 唯一来源 | 使用范围 |
+|---|---|---|---|
+| Timer0原始频率 `timer_driver_get_frequency_hz()` | counter ticks/s（本次25 MHz） | `drivers/timer_driver.[ch]` 返回 `BOARD_SYSCLK_HZ` | QEMU采样和报告换算，**不能再硬编码25MHz** |
+| 周期名义值 | ms，Control 10、Trajectory 20、Monitor 100 | `config/robot_defaults.json` → `task_config.h` | 时间采样分别按现有任务周期计算偏差 |
+| `STAGE4_TIMING_CAPACITY=128` | 每任务采样容量（次） | `application/tasks/stage4_timing_probe.h` | **测试夹具固定内存上限**，不是固件控制策略 |
+| `g_stage4_timing_summary[3]` | Timer0 ticks下的P99绝对周期偏差、最大值、P99/最大处理经过时间 | `stage4_timing_probe.c`；测试结束由QEMU专用任务冻结 | GDB诊断；正常固件不编译或链接 |
+| `uxTaskGetStackHighWaterMark()` | words，任务运行以来的最小剩余栈空间 | FreeRTOS内核/Monitor Task | 与配置JSON的栈分配words作对照 |
+| 报告P99算法 | 最近阶 `ceil(0.99*N)` | `stage4_timing_probe.c` 单一排序实现 | `tools/analyze_stage4_timing.py` 只做校验、单位换算与归档；**不重算另一份P99** |
+
+该诊断默认不可用：只在 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON`、同时保持 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF` 的隔离ARM测试镜像中编译。参数和诊断不得迁移到生产Model、PID或Stage5 APF逻辑。
