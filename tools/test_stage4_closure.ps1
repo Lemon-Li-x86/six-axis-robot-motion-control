@@ -20,6 +20,7 @@
 param(
     [switch]$IncludeQemuBaseline,
     [switch]$IncludeGuiReplay,
+    [switch]$HostBuildOnly,
     [string]$HostCompiler
 )
 
@@ -162,6 +163,15 @@ $library = Get-ChildItem -Path $nativeDir -Recurse -File |
 
 if ($null -eq $library) {
     throw "No Stage4 native C bridge library found under $nativeDir"
+}
+
+# Diagnostic-only entry for Windows CI: verifies toolchain detection,
+# native host compilation and C smoke tests, but does not claim that
+# PyBullet or QEMU integration was exercised.
+if ($HostBuildOnly) {
+    Write-Host "[Stage4] Native host compiler and C smoke tests passed."
+    Write-Host "[Stage4] PyBullet/QEMU intentionally NOT tested (-HostBuildOnly)."
+    return
 }
 
 Invoke-Checked 'Validate PID sensitivity matrix definitions' $python @(
