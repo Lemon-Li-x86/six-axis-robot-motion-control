@@ -140,6 +140,42 @@ DIRECT 外力测试冒充桌面鼠标操作通过**。桌面仍需记录左键�
 但这些记录**不能**当作原生 GUI 新架构的验收结论。旧版
 `drag_events.jsonl`、`mouse_events.jsonl` 及相关自定义拖拽测试现已弃用。
 
+## 实验性被动 HOLD：不提前判定回位失败
+
+若原生 GUI 大幅拖拽后无法回到最终请求角，不能简单扩大 PID 增益或
+关闭固件失联保护。先使用**被动观察模式**区分“现有 C PID 自行回位”
+和“Python 因静止而反复下发新运动请求”。
+
+```powershell
+git fetch origin
+git switch fix/stage5-native-pybullet-interaction-20261027
+git pull --ff-only
+.\tools\run_stage5_live_windows.ps1 -ObserveHold -DiagnosticsTimeoutSeconds 30
+```
+
+- `-ObserveHold` 仅对 *HOLD 期间的额外重规划器* 生效：关节偏离原始
+  目标仍会记录 `hold_deviation`，出现长期几乎不动会记录一次
+  `hold_observe_stalled`，但不会因该情况提交重复运动请求或抛出
+  “回位不收敛”异常。真正的 C 控制器仍保持原目标、继续工作。
+- `-DiagnosticsTimeoutSeconds 30` 将每条查询诊断的墙钟等待从默认
+  5 秒延长为 30 秒，可在 5～60 秒之间配置，**没有无限等待**。
+  QEMU退出、UART 8 秒完全断流、运动请求 ACK 超时、错误校验和
+  固件真实故障不会因为这一开关被忽略。
+- 正常的闭环验收仍按原标准。观察模式结束时，即使最终误差超标，
+  `result.json` 仍保留 `passed=false` 和 `hold_final_error_deg`；
+  在控制链路本身正常的情况下允许正常退出，以免把“实验观测完成”
+  错报成“程序崩溃”。控制台会显示 `OBSERVED (NOT PASS)`。
+- `-NoHold` 与 `-ObserveHold` 不兼容。观察完成后在 GUI 中按 Q
+  或在 PowerShell Ctrl+C 退出，检查原始位置、固件故障计数和
+  `hold_recovered` 是否出现。
+- 若诊断查询最终仍超时，程序保存 `diagnostics_timeout` 事件和当时
+  UART 目标/反馈 ACK 计数；这是通信/诊断通路问题，不能默默跳过。
+
+重点区别：`target/actual` 是**固件电机命令/物理反馈**，不等于
+“最终请求目标/物理反馈”。原始 `six_axis` 最终关节目标为
+`[30,-45,60,20,5,-10]` 度。机械臂被拉开后，执行角贴着实测角
+只说明低层电机跟踪，并不代表完成高层回位。
+
 ## Windows 原生退出 3221225477 / 0xC0000005
 
 用户机器的 Python 3.11.15 曾在 python311.dll 中发生访问冲突，日志同时
