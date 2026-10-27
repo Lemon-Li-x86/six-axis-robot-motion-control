@@ -811,14 +811,22 @@ def main() -> int:
                         help="Use DIRECT for automated testing (no GUI)")
     parser.add_argument("--frame-delay-ms", type=float, default=50.0,
                         help="Additional wall-clock delay per feedback frame; GUI only")
+    parser.add_argument("--headless-step-delay-ms", type=float, default=0.0,
+                        help="CI stress test: simulated slow GUI frame handling in DIRECT, "
+                             "without changing C firmware or physical time step")
     parser.add_argument("--timeout-s", type=float, default=180.0)
     parser.add_argument("--no-hold", action="store_true",
                         help="Close the PyBullet window immediately after finishing")
     args = parser.parse_args()
+    if not math.isfinite(args.headless_step_delay_ms) or not (0 <= args.headless_step_delay_ms <= 50):
+        parser.error("--headless-step-delay-ms must be between 0 and 50")
+    if not args.headless and args.headless_step_delay_ms:
+        parser.error("--headless-step-delay-ms requires --headless")
     options = DemoOptions(
         scenario=args.scenario,
         headless=args.headless,
-        frame_delay_s=0.0 if args.headless else args.frame_delay_ms / 1000.0,
+        frame_delay_s=(args.headless_step_delay_ms if args.headless
+                       else args.frame_delay_ms) / 1000.0,
         timeout_s=args.timeout_s,
         hold_window=not args.no_hold,
     )
