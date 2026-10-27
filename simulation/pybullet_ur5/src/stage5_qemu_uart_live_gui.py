@@ -28,33 +28,50 @@ from stage5_qemu_uart_visual_demo import DemoOptions, SCENARIOS, run
 
 # Display-only policies. The serial/physics controller has no GUI delays.
 REFRESH_HZ = 30.0
-IPC_QUEUE_CAPACITY = 32
 MIN_OBSERVED_MOTION_DEG = 2.0
 RawFrame = tuple[float, int, tuple[int, ...]]
 
 
-def publish_latest(channel: Any, sample: RawFrame) -> None:
-    """Never wait for the GUI; discard stale display data on queue overflow.
+class LatestMailbox:
+    """Single latest sample; no pipe, feeder thread, queue drain, or blocking lock.
 
-    Dropping a display sample does not drop a UART feedback frame: the
-    authoritative DIRECT simulation runs independently in the worker.
+    Producer/consumer acquire the shared lock with blocking=False. A stalled
+    renderer can only lose display samples, never stall UART or child shutdown.
     """
-    try:
-        channel.put_nowait(sample)
-    except queue.Full:
+    def __init__(self, context):
+        self.data = context.Array("d", 19, lock=False)
+        self.lock = context.Lock()
+        self.skipped = context.Value("L", 0, lock=False)
+        self.seen = 0
+
+    def publish(self, stamp, segment, measured, targets, acks, bad):
+        if not self.lock.acquire(False):
+            self.skipped.value += 1
+            return
         try:
-            channel.get_nowait()
-        except queue.Empty:
-            pass
+            self.data[0] += 1
+            self.data[1:] = (stamp, segment, *measured, *targets, acks, bad,
+                             self.skipped.value, time.monotonic())
+        finally:
+            self.lock.release()
+
+    def get_nowait(self):
+        if not self.lock.acquire(False):
+            raise queue.Empty
         try:
-            channel.put_nowait(sample)
-        except queue.Full:
-            pass
+            values = tuple(self.data)
+        finally:
+            self.lock.release()
+        if int(values[0]) == self.seen:
+            raise queue.Empty
+        self.seen = int(values[0])
+        self.status = values
+        return (values[1], int(values[2]), tuple(int(v) for v in values[3:9]))
 
 
 def capture_worker(
     elf: str, output: str, qemu: str, scenario: str, timeout_s: float,
-    channel: Any,
+    channel: Any, stop: Any,
 ) -> None:
     """Run unchanged firmware-driven feedback physics in a spawned process."""
     options = DemoOptions(
@@ -64,12 +81,19 @@ def capture_worker(
         timeout_s=timeout_s,
         hold_window=False,
     )
-    def push(timestamp_s: float, segment: int, measured_raw: tuple[int, ...]) -> None:
-        publish_latest(channel, (timestamp_s, segment, measured_raw))
+    def push(stamp, segment, measured, targets, acks, bad):
+        channel.publish(stamp, segment, measured, targets, acks, bad)
 
+    Path(output).mkdir(parents=True, exist_ok=True)
+    log = (Path(output) / "worker.log").open("w", encoding="utf-8", buffering=1)
+    sys.stdout = log
+    sys.stderr = log
+    import faulthandler
+    faulthandler.enable(log)
+    faulthandler.dump_traceback_later(20, repeat=True, file=log)
     try:
         report = run(
-            Path(elf), Path(output), qemu, options, on_measurement=push
+            Path(elf), Path(output), qemu, options, on_sample=push, stop_requested=stop.is_set
         )
         if report.get("passed") is not True:
             raise RuntimeError("QEMU/FreeRTOS/UART physics verdict failed")
@@ -80,9 +104,11 @@ def capture_worker(
             flush=True,
         )
     except Exception:
-        # Child tracebacks must be visible on the Windows parent console.
+        # Keep tracebacks in worker.log even if the terminal is paused.
         traceback.print_exc()
         raise
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 class LiveMeasurements:
@@ -203,34 +229,35 @@ def run_live(
             raise
 
     context = mp.get_context("spawn")
-    channel = context.Queue(maxsize=IPC_QUEUE_CAPACITY)
+    channel = LatestMailbox(context)
+    stop = context.Event()
     worker = context.Process(
         target=capture_worker,
         args=(str(elf.resolve()), str(output_dir.resolve()),
-              qemu, scenario, timeout_s, channel),
+              qemu, scenario, timeout_s, channel, stop),
         name="stage5-qemu-uart-pybullet-direct",
     )
     last_visible_update = 0.0
     last_segment = 0
     try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "observer_result.json").unlink(missing_ok=True)
         worker.start()
+        started = time.monotonic()
+        console_at = 0.0
+        rendered = 0
+        rendered_sequence = 0
+        audit = (output_dir / "observer.jsonl").open("w", encoding="utf-8", buffering=1)
         print("[LIVE] QEMU + FreeRTOS + UART + PyBullet DIRECT running now", flush=True)
         while True:
             frame = None
             # Bounded waiting keeps GUI interactive and does not throttle UART.
             try:
-                frame = channel.get(timeout=1.0 / refresh_hz)
+                frame = channel.get_nowait()
             except queue.Empty:
                 pass
             if frame is not None:
                 measurements.observe(frame, worker.is_alive())
-                # Keep only newest frame ready for the next screen refresh.
-                while True:
-                    try:
-                        next_frame = channel.get_nowait()
-                    except queue.Empty:
-                        break
-                    measurements.observe(next_frame, worker.is_alive())
                 if measurements.latest is not None:
                     segment = measurements.latest[1]
                     if segment > last_segment:
@@ -239,11 +266,39 @@ def run_live(
                         last_segment = segment
             now = time.monotonic()
             if (p is not None and measurements.latest is not None and
+                    channel.seen != rendered_sequence and
                     now - last_visible_update >= 1.0 / refresh_hz):
                 last_tool, text_id = render_measurement(
                     p, arm, joints, measurements.latest, last_tool, text_id
                 )
                 last_visible_update = now
+                rendered += 1
+                rendered_sequence = channel.seen
+            if p is not None and not p.isConnected(client):
+                raise RuntimeError("GUI closed during live control")
+            if now - started > timeout_s + 25.0:
+                raise TimeoutError("Worker exceeded wall deadline; inspect worker.log and uart_live.jsonl")
+            if measurements.latest is not None and now - console_at >= 1.0:
+                status = channel.status
+                snapshot = dict(wall_s=now-started, sequence=int(status[0]),
+                    received=measurements.frames_received, rendered=rendered,
+                    display_dropped=int(status[0])-measurements.frames_received+int(status[17]),
+                    publish_busy=int(status[17]), age_s=now-status[18],
+                    target_deg=[v / wire.JOINT_ANGLE_SCALE for v in status[9:15]],
+                    actual_deg=[v / wire.JOINT_ANGLE_SCALE for v in status[3:9]],
+                    feedback_acks=int(status[15]), bad_checksum=int(status[16]))
+                audit.write(json.dumps(snapshot) + "\n")
+                angles = " | ".join(
+                    f"J{i+1} {target:.2f}/{actual:.2f}"
+                    for i, (target, actual) in enumerate(zip(
+                        snapshot["target_deg"], snapshot["actual_deg"])))
+                print(f"[UART LIVE target/actual deg] {angles} | "
+                      f"RX={snapshot['sequence']} ACK={snapshot['feedback_acks']} "
+                      f"render={rendered} display_drop={snapshot['display_dropped']} "
+                      f"checksum_bad={snapshot['bad_checksum']} age={snapshot['age_s']:.3f}s",
+                      flush=True)
+                console_at = now
+            time.sleep(1.0 / refresh_hz)
             if not worker.is_alive():
                 # Drain samples published at the end of the control sequence.
                 worker.join()
@@ -258,7 +313,7 @@ def run_live(
         if worker.exitcode != 0:
             raise RuntimeError(
                 f"QEMU physics worker failed (exit {worker.exitcode}); "
-                "inspect its traceback and joint_trace.csv"
+                "inspect worker.log, uart_live.jsonl and joint_trace.csv"
             )
         report_file = output_dir / "result.json"
         if not report_file.is_file():
@@ -271,7 +326,7 @@ def run_live(
         print("[LIVE] Measured joint ranges: " + ", ".join(
             f"J{i+1}={angle:.2f}deg" for i, angle in enumerate(motion)
         ), flush=True)
-        if (not motion or max(motion) < MIN_OBSERVED_MOTION_DEG or
+        if (not motion or min(motion) < MIN_OBSERVED_MOTION_DEG or
                 measurements.frames_received < 10):
             raise RuntimeError("Insufficient live physical movement was observed")
         if measurements.frames_while_worker_alive == 0:
@@ -281,13 +336,23 @@ def run_live(
             f"{measurements.frames_while_worker_alive} received during control",
             flush=True,
         )
+        summary = dict(received=measurements.frames_received, rendered=rendered,
+            published=channel.seen, publish_busy=int(channel.skipped.value),
+            display_dropped=channel.seen-measurements.frames_received+int(channel.skipped.value),
+            frames_during_control=measurements.frames_while_worker_alive,
+            joint_ranges_deg=motion, headless_observer=headless_observer)
+        (output_dir / "observer_result.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         return result
     finally:
+        stop.set()
+        if worker.is_alive():
+            worker.join(timeout=5.0)
         if worker.is_alive():
             worker.terminate()
         if worker.pid is not None:
             worker.join(timeout=5.0)
-        channel.close()
+        if "audit" in locals():
+            audit.close()
         if p is not None and client >= 0:
             if hold_window and worker.exitcode == 0:
                 try:

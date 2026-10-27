@@ -9,6 +9,9 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
       - 'tools/tests/test_stage5_live_gui.py'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
+      - 'tools/run_stage5_live_windows.ps1'
+      - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
   workflow_dispatch:
 
@@ -17,7 +20,10 @@ permissions:
 
 jobs:
   live-ipc-unit-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Unit-test nonblocking live-frame delivery and measurement validation
@@ -26,37 +32,44 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
 
   genuine-qemu-uart-live-observer:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Install ARM QEMU and PyBullet
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-arm-none-eabi libnewlib-arm-none-eabi \
             qemu-system-arm ninja-build
           python -m pip install pybullet
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+        if: runner.os == 'Windows'
+      - name: Install Windows QEMU and PyBullet
+        if: runner.os == 'Windows'
+        run: |
+          choco install qemu --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+          python -m pip install pybullet
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
-          cmake -S . -B build/stage5-live-uart -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
-            -DROBOT_ENABLE_STAGE4_TASKS=ON \
-            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON \
-            -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON \
-            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
-          cmake --build build/stage5-live-uart --target freertos_demo
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
       - name: Observe measured joint movement DURING QEMU UART feedback
         run: |
-          timeout 240s python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
-            --headless-observer \
-            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
-            --scenario six_axis \
-            --output-dir build/stage5-live-evidence
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --scenario six_axis --output-dir build/stage5-live-evidence
       - name: Preserve physical trace and protocol diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage5-live-qemu-measured-state-evidence
+          name: stage5-live-qemu-measured-state-evidence-${{ runner.os }}
           path: build/stage5-live-evidence/*
           if-no-files-found: ignore

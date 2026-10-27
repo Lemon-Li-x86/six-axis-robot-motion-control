@@ -1,0 +1,23 @@
+param(
+    [string]$Python = "$PSScriptRoot/../.venv/Scripts/python.exe",
+    [string]$Qemu = "qemu-system-arm",
+    [string]$OutputDir = "build/stage5-live-windows",
+    [switch]$NoHold
+)
+$ErrorActionPreference = "Stop"
+Push-Location (Join-Path $PSScriptRoot "..")
+try {
+    & cmake --preset stage5-live-uart
+    if ($LASTEXITCODE -ne 0) { throw "Firmware configure failed" }
+    & cmake --build --preset stage5-live-uart
+    if ($LASTEXITCODE -ne 0) { throw "Firmware build failed" }
+    $liveArgs = @("simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py",
+        "--elf", "build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf",
+        "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir)
+    if ($NoHold) { $liveArgs += "--no-hold" }
+    # This terminal shows UART telemetry; PyBullet opens its own native window.
+    & $Python @liveArgs
+    if ($LASTEXITCODE -ne 0) { throw "Live control failed; inspect $OutputDir/worker.log" }
+} finally {
+    Pop-Location
+}

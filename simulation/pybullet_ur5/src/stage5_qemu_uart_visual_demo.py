@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
+import select
 import struct
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +31,7 @@ from stage4_dynamic_closed_loop import (
     ROOT,
     START_RAW,
     URDF,
+    DEFAULT_JSON,
     angles_raw,
     joint_indices,
 )
@@ -219,7 +223,9 @@ def request_diagnostics(sock, name: str) -> None:
 
 def run(elf: Path, output_dir: Path, qemu_executable: str,
         options: DemoOptions,
-        on_measurement: Callable[[float, int, tuple[int, ...]], None] | None = None
+        on_measurement: Callable[[float, int, tuple[int, ...]], None] | None = None,
+        on_sample: Callable | None = None,
+        stop_requested: Callable[[], bool] | None = None,
         ) -> dict:
     """启动真实 ARM 固件并与 PyBullet 双向交互，返回真实观测统计。"""
     import pybullet as p
@@ -251,16 +257,42 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     debug_text_id = -1
     completed_successfully = False
 
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale verdicts before starting; a failed run must not inherit PASS.
+    (output_dir / "result.json").unlink(missing_ok=True)
+    audit = (output_dir / "uart_live.jsonl").open("w", encoding="utf-8", buffering=1)
+    last_audit = 0.0
+    next_diagnostic = 0.0
+    final_diagnostics = False
+    live_trace = (output_dir / "joint_trace.csv").open("w", encoding="utf-8", newline="")
+    trace_writer = csv.DictWriter(live_trace, fieldnames=TRACE_HEADER)
+    trace_writer.writeheader()
+    live_trace.flush()
+    qemu_error = (output_dir / "qemu_stderr.log").open("w", encoding="utf-8")
     port = integration.vacant_tcp_port()
-    qemu = subprocess.Popen(
-        [qemu_executable, "-M", "mps2-an386", "-kernel", str(elf.resolve()),
-         "-display", "none", "-monitor", "none",
-         "-serial", f"tcp:127.0.0.1:{port},server,nowait"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    metadata = dict(elf=str(elf.resolve()),
+        elf_sha256=hashlib.sha256(elf.read_bytes()).hexdigest(),
+        config_sha256=hashlib.sha256(DEFAULT_JSON.read_bytes()).hexdigest(),
+        urdf_sha256=hashlib.sha256(URDF.read_bytes()).hexdigest(),
+        python=sys.version, platform=sys.platform, qemu_executable=qemu_executable,
+        qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
+        feedback_step_s=FEEDBACK_STEP_S, physics_step_s=PHYSICS_STEP_S,
+        note="config hash is current source; use preset build for matching ELF")
+    (output_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    qemu = None
     client = -1
     try:
+        qemu = subprocess.Popen(
+            [qemu_executable, "-M", "mps2-an386", "-kernel", str(elf.resolve()),
+             "-display", "none", "-monitor", "none",
+             # Windows wall-clock timer bursts can advance RTOS control without
+             # corresponding Python feedback. Pace virtual time adaptively; this
+             # remains live ARM execution with real UART feedback, not trace replay.
+             *(["-icount", "shift=auto,sleep=on"] if sys.platform == "win32" else []),
+             "-serial", f"tcp:127.0.0.1:{port},server,nowait"],
+            stdout=subprocess.DEVNULL,
+            stderr=qemu_error,
+        )
         with integration.join_qemu_serial(port, qemu) as sock:
             client = p.connect(p.DIRECT if options.headless else p.GUI)
             if client < 0:
@@ -305,7 +337,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 elif ready_bytes == b"":
                     raise RuntimeError("QEMU UART disconnected during readiness probe")
                 else:
-                    time.sleep(0.002)
+                    select.select([sock], [], [], 0.002)
             if not ready:
                 raise TimeoutError("FreeRTOS ProtocolRX did not become ready")
 
@@ -314,6 +346,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             start_wall = time.monotonic()
             last_frame_wall = start_wall
             while time.monotonic() - start_wall < options.timeout_s:
+                if stop_requested is not None and stop_requested():
+                    raise InterruptedError("Observer requested live control shutdown")
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
                 if time.monotonic() - last_frame_wall > 8.0:
@@ -400,6 +434,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 row[f"error_{name}_deg"] = (
                                     target - actual) / wire.JOINT_ANGLE_SCALE
                             trace.append(row)
+                            trace_writer.writerow(row)
                             # Optional nonblocking stream of actual PyBullet
                             # measurements. The receiver must never render or
                             # wait here: UART feedback has already been sent.
@@ -408,6 +443,18 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     row["simulated_time_s"], row["segment"],
                                     tuple(measured),
                                 )
+
+                            if on_sample is not None:
+                                on_sample(row["simulated_time_s"], row["segment"],
+                                          tuple(measured), targets, feedback_acks,
+                                          parser.bad_checksum)
+                            wall = time.monotonic()
+                            if wall - last_audit >= 1.0:
+                                audit.write(json.dumps(dict(wall_s=wall-start_wall,
+                                    target_frames=target_frames, feedback_acks=feedback_acks,
+                                    bad_checksum=parser.bad_checksum, **row)) + "\n")
+                                last_audit = wall
+                                live_trace.flush()
 
                             if sequencer.observe(measured):
                                 print(f"[SETTLED] Segment {sequencer.completed}/"
@@ -432,9 +479,22 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                               len(payload) == 4 and diagnostics_pending):
                             diagnostic_values[diagnostics_pending] = (
                                 struct.unpack("<I", payload)[0])
+                            audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
+                                value=diagnostic_values[diagnostics_pending],
+                                wall_s=time.monotonic()-start_wall)) + "\n")
                             diagnostics_pending = None
 
+                if not sequencer.done and not diagnostics_pending and time.monotonic() >= next_diagnostic:
+                    diagnostics_pending = names[diagnostics_index % len(names)]
+                    diagnostics_index += 1
+                    diagnostics_pending_at = time.monotonic()
+                    next_diagnostic = diagnostics_pending_at + 0.25
+                    request_diagnostics(sock, diagnostics_pending)
                 if sequencer.done and not diagnostics_pending:
+                    if not final_diagnostics:
+                        diagnostics_index = 0
+                        final_diagnostics = True
+
                     if diagnostics_index < len(names):
                         diagnostics_pending = names[diagnostics_index]
                         diagnostics_index += 1
@@ -443,7 +503,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     else:
                         break
                 if not data:
-                    time.sleep(0.002)
+                    select.select([sock], [], [], 0.002)
             else:
                 raise TimeoutError(
                     f"Demo timed out after {options.timeout_s}s; "
@@ -482,6 +542,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "feedback_acks": feedback_acks,
                 "bad_ack_frames": bad_acks,
                 "bad_checksum_frames": parser.bad_checksum,
+                "uart_partial_writes": sock.partial_writes,
+                "uart_would_block": sock.would_block,
+                "qemu_clock": "adaptive_icount" if sys.platform == "win32" else "wall",
+                "wall_duration_s": time.monotonic()-start_wall,
                 "diagnostics": diagnostic_values,
                 "fault_counters": faults,
                 "passed": passed,
@@ -493,23 +557,27 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 ],
             }
             output_dir.mkdir(parents=True, exist_ok=True)
-            write_trace(output_dir, trace)
+            live_trace.flush()
             result["plot_saved"] = write_plot(output_dir, trace)
             (output_dir / "result.json").write_text(
                 json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
             )
             completed_successfully = bool(result["passed"])
             return result
+    except BaseException as error:
+        (output_dir / "result.json").write_text(json.dumps(dict(passed=False,
+            error=repr(error), target_frames=target_frames, feedback_acks=feedback_acks,
+            segments_settled=sequencer.completed, diagnostics=diagnostic_values), indent=2), encoding="utf-8")
+        raise
     finally:
         # QEMU 停止后才保持 GUI，避免固件在暂停反馈时误报失联。
-        qemu.terminate()
-        try:
-            _, stderr = qemu.communicate(timeout=3)
-        except subprocess.TimeoutExpired:
-            qemu.kill()
-            _, stderr = qemu.communicate()
-        if stderr and qemu.returncode not in (0, -15, None):
-            print("QEMU stderr:", stderr.decode(errors="replace")[-1500:])
+        if qemu is not None:
+            qemu.terminate()
+            try:
+                qemu.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+                qemu.communicate()
         if client >= 0:
             if not options.headless and options.hold_window:
                 try:
@@ -519,8 +587,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     pass
             p.disconnect(client)
         # 异常中途退出也留存已接收的轨迹，用于诊断。
-        if trace and not (output_dir / "joint_trace.csv").is_file():
-            write_trace(output_dir, trace)
+        audit.close()
+        live_trace.close()
+        qemu_error.close()
 
 
 def main() -> int:
