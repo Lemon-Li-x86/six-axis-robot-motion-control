@@ -76,11 +76,11 @@ class QemuClockGate:
             yield
             return
         self.command("stop")
-        # A successful stop reply is not a substitute for observed guest state.
-        if self.command("query-status").get("status") != "paused":
-            raise RuntimeError("QEMU failed to pause before PyBullet physics")
-        self.pauses += 1
         try:
+            # A successful stop reply is not a substitute for observed guest state.
+            if self.command("query-status").get("status") != "paused":
+                raise RuntimeError("QEMU failed to pause before PyBullet physics")
+            self.pauses += 1
             yield
         finally:
             self.command("cont")
