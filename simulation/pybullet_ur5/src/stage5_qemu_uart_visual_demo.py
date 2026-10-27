@@ -247,6 +247,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     diagnostics_pending_at = 0.0
     last_tool_xyz: tuple[float, float, float] | None = None
     debug_text_id = -1
+    completed_successfully = False
 
     port = integration.vacant_tcp_port()
     qemu = subprocess.Popen(
@@ -314,7 +315,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
                 if time.monotonic() - last_frame_wall > 8.0:
-                    raise TimeoutError("No target/ACK from QEMU for 8 seconds")
+                    raise TimeoutError(
+                        "No UART frames from QEMU for 8 seconds; "
+                        f"targets={target_frames}, feedback_acks={feedback_acks}, "
+                        f"accepted={sequencer.accepted}, "
+                        f"completed={sequencer.completed}/{len(sequencer.goals)}. "
+                        "See joint_trace.csv for the last measured motion."
+                    )
                 if sequencer.ack_pending and (
                     time.monotonic() - sequencer.requested_at > 8.0
                 ):
@@ -481,6 +488,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             (output_dir / "result.json").write_text(
                 json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
             )
+            completed_successfully = bool(result["passed"])
             return result
     finally:
         # QEMU 停止后才保持 GUI，避免固件在暂停反馈时误报失联。
@@ -495,7 +503,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         if client >= 0:
             if not options.headless and options.hold_window:
                 try:
-                    input("[GUI] 运动结束。按 Enter 关闭窗口...")
+                    status = "成功完成" if completed_successfully else "中断或失败"
+                    input(f"[GUI] 演示{status}，按 Enter 关闭窗口...")
                 except EOFError:
                     pass
             p.disconnect(client)
