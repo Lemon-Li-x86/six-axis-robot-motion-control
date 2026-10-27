@@ -58,7 +58,7 @@ static void repulsion_and_safety(void)
     config.repulsion_gain=0.0;
     info.reached_goal=77U;
     CHECK(robot_apf_step(&start,&goal,&box,1U,&config,&next,&info)
-          ==ROBOT_STATUS_OK); /* goal y=2: path stays outside AABB */
+          ==ROBOT_STATUS_ERROR_NO_SOLUTION); /* swept diagonal crosses box */
     {
         const robot_apf_point_t blocked_goal={{10.0,0.0,0.0}};
         next.mm[0]=-777.0;
