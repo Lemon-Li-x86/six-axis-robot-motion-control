@@ -107,7 +107,9 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
         qemu_bin, "-M", "mps2-an386", "-kernel", str(elf.resolve()),
         "-display", "none", "-monitor", "none",
         "-serial", f"tcp:127.0.0.1:{port},server,nowait",
-        "-icount", "shift=auto,sleep=on",
+        # No -icount: use QEMU's wall-clock virtual timer backend.
+        # An instruction-counted emulation can advance <1 simulated ms
+        # per 10ms Python feedback cycle and starve the periodic planner.
     ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     client = -1
     try:
