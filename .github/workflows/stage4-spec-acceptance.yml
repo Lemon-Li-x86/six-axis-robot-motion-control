@@ -8,6 +8,7 @@ on:
       - 'tools/ci_stage4_algorithm_qemu.sh'
       - 'tools/ci_stage4_rtos_qemu.sh'
       - 'tools/analyze_stage4_timing.py'
+      - 'tools/tests/test_stage4_timing.py'
       - 'tools/check_protocol_mirror.py'
       - 'tools/test_stage4_once.ps1'
       - 'firmware/freertos_demo/**'
@@ -23,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Unit-test Stage4 timing P99 and stack report parser
+        run: python -m unittest discover -s tools/tests -p test_stage4_timing.py
       - name: Verify C-to-Python UART wire constants agree
         run: python tools/check_protocol_mirror.py
       - name: Build Stage 2 Host motor/selector safety tests
