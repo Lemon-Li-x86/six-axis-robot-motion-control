@@ -35,6 +35,9 @@ START_RAW = (3000, -4500, 6000, 2000, 500, -1000)
 TRIAL_GOALS = {
     # Test fixtures only; these are not UR5 hardware limit definitions.
     "joint2": (3000, -4300, 6000, 2000, 500, -1000),
+    # Additional closure-study fixtures; all angles are signed centidegrees.
+    "joint2_reverse": (3000, -4700, 6000, 2000, 500, -1000),
+    "six_axis_medium": (3500, -4000, 6500, 2500, 1000, -500),
     "six_axis": (3050, -4300, 6100, 2050, 550, -900),
 }
 COUNT = len(JOINT_NAMES)
