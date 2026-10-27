@@ -83,73 +83,38 @@ static void task_protocol_tx(void *parameters)
 {
     robot_joint_angles_t joint_targets;
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN];
-#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
-    /* Virtual UART-only flow control: every accepted joint feedback sample
-     * grants one target frame. The GUI simulator must never be flooded with
-     * unconsumed motor commands. This does NOT apply to real motor output. */
-    uint32_t last_sent_feedback_sequence = 0U;
-#endif
     (void)parameters;
 
     for (;;)
     {
         robot_status_t status;
-        uint8_t send_allowed = 1U;
-#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
-        motor_state_observation_t flow_feedback;
-        uint32_t available_feedback_sequence = 0U;
-
-        status = motor_state_get_feedback(&flow_feedback);
-        if (status == ROBOT_STATUS_OK)
-        {
-            available_feedback_sequence =
-                flow_feedback.feedback.sample_sequence;
-        }
-        if (status != ROBOT_STATUS_OK ||
-            available_feedback_sequence == 0U ||
-            available_feedback_sequence == last_sent_feedback_sequence)
-        {
-            send_allowed = 0U;
-        }
-#endif
-        if (send_allowed != 0U)
-        {
 #if ROBOT_ENABLE_STAGE4_TASKS && ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
-            motion_stage4_diagnostics_t motion;
-            status = motion_pipeline_get_diagnostics(&motion);
-            if (status == ROBOT_STATUS_OK && motion.controller_steps == 0U)
-            {
-                /* Before the first validated Control output, hold the measured
-                 * pose. JSON startup targets belong to the legacy demo, not an
-                 * accepted motion request. No feedback means no target frame. */
-                motor_state_observation_t feedback;
-                status = motor_state_get_feedback(&feedback);
-                if (status == ROBOT_STATUS_OK)
-                    joint_targets = feedback.feedback.canonical_positions;
-            }
-            else if (status == ROBOT_STATUS_OK)
-            {
-                /* Read AFTER the publication count: otherwise Control could
-                 * publish between a stale target read and this diagnostic read. */
-                status = motor_state_get_targets(&joint_targets);
-            }
-#else
+        motion_stage4_diagnostics_t motion;
+        status = motion_pipeline_get_diagnostics(&motion);
+        if (status == ROBOT_STATUS_OK && motion.controller_steps == 0U)
+        {
+            /* Before the first validated Control output, hold the measured
+             * pose. JSON startup targets belong to the legacy demo, not an
+             * accepted motion request. No feedback means no target frame. */
+            motor_state_observation_t feedback;
+            status = motor_state_get_feedback(&feedback);
+            if (status == ROBOT_STATUS_OK)
+                joint_targets = feedback.feedback.canonical_positions;
+        }
+        else if (status == ROBOT_STATUS_OK)
+        {
+            /* Read AFTER the publication count: otherwise Control could
+             * publish between a stale target read and this diagnostic read. */
             status = motor_state_get_targets(&joint_targets);
+        }
+#else
+        status = motor_state_get_targets(&joint_targets);
 #endif
-            if (status == ROBOT_STATUS_OK &&
-                protocol_build_joint_target_frame(&joint_targets, frame)
-                    == ROBOT_STATUS_OK)
-            {
-                status = uart_tx_manager_send_frame(frame,
-                                                    PROTOCOL_JOINT_FRAME_LEN);
-#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
-                /* Never consume the credit if TX could not enqueue the
-                 * complete frame. Next iteration retries from the same
-                 * accepted physical feedback, without making it up. */
-                if (status == ROBOT_STATUS_OK)
-                    last_sent_feedback_sequence = available_feedback_sequence;
-#endif
-            }
+        if (status == ROBOT_STATUS_OK &&
+            protocol_build_joint_target_frame(&joint_targets, frame)
+                == ROBOT_STATUS_OK)
+        {
+            (void)uart_tx_manager_send_frame(frame, PROTOCOL_JOINT_FRAME_LEN);
         }
 
         /* Runtime configuration owns the TX period; never busy-loop if
