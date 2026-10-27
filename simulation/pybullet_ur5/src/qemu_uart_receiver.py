@@ -53,6 +53,7 @@ SIM_MOTION_DIAGNOSTIC_SELECTORS = {
     "planner_faults": 14,
     "feedback_stale_count": 15,
     "last_fault": 16,
+    "monitoring_ticks": 17,
 }
 
 JOINT_COUNT = 6
