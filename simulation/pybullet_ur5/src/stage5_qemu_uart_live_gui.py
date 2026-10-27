@@ -21,7 +21,9 @@ from typing import Any
 
 import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
-from stage5_qemu_uart_visual_demo import DemoOptions, SCENARIOS, run
+from stage5_qemu_uart_visual_demo import (
+    DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
+)
 
 # Observer polling never changes the physics timestep or UART pacing.
 REFRESH_HZ = 30.0
@@ -76,13 +78,15 @@ def capture_worker(
     channel: Any, stop: Any, ready=None, interactive=False,
     hold_seconds=None, test_disturbance=False, disturbance_cycles=1,
     headless=False, opengl2=False,
+    diagnostics_timeout_s=DIAGNOSTICS_TIMEOUT_S, observe_hold=False,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
         scenario=scenario, headless=headless, frame_delay_s=0.0,
         timeout_s=timeout_s, hold_window=False,
         interactive_hold=interactive, hold_duration_s=hold_seconds,
-        opengl2=opengl2,
+        opengl2=opengl2, diagnostics_timeout_s=diagnostics_timeout_s,
+        hold_observe_only=observe_hold,
     )
     hold_at = None
     peak_error_deg = 0.0
@@ -161,8 +165,19 @@ def capture_worker(
             (destination / "result.json").write_text(
                 json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
             )
-        if report.get("passed") is not True:
+        # A passive experiment may legitimately end outside tolerance.
+        # Preserve passed=False in result.json, but allow an orderly exit
+        # when the UART and firmware fault counters stayed healthy.
+        clean_observation = (observe_hold
+            and report.get("segments_settled") == report.get("segments_requested")
+            and report.get("bad_checksum_frames") == 0
+            and report.get("fault_counters")
+            and all(value == 0 for value in report["fault_counters"].values()))
+        if report.get("passed") is not True and not clean_observation:
             raise RuntimeError("QEMU/FreeRTOS/UART physics verdict failed")
+        if clean_observation and report.get("passed") is not True:
+            print("[OBSERVE] Finished outside target tolerance; result.json passed=false",
+                  flush=True)
         print(f"[LIVE] PASS {report['segments_settled']}/"
               f"{report['segments_requested']} segments", flush=True)
     except Exception:
@@ -218,6 +233,8 @@ def run_live(
     hold_window: bool, interactive: bool | None = None,
     hold_seconds: float | None = None, test_disturbance: bool = False,
     opengl2: bool = False, disturbance_cycles: int = 1,
+    diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S,
+    observe_hold: bool = False,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -237,6 +254,8 @@ def run_live(
 
     if interactive is None:
         interactive = not headless_observer and hold_window
+    if observe_hold and not interactive:
+        raise ValueError("--observe-hold needs interactive HOLD; omit --no-hold")
     if test_disturbance:
         if not headless_observer:
             raise ValueError("Disturbance regression requires --headless-observer")
@@ -254,6 +273,7 @@ def run_live(
             str(elf.resolve()), str(output_dir.resolve()), qemu, scenario,
             timeout_s, channel, stop, ready, interactive, hold_seconds,
             test_disturbance, disturbance_cycles, headless_observer, opengl2,
+            diagnostics_timeout_s, observe_hold,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
@@ -361,8 +381,14 @@ def run_live(
         if not report_file.is_file():
             raise RuntimeError("Physics worker returned without a validation report")
         result = json.loads(report_file.read_text(encoding="utf-8"))
-        if (result.get("passed") is not True
-                or result.get("segments_settled") != len(SCENARIOS[scenario])):
+        # An observation run is allowed to preserve passed=False without
+        # claiming convergence. Real firmware/transport errors are still fatal.
+        clean_observation = (observe_hold
+            and result.get("bad_checksum_frames") == 0
+            and result.get("fault_counters")
+            and all(value == 0 for value in result["fault_counters"].values()))
+        if (result.get("segments_settled") != len(SCENARIOS[scenario])
+                or (result.get("passed") is not True and not clean_observation)):
             raise RuntimeError("QEMU/FreeRTOS closed-loop acceptance failed")
 
         motion = measurements.ranges_deg()
@@ -388,6 +414,10 @@ def run_live(
         )
         (output_dir / "observer_result.json").write_text(
             json.dumps(summary, indent=2), encoding="utf-8")
+        if observe_hold:
+            print(f"[OBSERVE] Final error={result['hold_final_error_deg']:.2f}deg; "
+                  f"recovered={result['hold_recoveries']}; "
+                  f"control_passed={result['passed']}", flush=True)
         return result
     finally:
         stop.set()
@@ -416,6 +446,12 @@ def main() -> int:
     parser.add_argument("--interactive", action="store_true", default=None,
                         help="Keep true UART control active after three segments; GUI defaults to this")
     parser.add_argument("--hold-seconds", type=float, default=None)
+    parser.add_argument("--diagnostics-timeout-s", type=float,
+                        default=DIAGNOSTICS_TIMEOUT_S,
+                        help="Finite UART diagnostic response timeout, 5..60 seconds")
+    parser.add_argument("--observe-hold", action="store_true",
+                        help="Keep native C PID running in HOLD without automatic replans; "
+                             "still enforce UART and firmware errors")
     parser.add_argument("--disturbance-cycles", type=int, default=1)
     parser.add_argument("--test-disturbance-recovery", action="store_true",
                         help="Headless native PyBullet external-torque recovery test")
@@ -423,7 +459,8 @@ def main() -> int:
     run_live(args.elf, args.output_dir, args.qemu, args.scenario,
              args.timeout_s, args.refresh_hz, args.headless_observer,
              not args.no_hold, args.interactive, args.hold_seconds,
-             args.test_disturbance_recovery, args.opengl2, args.disturbance_cycles)
+             args.test_disturbance_recovery, args.opengl2, args.disturbance_cycles,
+             args.diagnostics_timeout_s, args.observe_hold)
     return 0
 
 
