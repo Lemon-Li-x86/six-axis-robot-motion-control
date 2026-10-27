@@ -38,12 +38,14 @@
 
 #define CMD_SET_JOINT_TARGETS        0x01U
 #define CMD_SET_PARAMETER            0x02U
+#define CMD_REQUEST_JOINT_MOVE       0x03U /* simulator to firmware */
 
 #define CMD_JOINT_STATE              0x81U
 #define CMD_JOINT_STATE_ACK          0x82U
 #define CMD_GET_DIAGNOSTICS          0x83U
 #define CMD_DIAGNOSTICS_RESPONSE     0x84U
 #define CMD_PARAMETER_ACK            0x85U
+#define CMD_JOINT_MOVE_ACK           0x86U /* firmware to simulator */
 
 
 /* =========================================================
@@ -55,6 +57,12 @@
 
 #define PROTOCOL_JOINT_FRAME_LEN \
     (2U + 1U + 1U + PROTOCOL_JOINT_PAYLOAD_LEN + 1U)
+
+/* Stage5 QEMU simulation request: one sequence byte + existing canonical
+ * six-axis payload. Distinct direction from CMD_SET_JOINT_TARGETS. */
+#define PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN (1U + PROTOCOL_JOINT_PAYLOAD_LEN)
+#define PROTOCOL_MOVE_ACK_PAYLOAD_LEN 2U
+#define PROTOCOL_MOVE_ACK_FRAME_LEN (2U + 1U + 1U + PROTOCOL_MOVE_ACK_PAYLOAD_LEN + 1U)
 
 
 /* =========================================================
@@ -422,6 +430,21 @@ robot_status_t protocol_build_diagnostics_response_frame(
     uint32_t value,
     uint8_t frame[PROTOCOL_DIAGNOSTICS_FRAME_LEN]
 );
+
+/* Parse Stage5 move request using the same 6x signed little-endian raw
+ * centidegree codec as JOINT_STATE. No actuator effects here.
+ * On error, neither output is modified. */
+robot_status_t protocol_parse_joint_move_request(
+    const protocol_frame_t *frame,
+    uint8_t *sequence,
+    robot_joint_angles_t *canonical_goal);
+
+/* Acknowledge explicit request admission/rejection; status is signed
+ * int8 ROBOT_STATUS_*, not a motion-completed message. */
+robot_status_t protocol_build_joint_move_ack_frame(
+    uint8_t sequence,
+    robot_status_t status,
+    uint8_t frame[PROTOCOL_MOVE_ACK_FRAME_LEN]);
 
 
 #endif
