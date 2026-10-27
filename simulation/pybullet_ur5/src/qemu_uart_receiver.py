@@ -41,6 +41,19 @@ CMD_REQUEST_JOINT_MOVE = 0x03
 CMD_JOINT_STATE = 0x81
 CMD_JOINT_STATE_ACK = 0x82
 CMD_JOINT_MOVE_ACK = 0x86
+CMD_GET_DIAGNOSTICS = 0x83
+CMD_DIAGNOSTICS_RESPONSE = 0x84
+
+# QEMU Stage5 integration diagnostics; values originate in protocol.h.
+SIM_MOTION_DIAGNOSTIC_SELECTORS = {
+    "requests_accepted": 10,
+    "trajectory_samples": 11,
+    "controller_steps": 12,
+    "controller_faults": 13,
+    "planner_faults": 14,
+    "feedback_stale_count": 15,
+    "last_fault": 16,
+}
 
 JOINT_COUNT = 6
 
