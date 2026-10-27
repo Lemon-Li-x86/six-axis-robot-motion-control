@@ -73,6 +73,9 @@ HOLD_TRACE_LIFETIME_S = 10.0
 UART_BATCH_WARNING_FRAMES = 24
 UART_BATCH_WARNING_S = 0.15
 DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
+# Acceptance criterion for physically meaningful temporal correspondence.
+# Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
+CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 MAX_PAYLOAD_RAW = 32767
 TRACE_HEADER = (
@@ -97,6 +100,24 @@ class DemoOptions:
     opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
     hold_observe_only: bool = False  # Passive PID observation, no replan requests.
+
+
+def assess_clock_alignment(trajectory_samples: int | None,
+                           target_frames: int,
+                           trajectory_period_s: float) -> tuple[float | None, bool]:
+    """Compare reported RTOS planning duration against physical simulation.
+
+    The C producer's trajectory_samples is the authoritative count of
+    published planning samples. Both this count and PyBullet's consumed UART
+    frames must describe comparable physical time, or joint arrival alone
+    is not sufficient evidence of a real closed-loop trajectory.
+    """
+    if (trajectory_samples is None or trajectory_samples < 1 or
+            target_frames < 1 or trajectory_period_s <= 0 or
+            not math.isfinite(trajectory_period_s)):
+        return None, False
+    ratio = (trajectory_samples * trajectory_period_s) / (target_frames * FEEDBACK_STEP_S)
+    return ratio, abs(ratio - 1.0) <= CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR
 
 
 def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
@@ -288,6 +309,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
+    trajectory_period_s = (json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
+                           ["task_period_ms"]["trajectory"] / 1000.0)
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
     feedback_acks = 0
     target_frames = 0
@@ -706,7 +729,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "controller_faults", "planner_faults", "feedback_stale_count",
             )
             faults = {name: diagnostic_values.get(name) for name in fault_names}
+            clock_ratio, clock_aligned = assess_clock_alignment(
+                diagnostic_values.get("trajectory_samples"), target_frames,
+                trajectory_period_s)
             passed = (
+                clock_aligned
                 sequencer.done
                 and feedback_acks >= 3
                 and bad_acks == 0
@@ -733,6 +760,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     sequencer.segment_final_errors_deg, default=None
                 ),
                 "simulated_physics_s": round(target_frames * FEEDBACK_STEP_S, 3),
+                "trajectory_task_nominal_elapsed_s": round(
+                    diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
+                "rtos_trajectory_to_physics_time_ratio": clock_ratio,
+                "clock_alignment_passed": clock_aligned,
+                "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
+                "clock_alignment_note": "Planning task sample count times configured period; "
+                                        "not a hardware-tick precision measurement",
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
@@ -765,6 +799,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             output_dir.mkdir(parents=True, exist_ok=True)
             live_trace.flush()
             result["plot_saved"] = write_plot(output_dir, trace)
+            if not clock_aligned:
+                audit.write(json.dumps(dict(event="clock_alignment_failed",
+                    rtos_trajectory_to_physics_time_ratio=clock_ratio,
+                    nominal_trajectory_s=result["trajectory_task_nominal_elapsed_s"],
+                    simulated_physics_s=result["simulated_physics_s"])) + "\n")
             (output_dir / "result.json").write_text(
                 json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
             )
