@@ -51,6 +51,28 @@ def main() -> None:
         raise AssertionError("Python UART frame header drift")
     if module.CMD_SET_JOINT_TARGETS != command:
         raise AssertionError("Python UART command ID drift")
+    for c_macro, py_attr in (
+        ("CMD_REQUEST_JOINT_MOVE", "CMD_REQUEST_JOINT_MOVE"),
+        ("CMD_JOINT_STATE", "CMD_JOINT_STATE"),
+        ("CMD_JOINT_STATE_ACK", "CMD_JOINT_STATE_ACK"),
+        ("CMD_JOINT_MOVE_ACK", "CMD_JOINT_MOVE_ACK"),
+    ):
+        if getattr(module, py_attr) != int(number_macro(protocol, c_macro)):
+            raise AssertionError(f"UART command mirror drift: {c_macro}")
+    if module.MOVE_REQUEST_PAYLOAD_LEN != joints * 2 + 1:
+        raise AssertionError("Move request payload drift")
+    if module.MOVE_ACK_PAYLOAD_LEN != 2:
+        raise AssertionError("Move admission ACK payload drift")
+    if not re.search(
+        r"#define\\s+PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN\\s+"
+        r"\\(1U\\s*\\+\\s*PROTOCOL_JOINT_PAYLOAD_LEN\\)", protocol
+    ):
+        raise AssertionError("C move request wire schema changed")
+    if not re.search(
+        r"#define\\s+PROTOCOL_MOVE_ACK_PAYLOAD_LEN\\s+2U", protocol
+    ):
+        raise AssertionError("C move ACK wire schema changed")
+
     if module.JOINT_COUNT != joints:
         raise AssertionError("Python UART joint count drift")
     if module.JOINT_PAYLOAD_LEN != joints * 2:
