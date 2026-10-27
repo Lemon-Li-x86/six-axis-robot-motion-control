@@ -18,7 +18,11 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     MotionSequencer,
     SCENARIOS,
     SETTLE_FRAME_COUNT,
+    SIMULATED_STEPS_PER_TARGET,
+    PHYSICS_STEP_S,
+    FEEDBACK_STEP_S,
     TRACE_HEADER,
+    configure_physics_stepping,
     joint_feedback_frame,
     validate_goals,
     write_trace,
@@ -27,6 +31,28 @@ import qemu_uart_receiver as wire  # noqa: E402
 
 
 class MotionSequencerTests(unittest.TestCase):
+    def test_gui_native_substeps_preserve_physics_interval_and_reduce_api_calls(self) -> None:
+        """Native GUI gets one API call per UART frame, with 1ms internal steps."""
+        from unittest.mock import Mock
+        bullet = Mock()
+        calls, warmup = configure_physics_stepping(bullet, headless=False)
+        bullet.setTimeStep.assert_called_once_with(FEEDBACK_STEP_S)
+        bullet.setPhysicsEngineParameter.assert_called_once_with(
+            numSubSteps=SIMULATED_STEPS_PER_TARGET)
+        self.assertEqual(calls, 1)
+        self.assertEqual(warmup, 100 // SIMULATED_STEPS_PER_TARGET)
+        self.assertAlmostEqual(
+            FEEDBACK_STEP_S / SIMULATED_STEPS_PER_TARGET, PHYSICS_STEP_S)
+
+    def test_direct_still_uses_one_millisecond_api_calls(self) -> None:
+        from unittest.mock import Mock
+        bullet = Mock()
+        calls, warmup = configure_physics_stepping(bullet, headless=True)
+        bullet.setTimeStep.assert_called_once_with(PHYSICS_STEP_S)
+        bullet.setPhysicsEngineParameter.assert_not_called()
+        self.assertEqual(calls, SIMULATED_STEPS_PER_TARGET)
+        self.assertEqual(warmup, 100)
+
     def test_three_segments_advance_only_after_ack_and_feedback(self) -> None:
         goals = SCENARIOS["six_axis"]
         runner = MotionSequencer(goals)
