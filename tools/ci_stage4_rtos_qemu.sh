@@ -39,6 +39,28 @@ printf "monitoring_ticks=%u\n", g_stage4_rtos_test_report.monitoring_ticks
 printf "controller_faults=%u\n", g_stage4_rtos_test_report.controller_faults
 printf "planner_faults=%u\n", g_stage4_rtos_test_report.planner_faults
 printf "feedback_stale_count=%u\n", g_stage4_rtos_test_report.feedback_stale_count
+printf "timing_frequency_hz=%u\n", g_stage4_timing_frequency_hz
+printf "control_interval_samples=%u\n", g_stage4_timing_summary[0].interval_sample_count
+printf "control_processing_samples=%u\n", g_stage4_timing_summary[0].execution_sample_count
+printf "control_expected_period_ticks=%u\n", g_stage4_timing_summary[0].expected_period_counter_ticks
+printf "control_jitter_p99_ticks=%u\n", g_stage4_timing_summary[0].p99_abs_period_jitter_ticks
+printf "control_jitter_max_ticks=%u\n", g_stage4_timing_summary[0].maximum_abs_period_jitter_ticks
+printf "control_processing_p99_ticks=%u\n", g_stage4_timing_summary[0].p99_processing_ticks
+printf "control_processing_max_ticks=%u\n", g_stage4_timing_summary[0].maximum_processing_ticks
+printf "trajectory_interval_samples=%u\n", g_stage4_timing_summary[1].interval_sample_count
+printf "trajectory_processing_samples=%u\n", g_stage4_timing_summary[1].execution_sample_count
+printf "trajectory_expected_period_ticks=%u\n", g_stage4_timing_summary[1].expected_period_counter_ticks
+printf "trajectory_jitter_p99_ticks=%u\n", g_stage4_timing_summary[1].p99_abs_period_jitter_ticks
+printf "trajectory_jitter_max_ticks=%u\n", g_stage4_timing_summary[1].maximum_abs_period_jitter_ticks
+printf "trajectory_processing_p99_ticks=%u\n", g_stage4_timing_summary[1].p99_processing_ticks
+printf "trajectory_processing_max_ticks=%u\n", g_stage4_timing_summary[1].maximum_processing_ticks
+printf "monitor_interval_samples=%u\n", g_stage4_timing_summary[2].interval_sample_count
+printf "monitor_processing_samples=%u\n", g_stage4_timing_summary[2].execution_sample_count
+printf "monitor_expected_period_ticks=%u\n", g_stage4_timing_summary[2].expected_period_counter_ticks
+printf "monitor_jitter_p99_ticks=%u\n", g_stage4_timing_summary[2].p99_abs_period_jitter_ticks
+printf "monitor_jitter_max_ticks=%u\n", g_stage4_timing_summary[2].maximum_abs_period_jitter_ticks
+printf "monitor_processing_p99_ticks=%u\n", g_stage4_timing_summary[2].p99_processing_ticks
+printf "monitor_processing_max_ticks=%u\n", g_stage4_timing_summary[2].maximum_processing_ticks
 disconnect
 quit
 GDB
@@ -63,7 +85,7 @@ if [[ "$result" -ne 0 ]]; then
 fi
 grep -Eq '^Breakpoint [0-9]+, stage4_rtos_selftest_done' "$out"
 grep -qx 'finished=1' "$out"
-grep -qx 'checks=13' "$out"
+grep -qx 'checks=29' "$out"
 grep -qx 'failed=0' "$out"
 grep -qx 'accepted=1' "$out"
 for label in trajectory_samples controller_steps monitoring_ticks; do
@@ -73,4 +95,7 @@ for label in trajectory_samples controller_steps monitoring_ticks; do
         exit 1
     fi
 done
-echo "PASS: ARM/QEMU RTOS motion selftest reached all task counters."
+# The Python analyzer verifies exact field presence, p99<=max and the
+# Timer0 frequency, then saves a machine-readable result next to GDB logs.
+python3 tools/analyze_stage4_timing.py "$out" "${out%.log}.timing.json"
+echo "PASS: ARM/QEMU RTOS motion selftest and 3-task timing report."
