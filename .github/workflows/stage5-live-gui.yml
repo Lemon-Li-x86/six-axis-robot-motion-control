@@ -4,10 +4,10 @@ on:
   push:
     branches:
       - feat/stage5-live-qemu-pybullet-gui-20261027
+      - fix/stage5-native-pybullet-interaction-20261027
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
-      - 'simulation/pybullet_ur5/src/stage5_drag_interaction.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
       - 'tools/tests/test_stage5_live_gui.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
@@ -69,9 +69,9 @@ jobs:
       - name: Observe measured joint movement DURING QEMU UART feedback
         run: |
           python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --scenario six_axis --output-dir build/stage5-live-evidence
-      - name: Physical grab and release recovery through real UART and C planner
+      - name: Native PyBullet external-torque disturbance and hold recovery
         run: |
-          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-drag-recovery --test-drag-cycles 3 --hold-seconds 65 --timeout-s 60 --no-hold --output-dir build/stage5-live-evidence/drag-recovery
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-disturbance-recovery --disturbance-cycles 3 --hold-seconds 65 --timeout-s 60 --no-hold --output-dir build/stage5-live-evidence/disturbance-recovery
       - name: FreeRTOS scheduling and stale-feedback regression
         if: runner.os == 'Linux'
         run: |
