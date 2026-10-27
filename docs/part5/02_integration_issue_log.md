@@ -62,3 +62,12 @@
 - **定向优化 `c1ff3e83`**：保留权威的 `FEEDBACK_STEP_S=0.01s`、`PHYSICS_STEP_S=0.001s`。GUI通过Bullet原生 `setPhysicsEngineParameter(numSubSteps=10)` 使每个UART帧**仅调用一次** `stepSimulation()`，而该调用内部仍积分10个1ms子步；原来的10次跨GUI线程命令成为1次。DIRECT原有10次1ms步进不变。启动预热总物理时间同为0.1秒。调试轨迹显示已独立节流到10Hz。
 - **回归 `602a4b02`**：采用Mock检查两种模式调用步长、子步和启动预热步数。**这项Mock测试不等同于Windows GUI端到端性能通过。**
 - **后续验收**：先执行仅GUI无鼠标的三段闭环并检查 `uart_batch_delay` 是否消失、`target_frames-feedback_acks` 是否不再持续增长、`result.json.passed`。不合格时再排查原生OpenGL2、UART实时协调，不可宣称拖拽恢复通过。
+
+
+### 2026-10-28 S5-013 第三轮数据与反馈信用流控（端到端验证中）
+
+- **GUI 原生子步优化仍不足**：Windows p.GUI 未拖拽，30秒限时 `segments_settled=1/3`，`target_frames=2847`, `feedback_acks=2584`, `uart_rx_dropped_bytes=0`（历史快照）；批量处理由241帧/1.359s渐增到**481帧/2.781s**，说明虽降低了单帧 PyBullet 成本，输入仍持续超过可消费吞吐。用户另观察到明显、较大幅度非指令运动，**该 GUI 模式不具备安全验收资格**。
+- **结构性原因**：仿真固件 `ProtocolTX` 每10ms独立发送新的命令，即使 Python 同一线程尚在调用 GUI 物理引擎、无法及时返回真实测量值；未设反馈信用会累积过时目标，从而使物理演算逐帧追赶过去而非实时执行 C 控制。旧版 GUI 单纯调整超时/轨迹绘制频率/子步批处理均未阻止串口命令债务。
+- **最小修复 `9a4bca1c`**：仅当编译宏 `ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION` 开启时，`task_protocol_tx()` 才按现有 `motor_state_observation_t.feedback.sample_sequence` 的真实被接受反馈变化发给 GUI **最多一个**新 UART 目标帧；没有新反馈时仍保持10ms调度，但不重复发目标；如完整 UART 目标帧无法入 TX Ring Buffer，不消耗该次信用，下一周期重试。无需新增全局状态、协议命令、PID或限位常量；真实固件路径原样。**这不代表无限等待或禁用安全门禁。**
+- **自动压测 `19ae5318`、`5e5b5296`**：在 DIRECT 下主动模拟每帧18ms额外工作耗时，保持 PyBullet 真实10个1ms物理步进和实际 QEMU/FreeRTOS/UART反馈，用于测试生产者不会因慢消费者而积攒历史命令。Windows/Linux workflow 在原有 3段 DIRECT 验收后再运行压测并保留产物。需确认真实 CI 结果；与 `p.GUI --opengl2` Windows 鼠标交互不可划等号。
+- **仍待验证**：校验新固件 DIRECT 基准及慢消费者压测，之后才应由用户本机执行单次 **GUI 无拖拽** 复验；大扰动抓取与回位必须单独验收，不能通过增加 GUI 超时宣称问题解决。旧版 `0.07°` 终点误差仅为修改流控前的 DIRECT 基线。
