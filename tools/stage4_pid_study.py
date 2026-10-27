@@ -117,8 +117,8 @@ def run_matrix(library: Path, output_dir: Path) -> dict:
             metrics = simulation.run(
                 library=library,
                 output_dir=trial_dir,
-                max_final_error_deg=0.25,
-                physics_dt_s=0.001,
+                max_final_error_deg=simulation.DEFAULT_FINAL_ERROR_DEG,
+                physics_dt_s=simulation.DEFAULT_PHYSICS_DT_S,
                 force_newton_m=case.motor_force_n_m,
                 scenario=case.scenario,
                 pid_gains=case.gains,
