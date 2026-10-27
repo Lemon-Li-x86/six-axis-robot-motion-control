@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import csv
+import json
+import socket
+import threading
 import struct
 import sys
 import tempfile
@@ -29,6 +32,68 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     write_trace,
 )
 import qemu_uart_receiver as wire  # noqa: E402
+from qemu_clock_gate import QemuClockGate  # noqa: E402
+
+
+
+class QmpClockGateTests(unittest.TestCase):
+    def run_fake_qmp(self, raise_during_physics: bool = False) -> None:
+        client, server = socket.socketpair()
+        server.settimeout(3.0)
+        observed = []
+        worker_errors = []
+
+        def serve():
+            state = "running"
+            try:
+                with server:
+                    stream = server.makefile("rb")
+                    with stream:
+                        for raw in stream:
+                            command = json.loads(raw)
+                            name = command["execute"]
+                            observed.append(name)
+                            if name == "stop":
+                                state = "paused"
+                                server.sendall(b'{"event":"STOP"}\r\n')
+                                payload = {}
+                            elif name == "cont":
+                                state = "running"
+                                server.sendall(b'{"event":"RESUME"}\r\n')
+                                payload = {}
+                            elif name == "query-status":
+                                payload = {"status": state, "running": state == "running"}
+                            else:
+                                raise AssertionError(f"Unexpected QMP command {name}")
+                            reply = json.dumps({"return": payload, "id": command["id"]})
+                            server.sendall((reply + "\r\n").encode("ascii"))
+            except Exception as exc:
+                worker_errors.append(exc)
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        try:
+            with QemuClockGate(client) as gate:
+                with gate.paused_for_physics(False):
+                    self.assertEqual(gate.pauses, 0)
+                with gate.paused_for_physics(True):
+                    self.assertEqual(gate.pauses, 1)
+                    if raise_during_physics:
+                        raise ValueError("PyBullet mock failure")
+        finally:
+            client.close()
+            thread.join(timeout=3.0)
+        self.assertFalse(thread.is_alive(), "QMP mock server did not exit")
+        self.assertEqual(worker_errors, [])
+        self.assertEqual(observed,
+                         ["stop", "query-status", "cont", "query-status"])
+
+    def test_clock_gate_pauses_guest_for_physics_only(self):
+        self.run_fake_qmp()
+
+    def test_clock_gate_resumes_guest_on_physics_error(self):
+        with self.assertRaisesRegex(ValueError, "mock failure"):
+            self.run_fake_qmp(raise_during_physics=True)
 
 
 class MotionSequencerTests(unittest.TestCase):
