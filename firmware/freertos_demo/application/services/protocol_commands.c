@@ -287,7 +287,7 @@ static robot_status_t get_diagnostics_value(
     /* Existing UART diagnostic frame; QEMU test only extends selectors,
      * with all values read from the authoritative motion pipeline. */
     if(selector>=DIAGNOSTICS_METRIC_MOTION_ACCEPTED &&
-       selector<=DIAGNOSTICS_METRIC_MOTION_LAST_FAULT)
+       selector<=DIAGNOSTICS_METRIC_MONITORING_TICKS)
     {
         motion_stage4_diagnostics_t motion={0};
         status=motion_pipeline_get_diagnostics(&motion);
@@ -307,6 +307,8 @@ static robot_status_t get_diagnostics_value(
                 *value=motion.feedback_stale_count; break;
             case DIAGNOSTICS_METRIC_MOTION_LAST_FAULT:
                 *value=(uint32_t)(int32_t)motion.last_fault; break;
+            case DIAGNOSTICS_METRIC_MONITORING_TICKS:
+                *value=motion.monitoring_ticks; break;
             default:
                 return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
         }
