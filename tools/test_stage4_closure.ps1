@@ -13,12 +13,13 @@
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline
+    powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline -IncludeGuiReplay
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$IncludeQemuBaseline
+    [switch]$IncludeQemuBaseline,
+    [switch]$IncludeGuiReplay
 )
 
 Set-StrictMode -Version Latest
@@ -112,6 +113,45 @@ if ($IncludeQemuBaseline) {
     }
     Invoke-Checked 'Run existing QEMU/FreeRTOS baseline' 'powershell' @(
         '-ExecutionPolicy', 'Bypass', '-File', $qemuScript
+    )
+}
+
+if ($IncludeGuiReplay) {
+    # Stage5 integration is explicitly separated from the native Stage4
+    # study. Rebuild the candidate ELF rather than reusing a stale binary.
+    foreach ($executable in @('arm-none-eabi-gcc', 'qemu-system-arm')) {
+        if (-not (Get-Command $executable -ErrorAction SilentlyContinue)) {
+            throw "Missing ARM/QEMU executable: $executable"
+        }
+    }
+
+    $qemuBuild = Join-Path $buildRoot 'qemu-uart'
+    $candidateElf = Join-Path $qemuBuild 'firmware\freertos_demo\freertos_demo.elf'
+    $guiEvidence = Join-Path $evidenceDir 'qemu-gui-replay'
+
+    Invoke-Checked 'Build candidate Cortex-M4/FreeRTOS UART firmware' 'cmake' @(
+        '-S', '.', '-B', $qemuBuild, '-G', 'Ninja',
+        '-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake',
+        '-DCMAKE_BUILD_TYPE=Debug',
+        '-DROBOT_ENABLE_STAGE4_TASKS=ON',
+        '-DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON',
+        '-DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON',
+        '-DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF'
+    )
+    Invoke-Checked 'Compile candidate ARM firmware' 'cmake' @(
+        '--build', $qemuBuild, '--target', 'freertos_demo'
+    )
+    if (-not (Test-Path -Path $candidateElf -PathType Leaf)) {
+        throw "Freshly built candidate ELF not found: $candidateElf"
+    }
+
+    Invoke-Checked 'Record QEMU UART/PyBullet closed loop and replay GUI' $python @(
+        'simulation/pybullet_ur5/src/stage5_qemu_uart_trace_replay.py',
+        '--elf', $candidateElf,
+        '--scenario', 'six_axis',
+        '--speed', '0.35',
+        '--repeats', '2',
+        '--output-dir', $guiEvidence
     )
 }
 
