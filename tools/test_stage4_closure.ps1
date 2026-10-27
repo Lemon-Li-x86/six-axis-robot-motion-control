@@ -19,7 +19,8 @@
 [CmdletBinding()]
 param(
     [switch]$IncludeQemuBaseline,
-    [switch]$IncludeGuiReplay
+    [switch]$IncludeGuiReplay,
+    [string]$HostCompiler
 )
 
 Set-StrictMode -Version Latest
@@ -32,11 +33,91 @@ $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -Path $python -PathType Leaf)) {
     throw "Missing project Python environment: $python"
 }
-foreach ($executable in @('cmake', 'ctest', 'ninja')) {
+foreach ($executable in @('cmake', 'ctest')) {
     if (-not (Get-Command $executable -ErrorAction SilentlyContinue)) {
         throw "Missing required build command: $executable"
     }
 }
+
+function Resolve-HostToolchain {
+    param([string]$Override)
+
+    # The native DLL must be compiled for Windows, not Cortex-M4.
+    $compiler = $null
+    if ($Override) {
+        $found = Get-Command $Override -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) { throw "Host C compiler not found: $Override" }
+        if ($found.Source -match '(?i)arm-none-eabi') {
+            throw 'The ARM cross compiler cannot build the Windows PyBullet DLL.'
+        }
+        $compiler = $found.Source
+    } else {
+        # VS C++ can be used through a CMake generator without cl.exe in PATH.
+        $pf = [Environment]::GetFolderPath('ProgramFilesX86')
+        if ($pf) {
+            $vswhere = Join-Path $pf 'Microsoft Visual Studio\Installer\vswhere.exe'
+            if (Test-Path -Path $vswhere -PathType Leaf) {
+                $version = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+                if ($LASTEXITCODE -eq 0 -and $version) {
+                    $major = [int]($version.Trim().Split('.')[0])
+                    $generator = switch ($major) {
+                        16 { 'Visual Studio 16 2019' }
+                        17 { 'Visual Studio 17 2022' }
+                        18 { 'Visual Studio 18 2026' }
+                        default { '' }
+                    }
+                    if ($generator) {
+                        $caps = & cmake -E capabilities | ConvertFrom-Json
+                        if (@($caps.generators.name) -contains $generator) {
+                            Write-Host "[Stage4] Host C compiler: $generator"
+                            return @{ Id = "vs$major"; Configure = @('-G', $generator, '-A', 'x64') }
+                        }
+                    }
+                }
+            }
+        }
+        foreach ($name in @('gcc.exe', 'clang.exe')) {
+            $found = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found -and $found.Source -notmatch '(?i)arm-none-eabi') {
+                $compiler = $found.Source
+                break
+            }
+        }
+        if (-not $compiler) {
+            foreach ($path in @(
+                'C:\msys64\ucrt64\bin\gcc.exe',
+                'C:\msys64\mingw64\bin\gcc.exe',
+                'C:\msys64\clang64\bin\clang.exe'
+            )) {
+                if (Test-Path -Path $path -PathType Leaf) {
+                    $compiler = $path
+                    break
+                }
+            }
+        }
+    }
+
+    if (-not $compiler) {
+        throw @'
+No native Windows C compiler was found.
+Install Visual Studio Build Tools with "Desktop development with C++",
+or install MSYS2 UCRT64 GCC.
+If GCC already exists, use -HostCompiler "C:\path\to\gcc.exe".
+arm-none-eabi-gcc cannot build the Python-loadable Windows DLL.
+'@
+    }
+    if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+        throw 'Ninja is required to build with native GCC/Clang.'
+    }
+    Write-Host "[Stage4] Host C compiler: $compiler"
+    return @{
+        Id = 'ninja-host'
+        Configure = @('-G', 'Ninja', "-DCMAKE_C_COMPILER=$compiler", '-DCMAKE_BUILD_TYPE=Debug')
+        Compiler = $compiler
+    }
+}
+
+$hostToolchain = Resolve-HostToolchain -Override $HostCompiler
 
 function Invoke-Checked {
     param(
@@ -53,26 +134,22 @@ function Invoke-Checked {
 }
 
 $buildRoot = Join-Path $projectRoot 'build\stage4-closure-local'
-$nativeDir = Join-Path $buildRoot 'native'
-$hostDir = Join-Path $buildRoot 'host'
+$nativeDir = Join-Path $buildRoot ('native-' + $hostToolchain.Id)
+$hostDir = Join-Path $buildRoot ('host-' + $hostToolchain.Id)
 $evidenceDir = Join-Path $buildRoot 'evidence'
 
-Invoke-Checked 'Configure Stage4 host tests' 'cmake' @(
-    '-S', 'firmware/freertos_demo/tests/trajectory',
-    '-B', $hostDir, '-G', 'Ninja'
-)
-Invoke-Checked 'Build Stage4 host tests' 'cmake' @('--build', $hostDir)
+$hostConfigureArgs = @('-S', 'firmware/freertos_demo/tests/trajectory', '-B', $hostDir) + $hostToolchain.Configure
+Invoke-Checked 'Configure Stage4 host tests' 'cmake' $hostConfigureArgs
+Invoke-Checked 'Build Stage4 host tests' 'cmake' @('--build', $hostDir, '--config', 'Debug')
 Invoke-Checked 'Run Stage4 host tests' 'ctest' @(
-    '--test-dir', $hostDir, '--output-on-failure'
+    '--test-dir', $hostDir, '-C', 'Debug', '--output-on-failure'
 )
 
-Invoke-Checked 'Configure C/PyBullet bridge' 'cmake' @(
-    '-S', 'firmware/freertos_demo/tests/simulation',
-    '-B', $nativeDir, '-G', 'Ninja'
-)
-Invoke-Checked 'Build C/PyBullet bridge' 'cmake' @('--build', $nativeDir)
+$nativeConfigureArgs = @('-S', 'firmware/freertos_demo/tests/simulation', '-B', $nativeDir) + $hostToolchain.Configure
+Invoke-Checked 'Configure C/PyBullet bridge' 'cmake' $nativeConfigureArgs
+Invoke-Checked 'Build C/PyBullet bridge' 'cmake' @('--build', $nativeDir, '--config', 'Debug')
 Invoke-Checked 'Run native C smoke test' 'ctest' @(
-    '--test-dir', $nativeDir, '--output-on-failure'
+    '--test-dir', $nativeDir, '-C', 'Debug', '--output-on-failure'
 )
 
 $library = Get-ChildItem -Path $nativeDir -Recurse -File |
