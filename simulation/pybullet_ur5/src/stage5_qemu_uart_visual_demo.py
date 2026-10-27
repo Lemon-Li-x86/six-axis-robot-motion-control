@@ -330,7 +330,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             p.setRealTimeSimulation(0)
             if not options.headless:
                 p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
-                p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+                # Keep native debug controls visible. Hiding them made the
+                # sole physical GUI look like an empty rendering viewport.
+                p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
             p.setGravity(0, 0, -9.81)
             p.setTimeStep(PHYSICS_STEP_S)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
@@ -347,7 +349,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 p.stepSimulation()
             if not options.headless:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=1.5, cameraYaw=50, cameraPitch=-26,
+                    cameraDistance=1.05, cameraYaw=50, cameraPitch=-26,
                     cameraTargetPosition=[0, 0, 0.35],
                 )
 
