@@ -24,3 +24,24 @@ if(NOT MSVC)
     target_link_libraries(stage5_potential_field_host PRIVATE m)
 endif()
 add_test(NAME stage5_potential_field_host COMMAND stage5_potential_field_host)
+
+# Host-only C boundary for PyBullet obstacle probes. No second APF
+# implementation in Python and no shared library in the ARM firmware.
+add_library(stage5_apf_bridge SHARED
+    ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field.c
+)
+target_include_directories(stage5_apf_bridge PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/algorithms/avoidance
+)
+set_target_properties(stage5_apf_bridge PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(stage5_apf_bridge PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(stage5_apf_bridge PRIVATE m)
+endif()
