@@ -65,7 +65,7 @@ static void stage4_rtos_test_task(void *argument)
     robot_status_t status=ROBOT_STATUS_OK;
     TickType_t last_wake=xTaskGetTickCount();
     const TickType_t cadence=pdMS_TO_TICKS(TASK_PERIOD_CONTROL_MS);
-    const TickType_t total=pdMS_TO_TICKS(1200U);
+    const TickType_t total=pdMS_TO_TICKS(ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS);
     TickType_t begin=xTaskGetTickCount();
     uint8_t submitted=0U;
 
@@ -106,8 +106,8 @@ static void stage4_rtos_test_task(void *argument)
             status=ROBOT_STATUS_ERROR_INTERNAL;
         else
         {
-            /* Freeze 1.2s of healthy task timing before inducing the
-             * intentional stale-feedback safety stop. */
+            /* Freeze the configurable healthy-window timing sample before
+             * inducing the intentional stale-feedback safety stop. */
             stage4_timing_capture();
             vTaskDelay(pdMS_TO_TICKS(
                 cfg->feedback_timeout_ms+
