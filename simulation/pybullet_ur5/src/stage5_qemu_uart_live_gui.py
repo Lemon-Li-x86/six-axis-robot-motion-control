@@ -277,7 +277,7 @@ def run_live(
         if measurements.frames_while_worker_alive == 0:
             raise RuntimeError("No frame was received while QEMU worker was running")
         print(
-            f"[LIVE] PASS: {measurements.frames_received} display frames, "
+            f"[LIVE] PASS: {measurements.frames_received} measurement messages received, "
             f"{measurements.frames_while_worker_alive} received during control",
             flush=True,
         )
