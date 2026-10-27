@@ -121,7 +121,7 @@ static void task_trajectory(void *arg)
     for(;;)
     {
         robot_status_t s=ROBOT_STATUS_OK;
-        vTaskDelayUntil(&last_wake,(interval==0U)?1U:interval);
+        motion_task_wait_next_period(&last_wake,interval);
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
         uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_TRAJECTORY);
 #endif
