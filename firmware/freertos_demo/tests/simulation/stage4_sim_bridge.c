@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 
 #include "stage4_motion_config.h"
 #include "trajectory.h"
@@ -51,15 +52,21 @@ static void write_positions(
 #define STAGE4_SIM_EXPORT __attribute__((visibility("default")))
 #endif
 
-STAGE4_SIM_EXPORT void *stage4_sim_create_with_kp_scale(
+/*
+ * Build one host-only simulation instance using authoritative production
+ * configuration. Optional gains are experimental test inputs, never saved as
+ * production defaults. Columns are [Kp, Ki, Kd], rows follow joint order.
+ */
+static void *create_simulation(
     const int32_t start_raw[ROBOT_JOINT_COUNT],
     const int32_t goal_raw[ROBOT_JOINT_COUNT],
-    double kp_scale)
+    double kp_scale,
+    const double (*pid_gains)[3])
 {
     stage4_sim_t *sim;
     robot_joint_positions_t start={{0}},goal={{0}};
     robot_status_t status;
-    uint32_t i;
+    uint32_t i, component;
     if(start_raw==NULL || goal_raw==NULL || !isfinite(kp_scale) ||
        !(kp_scale>0.0) || kp_scale>2.0) return NULL;
     read_positions(start_raw,&start);
@@ -71,13 +78,27 @@ STAGE4_SIM_EXPORT void *stage4_sim_create_with_kp_scale(
     sim=(stage4_sim_t *)calloc(1U,sizeof(*sim));
     if(sim==NULL) return NULL;
     sim->config=*stage4_motion_default_config();
-    /*
-     * Host-only sweep override. The authoritative default gains still
-     * come from stage4_motion_config.c, never from Python copies.
-     */
     for(i=0U;i<ROBOT_JOINT_COUNT;i++)
-        sim->config.pid[i].kp =
-            (robot_real_t)((double)sim->config.pid[i].kp*kp_scale);
+    {
+        if(pid_gains==NULL)
+        {
+            sim->config.pid[i].kp =
+                (robot_real_t)((double)sim->config.pid[i].kp*kp_scale);
+            continue;
+        }
+        for(component=0U;component<3U;component++)
+        {
+            const double gain=pid_gains[i][component];
+            if(!isfinite(gain) || gain<0.0 || gain>(double)FLT_MAX)
+            {
+                free(sim);
+                return NULL;
+            }
+        }
+        sim->config.pid[i].kp=(robot_real_t)pid_gains[i][0];
+        sim->config.pid[i].ki=(robot_real_t)pid_gains[i][1];
+        sim->config.pid[i].kd=(robot_real_t)pid_gains[i][2];
+    }
     status=joint_controller_init(&sim->controller,sim->config.pid);
     if(status==ROBOT_STATUS_OK)
         status=trajectory_trapezoid_init(
@@ -92,11 +113,33 @@ STAGE4_SIM_EXPORT void *stage4_sim_create_with_kp_scale(
     return sim;
 }
 
+STAGE4_SIM_EXPORT void *stage4_sim_create_with_kp_scale(
+    const int32_t start_raw[ROBOT_JOINT_COUNT],
+    const int32_t goal_raw[ROBOT_JOINT_COUNT],
+    double kp_scale)
+{
+    return create_simulation(start_raw,goal_raw,kp_scale,NULL);
+}
+
+/*
+ * Test-only ABI: caller supplies independent gains for six joints.
+ * The production PID algorithm validates the resulting per-axis config;
+ * integral/output clamps and motion limits remain configuration-owned.
+ */
+STAGE4_SIM_EXPORT void *stage4_sim_create_with_pid_gains(
+    const int32_t start_raw[ROBOT_JOINT_COUNT],
+    const int32_t goal_raw[ROBOT_JOINT_COUNT],
+    const double pid_gains[ROBOT_JOINT_COUNT][3])
+{
+    if(pid_gains==NULL) return NULL;
+    return create_simulation(start_raw,goal_raw,1.0,pid_gains);
+}
+
 STAGE4_SIM_EXPORT void *stage4_sim_create(
     const int32_t start_raw[ROBOT_JOINT_COUNT],
     const int32_t goal_raw[ROBOT_JOINT_COUNT])
 {
-    return stage4_sim_create_with_kp_scale(start_raw,goal_raw,1.0);
+    return create_simulation(start_raw,goal_raw,1.0,NULL);
 }
 
 STAGE4_SIM_EXPORT double stage4_sim_duration(const void *handle)
