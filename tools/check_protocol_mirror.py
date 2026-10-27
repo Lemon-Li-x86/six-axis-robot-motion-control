@@ -56,6 +56,8 @@ def main() -> None:
         ("CMD_JOINT_STATE", "CMD_JOINT_STATE"),
         ("CMD_JOINT_STATE_ACK", "CMD_JOINT_STATE_ACK"),
         ("CMD_JOINT_MOVE_ACK", "CMD_JOINT_MOVE_ACK"),
+        ("CMD_GET_DIAGNOSTICS", "CMD_GET_DIAGNOSTICS"),
+        ("CMD_DIAGNOSTICS_RESPONSE", "CMD_DIAGNOSTICS_RESPONSE"),
     ):
         if getattr(module, py_attr) != int(number_macro(protocol, c_macro)):
             raise AssertionError(f"UART command mirror drift: {c_macro}")
@@ -63,6 +65,19 @@ def main() -> None:
         raise AssertionError("Move request payload drift")
     if module.MOVE_ACK_PAYLOAD_LEN != 2:
         raise AssertionError("Move admission ACK payload drift")
+    for kind, c_macro in (
+        ("requests_accepted", "DIAGNOSTICS_METRIC_MOTION_ACCEPTED"),
+        ("trajectory_samples", "DIAGNOSTICS_METRIC_TRAJECTORY_SAMPLES"),
+        ("controller_steps", "DIAGNOSTICS_METRIC_CONTROLLER_STEPS"),
+        ("controller_faults", "DIAGNOSTICS_METRIC_CONTROLLER_FAULTS"),
+        ("planner_faults", "DIAGNOSTICS_METRIC_PLANNER_FAULTS"),
+        ("feedback_stale_count", "DIAGNOSTICS_METRIC_FEEDBACK_STALE"),
+        ("last_fault", "DIAGNOSTICS_METRIC_MOTION_LAST_FAULT"),
+    ):
+        if module.SIM_MOTION_DIAGNOSTIC_SELECTORS[kind] != int(
+            number_macro(protocol, c_macro)
+        ):
+            raise AssertionError(f"QEMU-only motion diagnostic selector drift: {kind}")
     if not re.search(
         r"#define\s+PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN\s+"
         r"\(1U\s*\+\s*PROTOCOL_JOINT_PAYLOAD_LEN\)", protocol
