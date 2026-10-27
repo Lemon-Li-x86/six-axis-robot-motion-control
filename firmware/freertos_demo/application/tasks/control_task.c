@@ -49,7 +49,7 @@ static void task_control(void *arg)
         robot_status_t status;
         const robot_model_t *model;
 
-        vTaskDelayUntil(&last_wake,(period==0U)?1U:period);
+        motion_task_wait_next_period(&last_wake,period);
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
         uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_CONTROL);
 #endif
