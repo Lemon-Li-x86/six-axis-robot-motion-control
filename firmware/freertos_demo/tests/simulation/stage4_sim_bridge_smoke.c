@@ -7,6 +7,9 @@
 #include <stdio.h>
 
 extern void *stage4_sim_create(const int32_t *,const int32_t *);
+/* Test-only gain layout: six joints by [Kp, Ki, Kd]. */
+extern void *stage4_sim_create_with_pid_gains(
+    const int32_t *,const int32_t *,const double [6][3]);
 extern double stage4_sim_duration(const void *);
 extern int stage4_sim_step(void *,const int32_t *,double,double,int32_t *,int32_t *);
 extern void stage4_sim_destroy(void *);
@@ -41,6 +44,30 @@ int main(void)
     if(stage4_sim_step(handle,feedback,0.0,0.01,command,ref)==0)
         return 7;  /* time reversal forbidden */
     stage4_sim_destroy(handle);
+    /*
+     * The test-only C bridge must accept independent nonzero I/D gains,
+     * while refusing invalid inputs before any PID state is published.
+     */
+    {
+        double gains[6][3]={{0}};
+        void *experimental;
+        for(i=0U;i<6U;i++)
+        {
+            gains[i][0]=0.2;
+            gains[i][1]=0.01;
+            gains[i][2]=0.001;
+        }
+        experimental=stage4_sim_create_with_pid_gains(initial,final,gains);
+        if(experimental==NULL) return 8;
+        if(stage4_sim_step(experimental,initial,0.0,0.01,command,ref)!=0)
+            return 9;
+        stage4_sim_destroy(experimental);
+        gains[0][1]=-0.01;
+        if(stage4_sim_create_with_pid_gains(initial,final,gains)!=NULL)
+            return 10;
+        if(stage4_sim_create_with_pid_gains(initial,final,NULL)!=NULL)
+            return 11;
+    }
     puts("stage4_sim_bridge_smoke passed");
     return 0;
 }
