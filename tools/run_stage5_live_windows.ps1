@@ -2,6 +2,8 @@ param(
     [string]$Python = "$PSScriptRoot/../.venv/Scripts/python.exe",
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-live-windows",
+    [Nullable[double]]$DiagnosticsTimeoutSeconds = $null,
+    [switch]$ObserveHold,
     [switch]$NoHold
 )
 $ErrorActionPreference = "Stop"
@@ -15,6 +17,12 @@ try {
         "--elf", "build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf",
         "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2")
     if ($NoHold) { $liveArgs += "--no-hold" }
+    if ($ObserveHold) { $liveArgs += "--observe-hold" }
+    if ($null -ne $DiagnosticsTimeoutSeconds) {
+        $liveArgs += @("--diagnostics-timeout-s",
+            $DiagnosticsTimeoutSeconds.Value.ToString(
+                [System.Globalization.CultureInfo]::InvariantCulture))
+    }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
     & $Python @liveArgs
     if ($LASTEXITCODE -ne 0) { throw "Live control failed; inspect $OutputDir/worker.log" }
