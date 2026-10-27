@@ -39,6 +39,24 @@ BaseType_t trajectory_task_create(void);
 BaseType_t control_task_create(void);
 BaseType_t monitor_task_create(void);
 
+/* Shared periodic-task overrun policy (existing tasks only).
+ * FreeRTOS vTaskDelayUntil tries to 'catch up' if the previous wake is
+ * already overdue, which can spin a high-priority loop and starve planning
+ * after a slow UART/QEMU burst. Drop missed activations instead: resume
+ * from the current RTOS tick and always make the next period blocking.
+ *
+ * This is a scheduling policy, NOT a second owner of task periods. */
+static inline void motion_task_wait_next_period(
+    TickType_t *last_wake,
+    TickType_t configured_period)
+{
+    TickType_t period=(configured_period==0U)?1U:configured_period;
+    TickType_t now=xTaskGetTickCount();
+    if((TickType_t)(now-*last_wake)>=period)
+        *last_wake=now;
+    vTaskDelayUntil(last_wake,period);
+}
+
 /* Diagnostic writers run in tasks only; critical sections protect snapshots. */
 void motion_record_fault(robot_status_t status,uint8_t is_controller);
 #endif
