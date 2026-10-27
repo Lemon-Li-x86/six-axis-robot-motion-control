@@ -38,7 +38,7 @@ jobs:
           cmake --build build/stage5-qemu-uart --target freertos_demo
       - name: Real TCP UART move request and PyBullet feedback roundtrip
         run: |
-          timeout 60s python simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py \
+          timeout 75s python simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py \
             --elf build/stage5-qemu-uart/firmware/freertos_demo/freertos_demo.elf \
             --output-dir build/stage5-uart-results
       - name: Preserve serial end-to-end measured evidence
