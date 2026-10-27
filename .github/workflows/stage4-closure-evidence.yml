@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - review/stage4-closure-evidence-20261027
+      - candidate/stage4-pid-20261027
     paths:
       - '.github/workflows/stage4-closure-evidence.yml'
       - 'firmware/freertos_demo/tests/simulation/**'
@@ -91,4 +92,49 @@ jobs:
           path: |
             build/stage4-closure-pid-matrix/**
             build/stage4-pid-sweep/**
+          if-no-files-found: ignore
+
+
+  qemu-freertos-pybullet-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM compiler and QEMU for actual firmware integration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build
+          python -m pip install pybullet
+
+      - name: Build the exact ARM firmware with the staged JSON gains
+        run: |
+          cmake -S . -B build/stage4-candidate-uart -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON \
+            -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+          cmake --build build/stage4-candidate-uart --target freertos_demo
+
+      - name: Verify genuine UART joint feedback and firmware diagnostics
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py \
+            --elf build/stage4-candidate-uart/firmware/freertos_demo/freertos_demo.elf \
+            --output-dir build/stage4-candidate-uart/single-move
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --elf build/stage4-candidate-uart/firmware/freertos_demo/freertos_demo.elf \
+            --headless --scenario six_axis --timeout-s 210 \
+            --output-dir build/stage4-candidate-uart/multi-segment
+
+      - name: Preserve candidate UART end-to-end traces even if a test fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-candidate-qemu-uart-physics-evidence
+          path: |
+            build/stage4-candidate-uart/single-move/**
+            build/stage4-candidate-uart/multi-segment/**
           if-no-files-found: ignore
