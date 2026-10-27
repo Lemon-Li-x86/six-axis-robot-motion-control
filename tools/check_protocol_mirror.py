@@ -73,6 +73,7 @@ def main() -> None:
         ("planner_faults", "DIAGNOSTICS_METRIC_PLANNER_FAULTS"),
         ("feedback_stale_count", "DIAGNOSTICS_METRIC_FEEDBACK_STALE"),
         ("last_fault", "DIAGNOSTICS_METRIC_MOTION_LAST_FAULT"),
+        ("monitoring_ticks", "DIAGNOSTICS_METRIC_MONITORING_TICKS"),
     ):
         if module.SIM_MOTION_DIAGNOSTIC_SELECTORS[kind] != int(
             number_macro(protocol, c_macro)
