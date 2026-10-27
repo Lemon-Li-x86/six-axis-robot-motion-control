@@ -6,6 +6,9 @@ import multiprocessing as mp
 import time
 import sys
 import unittest
+import io
+import tempfile
+from unittest.mock import Mock
 from unittest.mock import patch
 from pathlib import Path
 
@@ -14,7 +17,7 @@ sys.path.insert(0, str(ROOT / "simulation/pybullet_ur5/src"))
 
 from stage5_qemu_uart_closed_loop import BufferedUART
 from stage5_drag_interaction import DragMailbox, PhysicalDrag, MouseDrag, plane_target, DRAG_LEASE_S
-from stage5_qemu_uart_live_gui import LiveMeasurements, LatestMailbox  # noqa: E402
+from stage5_qemu_uart_live_gui import LiveMeasurements, LatestMailbox, capture_worker  # noqa: E402
 
 
 def produce_without_reader(channel):
@@ -23,6 +26,23 @@ def produce_without_reader(channel):
 
 
 class LiveTransportTests(unittest.TestCase):
+    def test_worker_uses_crash_only_diagnostics_without_native_watchdog_thread(self):
+        report = dict(passed=True, segments_settled=3, segments_requested=3, target_frames=600)
+        with (tempfile.TemporaryDirectory() as output,
+              patch("stage5_qemu_uart_live_gui.os.dup2"),
+              patch("stage5_qemu_uart_live_gui.sys.stdout", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.sys.stderr", io.StringIO()),
+              patch("stage5_qemu_uart_live_gui.run", return_value=report),
+              patch("faulthandler.enable") as enable,
+              patch("faulthandler.dump_traceback_later") as timer,
+              patch("faulthandler.cancel_dump_traceback_later") as cancel):
+            capture_worker("unused.elf", output, "unused-qemu", "six_axis", 60, Mock(), Mock())
+            enable.assert_called_once()
+            timer.assert_not_called()
+            cancel.assert_not_called()
+            # The mocked diagnostic function retains the stream in call_args.
+            enable.call_args.args[0].close()
+
     def test_latest_sample_overwrites_without_consumer(self):
         channel = LatestMailbox(mp.get_context("spawn"))
         for i in range(10000):

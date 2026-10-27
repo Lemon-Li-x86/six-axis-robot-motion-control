@@ -74,7 +74,7 @@ class LatestMailbox:
 def capture_worker(
     elf: str, output: str, qemu: str, scenario: str, timeout_s: float,
     channel: Any, stop: Any, drag_channel=None, ready=None,
-    interactive=False, hold_seconds=None, test_drag=False,
+    interactive=False, hold_seconds=None, test_drag=False, test_drag_cycles=1,
 ) -> None:
     """Run unchanged firmware-driven feedback physics in a spawned process."""
     options = DemoOptions(
@@ -106,7 +106,9 @@ def capture_worker(
             if test_anchor is None:
                 pose = bullet.getLinkState(arm, link, computeForwardKinematics=True)
                 test_anchor = tuple(pose[0])
-            active = 1.0 <= elapsed < 1.8 and not ending
+            cycle = int(elapsed // 12.0)
+            phase = elapsed - cycle * 12.0
+            active = cycle < test_drag_cycles and 1.0 <= phase < 1.8 and not ending
             target = tuple(v+d for v,d in zip(test_anchor, (0.08, 0.04, 0.06)))
             drag_channel.publish(active, link, (0.,0.,0.), target)
         if physical_drag is not None:
@@ -152,7 +154,10 @@ def capture_worker(
     sys.stderr = log
     import faulthandler
     faulthandler.enable(log)
-    faulthandler.dump_traceback_later(20, repeat=True, file=log)
+    # Crash-only diagnostics. Do not start dump_traceback_later's background
+    # stack walker: the user's Windows Python 3.11.15 crashes in python311.dll
+    # even with a pure-Python Event polling reproducer. UART JSONL supplies
+    # cooperative progress diagnostics without asynchronously walking frames.
     try:
         report = run(
             Path(elf), Path(output), qemu, options, on_sample=push, stop_requested=stop.is_set,
@@ -163,7 +168,9 @@ def capture_worker(
                             input_dropped=int(drag_channel.dropped.value), scripted_test=test_drag)
             if test_drag:
                 recovery["passed"] = (recovery["peak_displacement_deg"] >= 2.0 and
-                    recovery["recovered_frames"] >= 15 and recovery["max_uart_change_deg"] >= 0.2)
+                    recovery["recovered_frames"] >= 15 and recovery["max_uart_change_deg"] >= 0.2 and
+                    physical_drag.started == test_drag_cycles and physical_drag.released == test_drag_cycles and
+                    report.get("hold_recoveries", 0) >= test_drag_cycles)
                 report["passed"] = bool(report["passed"] and recovery["passed"])
             report["drag_recovery"] = recovery
             (Path(output) / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -180,7 +187,7 @@ def capture_worker(
         traceback.print_exc()
         raise
     finally:
-        faulthandler.cancel_dump_traceback_later()
+        log.flush()
 
 
 class LiveMeasurements:
@@ -257,6 +264,7 @@ def run_live(
     timeout_s: float, refresh_hz: float, headless_observer: bool,
     hold_window: bool, interactive: bool | None = None,
     hold_seconds: float | None = None, test_drag: bool = False, opengl2: bool = False,
+    test_drag_cycles: int = 1,
 ) -> dict:
     """Show latest physical measurements while the real QEMU loop runs."""
     if not elf.is_file():
@@ -270,6 +278,8 @@ def run_live(
 
     if interactive is None:
         interactive = not headless_observer and hold_window
+    if not 1 <= test_drag_cycles <= 8:
+        raise ValueError("Drag test cycles must be between 1 and 8")
     if test_drag:
         interactive = True
     if hold_seconds is not None and (not math.isfinite(hold_seconds) or hold_seconds <= 0):
@@ -321,7 +331,7 @@ def run_live(
         target=capture_worker,
         args=(str(elf.resolve()), str(output_dir.resolve()),
               qemu, scenario, timeout_s, channel, stop, drag_channel, ready,
-              interactive, hold_seconds, test_drag),
+              interactive, hold_seconds, test_drag, test_drag_cycles),
         name="stage5-qemu-uart-pybullet-direct",
     )
     last_visible_update = 0.0
@@ -329,6 +339,7 @@ def run_live(
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "observer_result.json").unlink(missing_ok=True)
+        (output_dir / "worker_exit.json").unlink(missing_ok=True)
         (output_dir / "mouse_events.jsonl").unlink(missing_ok=True)
         worker.start()
         started = time.monotonic()
@@ -415,8 +426,13 @@ def run_live(
                 break
 
         if worker.exitcode != 0:
+            code = worker.exitcode
+            native_code = f"0x{code & 0xffffffff:08X}" if code is not None else "unknown"
+            (output_dir / "worker_exit.json").write_text(json.dumps(dict(
+                passed=False, exit_code=code, exit_hex=native_code,
+                last_sample=None if measurements.latest is None else measurements.latest), indent=2), encoding="utf-8")
             raise RuntimeError(
-                f"QEMU physics worker failed (exit {worker.exitcode}); "
+                f"QEMU physics worker failed (exit {code}, {native_code}); "
                 "inspect worker.log, uart_live.jsonl and joint_trace.csv"
             )
         report_file = output_dir / "result.json"
@@ -485,12 +501,13 @@ def main() -> int:
     parser.add_argument("--interactive", action="store_true", default=None,
                         help="Keep true UART control active after three segments; GUI defaults to this")
     parser.add_argument("--hold-seconds", type=float, default=None)
+    parser.add_argument("--test-drag-cycles", type=int, default=1)
     parser.add_argument("--test-drag-recovery", action="store_true",
                         help="Bounded physical grab/release test through the mouse IPC")
     args = parser.parse_args()
     run_live(args.elf, args.output_dir, args.qemu, args.scenario,
              args.timeout_s, args.refresh_hz, args.headless_observer,
-             not args.no_hold, args.interactive, args.hold_seconds, args.test_drag_recovery, args.opengl2)
+             not args.no_hold, args.interactive, args.hold_seconds, args.test_drag_recovery, args.opengl2, args.test_drag_cycles)
     return 0
 
 

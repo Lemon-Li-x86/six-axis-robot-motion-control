@@ -71,7 +71,7 @@ jobs:
           python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --scenario six_axis --output-dir build/stage5-live-evidence
       - name: Physical grab and release recovery through real UART and C planner
         run: |
-          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-drag-recovery --hold-seconds 16 --timeout-s 60 --no-hold --output-dir build/stage5-live-evidence/drag-recovery
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-drag-recovery --test-drag-cycles 3 --hold-seconds 65 --timeout-s 60 --no-hold --output-dir build/stage5-live-evidence/drag-recovery
       - name: FreeRTOS scheduling and stale-feedback regression
         if: runner.os == 'Linux'
         run: |

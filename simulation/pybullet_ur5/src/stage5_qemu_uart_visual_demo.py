@@ -274,6 +274,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     hold_request_at = 0.0
     hold_rearms = 0
     hold_rearm_acks = 0
+    hold_recoveries = 0
     hold_replan_needed = False
     recovering = False
     recovery_attempts = 0
@@ -451,6 +452,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 recovery_previous = tuple(measured)
                                 if recovery_settled >= SETTLE_FRAME_COUNT:
                                     recovering = False
+                                    hold_recoveries += 1
                                     audit.write(json.dumps(dict(event="drag_recovered", error_deg=error,
                                         attempts=recovery_attempts)) + "\n")
                                 elif recovery_quiet >= round(0.5 / FEEDBACK_STEP_S) and hold_request_sequence is None:
@@ -634,6 +636,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "interactive_hold": options.interactive_hold,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                     for a,b in zip(last_measured, sequencer.goals[-1])),
+                "hold_recoveries": hold_recoveries,
                 "hold_rearms": hold_rearms,
                 "hold_rearm_acks": hold_rearm_acks,
                 "hold_wall_s": 0.0 if hold_started is None else time.monotonic()-hold_started,

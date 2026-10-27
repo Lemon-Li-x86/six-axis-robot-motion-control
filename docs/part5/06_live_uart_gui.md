@@ -68,7 +68,7 @@ shift 指令计数模式**。每个 UART 目标仍推进原有物理步数，再
 | `uart_live.jsonl` | 每秒墙钟/物理时间、RX/ACK，以及持续轮询的真实固件计数器 |
 | `observer.jsonl` | 显示样本序号、目标/当前角、延迟、接收/绘制/丢帧 |
 | `observer_result.json` | 本轮最终显示统计，headless 时 rendered=0 |
-| `worker.log` | 接受/到位事件、错误堆栈；长时间运行另有线程栈快照 |
+| `worker.log` | 接受/到位事件、错误堆栈；不启动定时后台线程栈采样 |
 | `qemu_stderr.log` | QEMU 本身的错误输出 |
 | `run_metadata.json` | ELF、当前配置和 URDF 的 SHA256，Python/平台和时钟模式 |
 | `result.json` | 真实闭环验收；只有全部到位且固件故障计数为 0 才通过 |
@@ -134,3 +134,17 @@ GUI 的 render 调用计数也只证明提交了姿态更新，不能替代逐�
 非常快速的拖拽可能被 Bullet 合并成同时按下和松开的事件；此时会施加
 至多 80ms 的有界物理抓取脉冲，避免整次鼠标拖拽被忽略。普通长按拖动
 始终在松开时释放，GUI 失联仍受 0.4 秒租约约束。
+
+
+## Windows 原生退出 3221225477 / 0xC0000005
+
+用户机器的 Python 3.11.15 曾在 python311.dll 中发生访问冲突，日志同时
+显示周期线程栈采样被异常截断。独立的纯 Python 复现仅包含 Event 轮询
+和 `faulthandler.dump_traceback_later(..., repeat=True)`，不加载 QEMU 或
+PyBullet，也出现了同样的访问冲突。因此已移除后台定时栈采样，保留
+`faulthandler.enable` 的崩溃诊断，以及在正常控制循环中写出的 UART JSONL。
+不能把这样的定时 `Timeout (...)!` 当作运动控制超时。
+
+异常退出时父进程另写 `worker_exit.json`，记录十进制/十六进制退出码和
+最后显示样本；新运行前清除旧记录。更长时段的扰动回归用于覆盖以往
+20/40 秒以后才会暴露的问题，早先十几秒的 CI 通过不覆盖这种原生崩溃。
