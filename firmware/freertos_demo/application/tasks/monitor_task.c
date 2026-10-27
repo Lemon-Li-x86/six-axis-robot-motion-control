@@ -5,6 +5,9 @@
 #include "task.h"
 #include "motion_tasks_internal.h"
 #include "task_config.h"
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+#include "stage4_timing_probe.h"
+#endif
 
 static void task_monitor(void *arg)
 {
@@ -14,6 +17,9 @@ static void task_monitor(void *arg)
     for(;;) {
         uint32_t control_free, trajectory_free,monitor_free;
         vTaskDelayUntil(&wake,(period==0U)?1U:period);
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        uint32_t timing_start=stage4_timing_start(STAGE4_TIMING_MONITOR);
+#endif
         control_free=(uint32_t)uxTaskGetStackHighWaterMark(r->control_handle);
         trajectory_free=(uint32_t)uxTaskGetStackHighWaterMark(r->trajectory_handle);
         monitor_free=(uint32_t)uxTaskGetStackHighWaterMark(NULL);
@@ -23,6 +29,9 @@ static void task_monitor(void *arg)
         r->diagnostics.trajectory_stack_free_words=trajectory_free;
         r->diagnostics.monitor_stack_free_words=monitor_free;
         taskEXIT_CRITICAL();
+#if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        stage4_timing_end(STAGE4_TIMING_MONITOR,timing_start);
+#endif
     }
 }
 
