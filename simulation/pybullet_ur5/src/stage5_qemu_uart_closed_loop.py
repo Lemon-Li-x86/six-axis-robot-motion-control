@@ -137,13 +137,17 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
             received_feedback_acks = 0
             move_ack_status = None
             move_request_sent = False
-            first_target_degrees = None
             max_target_change_deg = 0.0
             first_sim_joint2_deg = angles_raw(p, arm, joints)[1] / 100
             output = []
             tx_frames = 0
             seq = 41
             tick = 0
+            diag_items = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS.items())
+            diag_index = 0
+            diag_pending = None
+            diag_sent_at = 0.0
+            diagnostics = {}
 
             while time.monotonic() - started < SIM_DURATION_S:
                 tick_start = time.monotonic()
@@ -169,10 +173,6 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                                     targetPositions=[math.radians(v / wire.JOINT_ANGLE_SCALE)
                                                      for v in values],
                                     forces=[150.0] * len(joints))
-                                if first_target_degrees is None:
-                                    first_target_degrees = [
-                                        v / wire.JOINT_ANGLE_SCALE for v in values
-                                    ]
                                 max_target_change_deg = max(
                                     max_target_change_deg,
                                     abs(values[1] / wire.JOINT_ANGLE_SCALE
@@ -185,8 +185,24 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                               and len(payload) == wire.MOVE_ACK_PAYLOAD_LEN):
                             if payload[0] == seq:
                                 move_ack_status = struct.unpack("<b",payload[1:])[0]
+                        elif (command == wire.CMD_DIAGNOSTICS_RESPONSE
+                              and len(payload) == 4 and diag_pending is not None):
+                            diagnostics[diag_pending] = struct.unpack("<I",payload)[0]
+                            diag_pending = None
 
                 now = time.monotonic()
+                if (now - started >= 4.0 and move_ack_status is not None
+                        and diag_pending is None and diag_index < len(diag_items)):
+                    diag_name, diag_selector = diag_items[diag_index]
+                    sock.sendall(frame(wire.CMD_GET_DIAGNOSTICS,
+                                       bytes((diag_selector,))))
+                    diag_index += 1
+                    diag_pending = diag_name
+                    diag_sent_at = now
+                elif diag_pending is not None and now - diag_sent_at > 0.6:
+                    diagnostics[diag_pending] = None
+                    diag_pending = None
+
                 if now - last_send >= FEEDBACK_PERIOD_S:
                     feedback = angles_raw(p, arm, joints)
                     sock.sendall(frame(
@@ -218,7 +234,14 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
             movement = abs(
                 angles_raw(p, arm, joints)[1] / 100.0 - first_sim_joint2_deg)
             accepted = move_ack_status == 0
-            passed = (accepted and received_feedback_acks >= 5
+            debug_pass = (
+                diagnostics.get("requests_accepted",0) >= 1 and
+                diagnostics.get("trajectory_samples",0) > 0 and
+                diagnostics.get("controller_steps",0) > 0 and
+                diagnostics.get("controller_faults") == 0 and
+                diagnostics.get("planner_faults") == 0
+            )
+            passed = (accepted and debug_pass and received_feedback_acks >= 5
                       and received_targets >= 10
                       and movement >= MIN_JOINT_MOVEMENT_DEG
                       and max_target_change_deg >= MIN_ACCEPTED_COMMAND_CHANGE_DEG)
@@ -236,6 +259,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 "measured_joint2_movement_deg": movement,
                 "max_commanded_joint2_change_deg": max_target_change_deg,
                 "bad_checksum_frames": incoming.bad_checksum,
+                "motion_diagnostics": diagnostics,
+                "motion_diagnostics_passed": debug_pass,
                 "passed": passed,
                 "not_tested": [
                     "real industrial robot hardware",
