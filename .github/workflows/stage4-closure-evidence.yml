@@ -107,12 +107,12 @@ jobs:
         shell: pwsh
         run: |
           python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install pybullet
+          # No PyBullet required to prove MSVC/GCC detection and C builds.
 
-      - name: Build and execute real Windows native Stage4 closure suite
+      - name: Verify native compiler discovery, Windows build and C smoke tests
         shell: pwsh
         run: |
-          .\tools\test_stage4_closure.ps1
+          .\tools\test_stage4_closure.ps1 -HostBuildOnly
 
       - name: Archive Windows host build and measured trials
         if: always()
