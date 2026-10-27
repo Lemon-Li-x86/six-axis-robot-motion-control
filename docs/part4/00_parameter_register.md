@@ -117,3 +117,17 @@
 | 报告P99算法 | 最近阶 `ceil(0.99*N)` | `stage4_timing_probe.c` 单一排序实现 | `tools/analyze_stage4_timing.py` 只做校验、单位换算与归档；**不重算另一份P99** |
 
 该诊断默认不可用：只在 `ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON`、同时保持 `ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF` 的隔离ARM测试镜像中编译。参数和诊断不得迁移到生产Model、PID或Stage5 APF逻辑。
+
+
+## 收尾补测新增的实验参数（仅 Host/PyBullet）
+
+| 参数与单位 | 单一来源 | 引用位置 / 配置类别 |
+|---|---|---|
+| 实验 PI 的 Ki（C PID 算法所定义单位） | tools/stage4_pid_study.py 的 TRIAL_KI | 每组试验传入 C 桥接库实例，非生产配置 |
+| 实验 PID 的 Kd（C PID 算法所定义单位） | tools/stage4_pid_study.py 的 TRIAL_KD | 仅实验组合，非生产配置 |
+| 各场景运动目标，raw=0.01° | simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py 的 TRIAL_GOALS | Stage4 物理仿真夹具 |
+| 力矩夹具，N·m | tools/stage4_pid_study.py 的 ACTUATOR_FORCES | PyBullet POSITION_CONTROL 最大执行器力矩，仅试验策略 |
+| 小幅仿真的默认最终误差门限与物理步长 | stage4_dynamic_closed_loop.py 的 DEFAULT_FINAL_ERROR_DEG、DEFAULT_PHYSICS_DT_S | 测试判据与数值积分设置 |
+| 测试增益传输格式 [6][3] double | tests/simulation/stage4_sim_bridge.c 的 stage4_sim_create_with_pid_gains() | 桥接 ABI，六关节行×Kp/Ki/Kd 列；不入正式固件 |
+
+注意：默认 Kp/Ki/Kd 仍仅来自 config/robot_defaults.json；测试矩阵在运行时从此文件读取，**不维护第二份默认值**。实验 C ABI 只改变本次创建的 host 模拟控制器，不能写入应用配置或真实驱动。
