@@ -34,49 +34,49 @@
   "stage4_motion": {
     "pid": [
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
       },
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
       },
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
       },
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
       },
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
       },
       {
-        "kp": 0.2,
+        "kp": 0.25,
         "ki": 0.0,
-        "kd": 0.0,
+        "kd": 0.025,
         "integral_limit_deg_s": 10.0,
         "output_limit_deg": 3.0,
         "deadband_deg": 0.02
