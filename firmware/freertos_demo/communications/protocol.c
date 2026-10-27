@@ -297,46 +297,40 @@ robot_status_t protocol_build_joint_state_ack_frame(
 }
 
 
+/* One raw six-axis payload decoder for UART feedback and Stage5 request.
+ * Out-of-range canonical angles are rejected before modifying outputs.
+ * Payload bytes and signed interpretation are identical for both commands. */
+static robot_status_t decode_joint_payload(
+    const uint8_t *bytes,
+    robot_joint_angles_t *out)
+{
+    robot_joint_angles_t decoded={{0}};
+    uint32_t i;
+    if(bytes==NULL || out==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    for(i=0U;i<ROBOT_JOINT_COUNT;i++) {
+        uint16_t raw=(uint16_t)bytes[2U*i] |
+            ((uint16_t)bytes[2U*i+1U]<<8U);
+        decoded.value[i]=(robot_joint_angle_t)raw;
+        if(decoded.value[i] < -ROBOT_JOINT_HALF_TURN_RAW ||
+           decoded.value[i] >= ROBOT_JOINT_HALF_TURN_RAW)
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    }
+    *out=decoded;
+    return ROBOT_STATUS_OK;
+}
+
 robot_status_t protocol_parse_joint_state(
     const protocol_frame_t *frame,
-    robot_joint_angles_t *joints
-)
+    robot_joint_angles_t *joints)
 {
-    uint32_t i;
-
-    if (frame == NULL || joints == NULL)
-    {
+    if(frame==NULL || joints==NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
-    }
-
-    if (frame->command != CMD_JOINT_STATE)
-    {
+    if(frame->command!=CMD_JOINT_STATE)
         return ROBOT_STATUS_ERROR_INVALID_COMMAND;
-    }
-
-    if (frame->length != PROTOCOL_JOINT_PAYLOAD_LEN)
-    {
+    if(frame->length!=PROTOCOL_JOINT_PAYLOAD_LEN)
         return ROBOT_STATUS_ERROR_INVALID_LENGTH;
-    }
-
-    for (i = 0U; i < ROBOT_JOINT_COUNT; i++)
-    {
-        uint16_t value;
-
-        value =
-            (uint16_t)frame->payload[i * 2U]
-            |
-            (
-                (uint16_t)frame->payload[
-                    i * 2U + 1U
-                ] << 8U
-            );
-
-        joints->value[i] =
-            (robot_joint_angle_t)value;
-    }
-
-    return ROBOT_STATUS_OK;
+    return decode_joint_payload(frame->payload,joints);
 }
 
 
@@ -348,24 +342,18 @@ robot_status_t protocol_parse_joint_move_request(
     uint8_t *sequence,
     robot_joint_angles_t *canonical_goal)
 {
-    robot_joint_angles_t tmp={{0}};
-    uint32_t i;
+    robot_joint_angles_t decoded={{0}};
+    robot_status_t status;
     if(frame==NULL || sequence==NULL || canonical_goal==NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
     if(frame->command!=CMD_REQUEST_JOINT_MOVE)
         return ROBOT_STATUS_ERROR_INVALID_COMMAND;
     if(frame->length!=PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN)
         return ROBOT_STATUS_ERROR_INVALID_LENGTH;
-    for(i=0U;i<ROBOT_JOINT_COUNT;i++) {
-        uint16_t raw=(uint16_t)frame->payload[1U+2U*i]
-          | ((uint16_t)frame->payload[2U+2U*i]<<8U);
-        tmp.value[i]=(robot_joint_angle_t)raw;
-        if(tmp.value[i] < -ROBOT_JOINT_HALF_TURN_RAW ||
-           tmp.value[i] >= ROBOT_JOINT_HALF_TURN_RAW)
-            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-    }
+    status=decode_joint_payload(&frame->payload[1U],&decoded);
+    if(status!=ROBOT_STATUS_OK) return status;
     *sequence=frame->payload[0];
-    *canonical_goal=tmp;
+    *canonical_goal=decoded;
     return ROBOT_STATUS_OK;
 }
 
