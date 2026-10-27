@@ -537,6 +537,10 @@ if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     # Match the standalone QEMU test targets without modifying release
     # or ordinary non-test firmware build flags.
     target_compile_options(freertos_demo PRIVATE -O0 -g3)
+    # Test-only linker memory map. Normal firmware build is untouched.
+    target_link_options(freertos_demo PRIVATE
+        "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/stage4_rtos_selftest.map"
+    )
 endif()
 target_compile_definitions(freertos_demo PRIVATE
     ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=$<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
