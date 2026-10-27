@@ -1,4 +1,5 @@
 /* Timer0-based QEMU-only scheduling and processing-window samples.
+ * For extended runs, retain the most recent 128 per-task samples.
  * No heap, no libc sorting, no duplicate clock constants and no
  * potentially blocking diagnostic calls in the production task path.
  */
@@ -15,6 +16,8 @@ typedef struct {
     uint32_t seen_start;
     uint32_t interval_count;
     uint32_t processing_count;
+    uint32_t next_interval_index;
+    uint32_t next_processing_index;
     uint32_t intervals[STAGE4_TIMING_CAPACITY];
     uint32_t processing[STAGE4_TIMING_CAPACITY];
 } timing_samples_t;
@@ -32,9 +35,13 @@ uint32_t stage4_timing_start(uint32_t index)
     timing_samples_t *s;
     if(index>=STAGE4_TIMING_TASK_COUNT) return now;
     s=&g_samples[index];
-    if(s->seen_start!=0U && s->interval_count<STAGE4_TIMING_CAPACITY) {
-        s->intervals[s->interval_count++]=
+    if(s->seen_start!=0U) {
+        s->intervals[s->next_interval_index]=
             timer_driver_elapsed_ticks(s->previous_start,now);
+        s->next_interval_index=
+            (s->next_interval_index+1U)%STAGE4_TIMING_CAPACITY;
+        if(s->interval_count<STAGE4_TIMING_CAPACITY)
+            s->interval_count++;
     }
     s->previous_start=now;
     s->seen_start=1U;
@@ -47,9 +54,12 @@ void stage4_timing_end(uint32_t index,uint32_t start)
     timing_samples_t *s;
     if(index>=STAGE4_TIMING_TASK_COUNT) return;
     s=&g_samples[index];
+    s->processing[s->next_processing_index]=
+        timer_driver_elapsed_ticks(start,end);
+    s->next_processing_index=
+        (s->next_processing_index+1U)%STAGE4_TIMING_CAPACITY;
     if(s->processing_count<STAGE4_TIMING_CAPACITY)
-        s->processing[s->processing_count++]=
-            timer_driver_elapsed_ticks(start,end);
+        s->processing_count++;
 }
 
 static uint32_t p99_of(uint32_t *values,uint32_t count)
