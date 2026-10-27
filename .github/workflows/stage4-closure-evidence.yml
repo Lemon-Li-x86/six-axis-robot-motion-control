@@ -95,6 +95,33 @@ jobs:
           if-no-files-found: ignore
 
 
+  windows-native-host-regression:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare Windows Python environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install pybullet
+
+      - name: Build and execute real Windows native Stage4 closure suite
+        shell: pwsh
+        run: |
+          .\tools\test_stage4_closure.ps1
+
+      - name: Archive Windows host build and measured trials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-windows-native-host-evidence
+          path: build/stage4-closure-local/evidence/**
+          if-no-files-found: ignore
+
   qemu-freertos-pybullet-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 15
