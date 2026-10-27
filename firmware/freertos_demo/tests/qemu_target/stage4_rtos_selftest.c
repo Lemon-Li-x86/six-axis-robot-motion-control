@@ -19,6 +19,7 @@
 #include "motor_state.h"
 #include "task_config.h"
 #include "stage4_motion_config.h"
+#include "stage4_timing_probe.h"
 
 typedef struct
 {
@@ -105,6 +106,9 @@ static void stage4_rtos_test_task(void *argument)
             status=ROBOT_STATUS_ERROR_INTERNAL;
         else
         {
+            /* Freeze 1.2s of healthy task timing before inducing the
+             * intentional stale-feedback safety stop. */
+            stage4_timing_capture();
             vTaskDelay(pdMS_TO_TICKS(
                 cfg->feedback_timeout_ms+
                 (5U*TASK_PERIOD_TRAJECTORY_MS)));
@@ -160,6 +164,24 @@ static void stage4_rtos_test_task(void *argument)
         (after_stale.controller_faults+after_stale.planner_faults)>0U);
     report_check(
         stale.controller_steps==after_stale.controller_steps);
+
+    /* Tick counts are Timer0 25MHz-equivalent QEMU virtual time, not
+     * physical WCET and NOT the GitHub runner's wall-clock latency. */
+    report_check(g_stage4_timing_frequency_hz>0U);
+    {
+        uint32_t i;
+        for(i=0U;i<STAGE4_TIMING_TASK_COUNT;i++) {
+            const volatile stage4_timing_summary_t *timing=
+                &g_stage4_timing_summary[i];
+            report_check(timing->interval_sample_count>0U);
+            report_check(timing->execution_sample_count>0U);
+            report_check(timing->expected_period_counter_ticks>0U);
+            report_check(timing->p99_abs_period_jitter_ticks<=
+                         timing->maximum_abs_period_jitter_ticks);
+            report_check(timing->p99_processing_ticks<=
+                         timing->maximum_processing_ticks);
+        }
+    }
     g_stage4_rtos_test_finished=1U;
     stage4_rtos_selftest_done();
 }
