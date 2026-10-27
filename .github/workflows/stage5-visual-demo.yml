@@ -6,7 +6,9 @@ on:
       - feat/qemu-pybullet-visual-demo-20261027
     paths:
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_trace_replay.py'
       - 'tools/tests/test_stage5_visual_demo.py'
+      - 'tools/tests/test_stage5_trace_replay.py'
       - '.github/workflows/stage5-visual-demo.yml'
       - 'firmware/freertos_demo/**'
   workflow_dispatch:
@@ -20,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run isolated UART and sequencer tests
-        run: python -m unittest discover -s tools/tests -p test_stage5_visual_demo.py -v
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_*.py' -v
 
   qemu-pybullet-multi-segment:
     runs-on: ubuntu-latest
@@ -48,6 +50,11 @@ jobs:
           timeout 240s python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
             --headless --scenario six_axis --timeout-s 210 \
             --elf build/stage5-visual-uart/firmware/freertos_demo/freertos_demo.elf \
+            --output-dir build/stage5-visual-evidence
+      - name: Verify recorded six-joint physical displacement and timing
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_trace_replay.py \
+            --replay-only --verify-only \
             --output-dir build/stage5-visual-evidence
       - name: Preserve measured joint traces and diagnostics
         if: always()
