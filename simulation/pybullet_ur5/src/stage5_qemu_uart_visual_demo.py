@@ -83,6 +83,7 @@ class DemoOptions:
     hold_window: bool
     interactive_hold: bool = False
     hold_duration_s: float | None = None
+    opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
 
 
 class MotionSequencer:
@@ -312,9 +313,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             stderr=qemu_error,
         )
         with integration.join_qemu_serial(port, qemu, stop_requested) as sock:
-            client = p.connect(p.DIRECT if options.headless else p.GUI)
+            # One authoritative physics world. GUI owns both native picking
+            # and simulation; DIRECT runs the identical physics path in CI.
+            client = (p.connect(p.DIRECT) if options.headless else
+                      p.connect(p.GUI, options="--opengl2" if options.opengl2 else ""))
             if client < 0:
                 raise RuntimeError("PyBullet connection failed")
+            p.setRealTimeSimulation(0)
+            if not options.headless:
+                p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
+                p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
             p.setGravity(0, 0, -9.81)
             p.setTimeStep(PHYSICS_STEP_S)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
@@ -370,7 +378,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 if sequencer.done and hold_started is None:
                     hold_started = now
                     if options.interactive_hold:
-                        print("[HOLD] Live UART controller remains active; drag a link, release to recover", flush=True)
+                        print("[HOLD] PyBullet native mouse picking is active; controller holds the final goal", flush=True)
                 if stop_requested is not None and stop_requested():
                     if not sequencer.done or not options.interactive_hold:
                         raise InterruptedError("Observer requested live control shutdown")
@@ -426,24 +434,32 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                 )
                             if on_physics is not None:
-                                released, grabbed = on_physics(p, arm, joints, target_frames * FEEDBACK_STEP_S,
-                                                      sequencer.done, ending)
-                                if grabbed:
-                                    recovering = False
-                                    hold_replan_needed = False
-                                if released and sequencer.done and not ending:
-                                    hold_replan_needed = True
-                                    recovering = True
-                                    recovery_attempts = 0
-                                    recovery_quiet = 0
-                                    recovery_settled = 0
-                                    recovery_previous = None
+                                # Optional test force or GUI stop key. Native
+                                # mouse picking needs no Python event handler.
+                                on_physics(p, arm, joints,
+                                           target_frames * FEEDBACK_STEP_S,
+                                           sequencer.done, ending)
                             for _ in range(SIMULATED_STEPS_PER_TARGET):
                                 p.stepSimulation()
                             target_frames += 1
                             measured = angles_raw(p, arm, joints)
                             last_measured = tuple(measured)
                             sock.sendall(joint_feedback_frame(measured))
+                            # Detect a real joint-space deviation, irrespective
+                            # of whether it came from mouse picking or test
+                            # forces. Never interpret UART motor commands as
+                            # the final requested joint goal.
+                            if sequencer.done and options.interactive_hold and not ending:
+                                deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                                                for a,b in zip(measured, sequencer.goals[-1]))
+                                if deviation > 0.5 and not recovering:
+                                    recovering = True
+                                    recovery_attempts = 0
+                                    recovery_quiet = 0
+                                    recovery_settled = 0
+                                    recovery_previous = None
+                                    audit.write(json.dumps(dict(event="hold_deviation",
+                                        error_deg=deviation)) + "\n")
                             if recovering and not ending:
                                 error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, sequencer.goals[-1]))
                                 recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
@@ -453,20 +469,20 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 if recovery_settled >= SETTLE_FRAME_COUNT:
                                     recovering = False
                                     hold_recoveries += 1
-                                    audit.write(json.dumps(dict(event="drag_recovered", error_deg=error,
+                                    audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
                                         attempts=recovery_attempts)) + "\n")
                                 elif recovery_quiet >= round(0.5 / FEEDBACK_STEP_S) and hold_request_sequence is None:
-                                    # The unchanged incremental controller can settle with a
-                                    # residual after saturation. Ask its C planner for the same
-                                    # destination again; this is bounded motion sequencing,
-                                    # never an additional Python servo or changed target.
+                                    # A stagnant motor command can leave residual
+                                    # position error. Reissue the SAME goal through
+                                    # C motion planning; no Python servo or mouse
+                                    # release event is involved.
                                     if recovery_attempts >= 8:
-                                        raise RuntimeError(f"Drag recovery did not converge: {error:.2f}deg")
+                                        raise RuntimeError(f"Hold recovery did not converge: {error:.2f}deg")
                                     hold_replan_needed = True
                                     recovery_quiet = 0
                             if hold_replan_needed and hold_request_sequence is None and not ending:
-                                # Reuse the C planner/PID with the SAME final goal.
-                                # No joint reset, Python PID or fabricated measurement.
+                                # Replan from measured pose using the original
+                                # C controller and identical final goal.
                                 hold_rearms += 1
                                 recovery_attempts += 1
                                 hold_request_sequence = (sequencer.sequence + hold_rearms) & 0xff
@@ -474,7 +490,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 payload_request = bytes((hold_request_sequence,)) + struct.pack("<6h", *sequencer.goals[-1])
                                 sock.sendall(integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload_request))
                                 hold_replan_needed = False
-                                audit.write(json.dumps(dict(event="release_replan", sequence=hold_request_sequence,
+                                audit.write(json.dumps(dict(event="hold_replan", sequence=hold_request_sequence,
                                     goal_raw=sequencer.goals[-1], measured_raw=measured)) + "\n")
                             tool_xyz = p.getLinkState(
                                 arm, p.getNumJoints(arm) - 1,
@@ -558,7 +574,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     raise RuntimeError(f"Hold recovery rejected: seq={seq}, status={status}")
                                 hold_request_sequence = None
                                 hold_rearm_acks += 1
-                                audit.write(json.dumps(dict(event="release_replan_ack", sequence=seq)) + "\n")
+                                audit.write(json.dumps(dict(event="hold_replan_ack", sequence=seq)) + "\n")
                                 continue
                             sequencer.acknowledge(payload)
                             print(f"[ACCEPTED] Segment {sequencer.index + 1}/"
