@@ -62,6 +62,11 @@ FEEDBACK_STEP_S = integration.FEEDBACK_PERIOD_S
 SIMULATED_STEPS_PER_TARGET = round(FEEDBACK_STEP_S / PHYSICS_STEP_S)
 SETTLE_TOLERANCE_DEG = 0.15
 SETTLE_FRAME_COUNT = 15
+# Interactive HOLD policies (not UR5 model parameters or PID gains).
+HOLD_DEVIATION_TRIGGER_DEG = 0.5
+HOLD_STAGNANT_PERIOD_S = 0.5
+HOLD_MAX_REPLAN_ATTEMPTS = 8
+HOLD_TRACE_LIFETIME_S = 10.0
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 MAX_PAYLOAD_RAW = 32767
 TRACE_HEADER = (
@@ -452,7 +457,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             if sequencer.done and options.interactive_hold and not ending:
                                 deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                 for a,b in zip(measured, sequencer.goals[-1]))
-                                if deviation > 0.5 and not recovering:
+                                if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
                                     recovering = True
                                     recovery_attempts = 0
                                     recovery_quiet = 0
@@ -471,12 +476,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     hold_recoveries += 1
                                     audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
                                         attempts=recovery_attempts)) + "\n")
-                                elif recovery_quiet >= round(0.5 / FEEDBACK_STEP_S) and hold_request_sequence is None:
+                                elif recovery_quiet >= round(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S) and hold_request_sequence is None:
                                     # A stagnant motor command can leave residual
                                     # position error. Reissue the SAME goal through
                                     # C motion planning; no Python servo or mouse
                                     # release event is involved.
-                                    if recovery_attempts >= 8:
+                                    if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
                                         raise RuntimeError(f"Hold recovery did not converge: {error:.2f}deg")
                                     hold_replan_needed = True
                                     recovery_quiet = 0
@@ -501,7 +506,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     p.addUserDebugLine(
                                         last_tool_xyz, tool_xyz,
                                         [0.1, 0.7, 1.0], lineWidth=2,
-                                        lifeTime=10.0,  # Native GUI: bounded trail during HOLD.
+                                        lifeTime=HOLD_TRACE_LIFETIME_S,  # Bounded during HOLD.
                                     )
                                 last_tool_xyz = tuple(tool_xyz)
                                 if target_frames % 10 == 0:
