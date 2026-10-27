@@ -69,6 +69,23 @@ robot_status_t trajectory_polynomial_sample(
     double elapsed_s,
     trajectory_joint_sample_t *out);
 
+/**
+ * @brief Check the entire polynomial before publishing its first reference.
+ *
+ * Checks endpoints and interior extrema, rather than a time sampling grid.
+ * Position bounds use continuous centidegrees; rate bounds use deg/s and
+ * deg/s^2. All rate bounds must be finite and positive. The plan and limits
+ * remain unchanged. A metadata/coefficient mismatch is INVALID_ARGUMENT;
+ * an exceeded bound or unsafe numeric result is OUT_OF_RANGE. NULL inputs
+ * return NULL_POINTER. This does not check collisions or robot dynamics.
+ */
+robot_status_t trajectory_polynomial_validate_limits(
+    const trajectory_polynomial_plan_t *plan,
+    const robot_joint_positions_t *minimum,
+    const robot_joint_positions_t *maximum,
+    const robot_joint_velocities_t *max_velocity_deg_s,
+    const trajectory_joint_accelerations_t *max_acceleration_deg_s2);
+
 /*
  * Rest-to-rest synchronized six-axis trapezoid:
  * all moving joints use one scalar progress s(t) and finish together.

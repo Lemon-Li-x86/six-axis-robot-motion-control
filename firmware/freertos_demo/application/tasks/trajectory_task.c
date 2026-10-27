@@ -16,6 +16,7 @@
 #include "kinematics.h"
 #include "motion_limits.h"
 #include "angle_utils.h"
+#include "robot_model.h"
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
 #include "stage4_timing_probe.h"
 #endif
@@ -81,7 +82,18 @@ static robot_status_t start_request(
         for(j=0U;j<ROBOT_JOINT_COUNT;j++)
             if(request->polynomial.start_positions.value[j]!=last_joint->value[j])
                 return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
-        return ROBOT_STATUS_OK;
+        /* Validate the complete curve before publishing any reference.
+         * Periodic sampling alone can miss an interior rate/position peak.
+         * Runs on the planner stack, not the smaller UART receive stack. */
+        {
+            const robot_model_t *model = robot_model_get_active();
+            if(model==NULL) return ROBOT_STATUS_ERROR_INTERNAL;
+            return trajectory_polynomial_validate_limits(
+                &request->polynomial,
+                &model->joint_min_positions,&model->joint_max_positions,
+                &r->config.max_velocity_deg_s,
+                &r->config.max_acceleration_deg_s2);
+        }
     }
     if(request->kind==MOTION_REQUEST_CARTESIAN) {
         /* Reject a large discontinuity between robot feedback and

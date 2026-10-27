@@ -13,10 +13,10 @@
 
 | 原大纲具体要求 | 代码定位 | 已有实验证据 | 判断与不足 |
 |---|---|---|---|
-| 1. 三次、五次关节多项式；满足起终点位置、速度、加速度约束 | `algorithms/trajectory/polynomial_trajectory.c` | `stage4_trajectory_host` 测三次起终位置/速度、五次起终位置/速度/加速度 | **基础通过**。三次多项式按数学自由度匹配起终位置和速度；只有五次多项式可以同时自由指定两端加速度。大纲的「加速度约束」还需在配置值下验证整段采样的加速度上限。 |
+| 1. 三次、五次关节多项式；满足起终点位置、速度、加速度约束 | `algorithms/trajectory/polynomial_trajectory.c`、`trajectory_task.c` | 端点约束；32组×1001点密采样对照；ARM算法20项、FreeRTOS多项式8项 | **指定测试通过**。三次匹配起终位置/速度；五次还匹配两端加速度。执行前检查整段位置、速度与加速度的端点及内部极值，越限计划不发布首个参考。 |
 | 1. 梯形速度曲线、最大速度和加速度可配置 | `algorithms/trajectory/trapezoidal_profile.c`、`config/stage4_motion_config.c` | Host测同步、梯形/三角、边界与速度/加速度样本 | **通过现有样本**，不是所有路径负载的动力学保证 |
 | 2. 直线、圆弧插值，配合IK转离散关节序列 | `algorithms/trajectory/cartesian_line.c`、`cartesian_arc.c`、`cartesian_waypoint.c`、`application/tasks/trajectory_task.c` | `stage4_cartesian_pid_host` / `stage4_cartesian_ik_host` | **离散几何/IK通过**，没有实测全程连续关节加速度和全机器人连杆碰撞 |
-| 2. 轨迹插补周期与控制周期匹配 | `application/tasks/trajectory_task.c`、`config/robot_defaults.json`、`motion_pipeline.c` | 静态配置：Trajectory 20ms，Control 10ms；笛卡尔请求校验 `period_s` 与20ms一致 | **配置和逻辑检查已有**；QEMU监测任务执行，尚无实际时间抖动分布 |
+| 2. 轨迹插补周期与控制周期匹配 | `application/tasks/trajectory_task.c`、`config/robot_defaults.json`、`motion_pipeline.c` | Trajectory 20ms，Control 10ms；请求周期校验；QEMU P99/最大周期偏差，见08报告 | **配置、运行和QEMU计时已有证据**；不代表实物硬实时保证 |
 | 3. 单关节增量式 PID，可独立配Kp/Ki/Kd，积分限幅、输出限幅、死区 | `algorithms/control/pid.[ch]`、`joint_controller.c` | Host PID测试和六轴反馈调节仿真 | **实现且样本测试通过**；配置当前Kp=0.2, Ki=Kd=0，增益仍为小幅仿真初值 |
 | 3. 依据仿真关节反馈整定，优化位置跟随精度 | `tests/simulation/stage4_sim_bridge.c`、`simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py`、`docs/part4/03_pid_tuning_record.md` | 单J2与六轴同步小位移；J2 RMSE约0.130/0.131°、超调0、最大最终误差0.02°；四档Kp对照 | **初步调优数据具备**；尚缺多速度、多负载、多起终点及独立Ki/Kd验证，不能称全面整定 |
 | 4. FreeRTOS规划、PID、通信、监测任务及优先级/周期/堆栈 | `application/tasks/`、`application/protocol_tasks.c`、`config/robot_defaults.json` | QEMU 任务运行/诊断；Control 4/10ms/768words，Trajectory 2/20ms/1024words，Monitor 1/100ms/384words，RX3/TX1 | **已实现**，并经QEMU任务自检 |
@@ -53,3 +53,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
 脚本在 `build/stage4-final-validation.log` 保存日志。该操作**只切换本机工作树，不移动备份远端分支**；如果本机有未提交修改，应先保存自己的改动，不要强制checkout。
 
 **整体验收结论**：Stage4核心代码及基线测试已经有先前证据，但仍有调优覆盖、实时性能报告的交付缺口。等此次CI真运行完成后补充对应运行号/结果，不能先填写「PASS」。
+
+## 2026-10-27 本机重新复验结果（更新）
+
+上面的历史段落反映创建本报告时的状态。当前更新以本机九步统一脚本 `tools/test_stage4_once.ps1` 为准：Stage2 Unity 25/25、Stage2 ARM/QEMU协议8/8、Stage3/4 Host CTest 6/6、Stage4轨迹QEMU14/14、IK选解并FK回代128/128、参考近奇异IK 2/2、FreeRTOS自检29项失败0、Native C Smoke通过，PyBullet单轴与六轴两场景通过。详细运行状态和指标定义见 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md) 与 [`08_stage4_qemu_timing_and_stack_2026-10-27.md`](08_stage4_qemu_timing_and_stack_2026-10-27.md)。
+
+更新不改变本报告中对多负载PID、长时高负载、任务CPU占比和实物实时性的限制判断。

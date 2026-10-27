@@ -1,5 +1,7 @@
 # 第4阶段 PID 调优与轨迹性能记录
 
+> **当前结论（2026-10-27）**：正式仿真默认 `Kp/Ki/Kd=0.2/0/0`，来源为单一 Stage4 配置。已完成四档P增益的单轴及六轴小步对照、Stage4修复后Host/QEMU回归，以及本机统一验收中的PyBullet两种场景。该证据支持初始仿真调参，不支持多负载或实机全范围整定。以下“待测”表格记录的是早期试验字段；最新数值以本节之后的正式运行记录为准。
+
 ## 记录状态
 
 **已有 GitHub Actions 原生 C/PyBullet 动态基线与受控扫参实测；尚无本机ARM/UART全链路、实体机器或正式增益标定证据。**
@@ -8,7 +10,7 @@
 |---|---|---|
 | 控制周期 | config/robot_defaults.json: 10ms | 待测 |
 | 轨迹输出周期 | config/robot_defaults.json: 20ms | 待测 |
-| 六轴仿真初始 Kp | `config/stage4_motion_config.c` 当前 0.2（原始基线0.8） | 有云端受控对照，仍非硬件标定 |
+| 六轴仿真初始 Kp | `config/robot_defaults.json`的`stage4_motion.pid`：0.2（原始基线0.8） | 有云端受控对照，仍非硬件标定 |
 | 初始 Ki / Kd | 配置文件：均为 0 | 未整定 |
 | P/I/D 抗饱和 | 增量式 PID + 积分限幅 + 条件积分冻结 | 待测 |
 | 位置跟踪 MAE / RMSE | 记录各轴误差（deg） | 云端 J2 已测，其余轴详见各次 JSON/CSV |
@@ -22,11 +24,11 @@
 
 初次只在纯仿真环境、小角度、不接近奇异点的关节步进上启用输出。依次测试 J1、J2、J3 单轴与六轴同步，分别用零 P 控制、仅 P、再引入 I 和 D 的小步改动；每次记录实际反馈、期望轨迹、命令轨迹以及采样时间，不得仅凭动画看起来流畅判断通过。
 
-实际整定后更新 `config/stage4_motion_config.c`，并在此文档记录每次 Kp/Ki/Kd 更改的理由、测试时间、试验 SHA。PID 误差使用连续关节位置，不得将 ±180° 的规范角差直接作为误差。
+实际整定后更新 `config/robot_defaults.json` 的 `stage4_motion.pid[0..5]`，重新构建，再在此文档记录每次 Kp/Ki/Kd 更改的理由、测试时间、试验 SHA。`stage4_motion_config.c`只装配生成配置，不再保存PID数值。PID误差使用连续关节位置，不得将±180°的规范角差直接作为误差。
 
 暂不能据此填写“位置精度±0.1°”之类的工业机器人性能承诺。
 
-## 动态闭环试验工具（新增，待运行）
+## 动态闭环试验工具（已运行）
 
 新增可重复的**真实 C 算法 → PyBullet DIRECT** 仿真：
 - `firmware/freertos_demo/tests/simulation/stage4_sim_bridge.c` 提供测试专用原生共享库。它直接链接生产代码 `trapezoidal_profile.c`、`pid.c`、`joint_controller.c`、`joint_command_limiter.c`、`motion_limits.c` 与 `ur5_model.c`，不重写一份 Python PID。

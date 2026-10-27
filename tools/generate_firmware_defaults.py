@@ -20,6 +20,7 @@
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -55,9 +56,72 @@ EXPECTED_KEYS = {
     "task_period_ms",
     "task_stack_depth_words",
     "timer_frequency_hz",
+    "protocol_frame_timeout_ms",
     "parser_benchmark_samples",
     "initial_joint_targets_centideg",
+    "stage4_motion",
 }
+
+PID_FIELDS = (
+    "kp", "ki", "kd", "integral_limit_deg_s",
+    "output_limit_deg", "deadband_deg",
+)
+MOTION_FIELDS = {
+    "pid", "max_velocity_deg_s", "max_acceleration_deg_s2",
+    "feedback_timeout_ms", "reference_timeout_trajectory_periods",
+    "cartesian_start_tolerance_mm", "cartesian_start_rotation_matrix_tolerance",
+}
+
+
+def real_literal(value, name, positive=False):
+    """Validate a finite policy scalar and emit a portable binary32 literal."""
+    if type(value) not in (int, float):
+        raise ValueError(f"{name} must be numeric, not boolean/string")
+    if not 0 <= value <= 1e6 or not math.isfinite(value):
+        raise ValueError(f"{name} must be finite and within [0, 1000000]")
+    if positive and value == 0:
+        raise ValueError(f"{name} must be positive")
+    literal = format(float(value), ".9g")
+    if "." not in literal and "e" not in literal:
+        literal += ".0"
+    return literal + "F"
+
+
+def generate_motion_defaults(motion):
+    """Validate six independent joint policies; return C initializer macros."""
+    if not isinstance(motion, dict) or set(motion) != MOTION_FIELDS:
+        raise ValueError("Invalid fields in stage4_motion")
+    pid = motion["pid"]
+    if not isinstance(pid, list) or len(pid) != 6:
+        raise ValueError("stage4_motion.pid requires six joint objects")
+    entries = []
+    for axis, gains in enumerate(pid):
+        if not isinstance(gains, dict) or set(gains) != set(PID_FIELDS):
+            raise ValueError(f"Invalid fields in stage4_motion.pid[{axis}]")
+        entries.append("{" + ", ".join(
+            real_literal(gains[field], f"pid[{axis}].{field}",
+                         positive=field == "output_limit_deg")
+            for field in PID_FIELDS) + "}")
+    lines = ["#define FW_DEFAULT_STAGE4_PID {" + ", ".join(entries) + "}"]
+    for field in ("max_velocity_deg_s", "max_acceleration_deg_s2"):
+        values = motion[field]
+        if not isinstance(values, list) or len(values) != 6:
+            raise ValueError(f"stage4_motion.{field} requires six values")
+        entries = [real_literal(value, f"{field}[{i}]", positive=True)
+                   for i, value in enumerate(values)]
+        lines.append(f"#define FW_DEFAULT_STAGE4_{field.upper()} " +
+                     "{{" + ", ".join(entries) + "}}")
+    for field in ("feedback_timeout_ms", "reference_timeout_trajectory_periods"):
+        value = validate_integer(motion[field], f"stage4_motion.{field}",
+                                 1, 60000 if field == "feedback_timeout_ms" else 1000)
+        lines.append(f"#define FW_DEFAULT_STAGE4_{field.upper()} {value}U")
+    for field in ("cartesian_start_tolerance_mm",
+                  "cartesian_start_rotation_matrix_tolerance"):
+        value = real_literal(motion[field], f"stage4_motion.{field}", positive=True)
+        if field.endswith("matrix_tolerance") and motion[field] > 2:
+            raise ValueError(f"stage4_motion.{field} must not exceed 2")
+        lines.append(f"#define FW_DEFAULT_STAGE4_{field.upper()} {value}")
+    return lines
 
 
 # ==========================================================
@@ -193,6 +257,14 @@ def generate_header(config):
         100000,
     )
 
+    frame_timeout_ms = validate_integer(
+        config["protocol_frame_timeout_ms"],
+        "protocol_frame_timeout_ms",
+        1,
+        1000,
+    )
+    motion_lines = generate_motion_defaults(config["stage4_motion"])
+
     # 固件公共关节角使用 int16_t：
     # 1 unit = 0.01 degree。
     # 规范角度范围为 [-180°, 180°)。
@@ -264,7 +336,14 @@ def generate_header(config):
         f"{benchmark_samples}U"
     )
 
+    lines.append(
+        "#define FW_DEFAULT_PROTOCOL_FRAME_TIMEOUT_MS "
+        f"{frame_timeout_ms}U"
+    )
+
     # Initial Joint Targets
+    lines.extend(motion_lines)
+    lines.append("")
     for index, value in enumerate(joint_targets):
         lines.append(
             f"#define FW_DEFAULT_JOINT_{index + 1}"

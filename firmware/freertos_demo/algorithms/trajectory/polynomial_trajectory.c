@@ -27,6 +27,150 @@ static int finite_acceleration(const trajectory_joint_accelerations_t *a)
     return 1;
 }
 
+/* Evaluate ascending power coefficients on normalized time u in [0,1]. */
+static double polynomial_value(const double *c, unsigned degree, double u)
+{
+    double value = c[degree];
+    while (degree != 0U) value = value * u + c[--degree];
+    return value;
+}
+
+/* Isolate roots between derivative roots, where the polynomial is monotone.
+ * Only interior roots are returned; callers separately test both endpoints.
+ * Degree is at most four here, so recursion and storage are statically bounded.
+ * A repeated root without a sign change is not an extremum of its integral.
+ */
+static unsigned polynomial_unit_roots(
+    const double *c, unsigned degree, double *roots)
+{
+    double derivative[5], stationary[5];
+    double left = 0.0;
+    unsigned i, count = 0U, stationary_count;
+    while (degree != 0U && c[degree] == 0.0) --degree;
+    if (degree == 0U) return 0U;
+    if (degree == 1U) {
+        double root = -c[0] / c[1];
+        if (root > 0.0 && root < 1.0) {
+            roots[0] = root;
+            return 1U;
+        }
+        return 0U;
+    }
+    for (i = 1U; i <= degree; ++i)
+        derivative[i - 1U] = (double)i * c[i];
+    stationary_count = polynomial_unit_roots(
+        derivative, degree - 1U, stationary);
+    for (i = 0U; i <= stationary_count; ++i) {
+        double right = i < stationary_count ? stationary[i] : 1.0;
+        double a = left, b = right;
+        double fa = polynomial_value(c, degree, a);
+        double fb = polynomial_value(c, degree, b);
+        if ((fa < 0.0 && fb > 0.0) || (fa > 0.0 && fb < 0.0)) {
+            unsigned iteration;
+            for (iteration = 0U; iteration < 64U; ++iteration) {
+                double middle = a + (b - a) * 0.5;
+                double fm = polynomial_value(c, degree, middle);
+                if (fm == 0.0) { a = b = middle; break; }
+                if ((fa < 0.0 && fm > 0.0) || (fa > 0.0 && fm < 0.0))
+                    b = middle;
+                else { a = middle; fa = fm; }
+            }
+            if (count < degree) roots[count++] = a + (b - a) * 0.5;
+        }
+        if (fb == 0.0 && right < 1.0 && count < degree)
+            roots[count++] = right;
+        left = right;
+    }
+    return count;
+}
+
+/* A polynomial reaches its bounds at endpoints or derivative roots.
+ * The epsilon allowance accounts only for double arithmetic, not actuator
+ * or quantization tolerance. No configurable motion bound is widened.
+ */
+static int polynomial_within_bounds(
+    const double *c, unsigned degree, double minimum, double maximum)
+{
+    double derivative[5], roots[5];
+    double scale = fmax(1.0, fmax(fabs(minimum), fabs(maximum)));
+    double epsilon = 64.0 * DBL_EPSILON * scale;
+    unsigned i, count;
+    for (i = 1U; i <= degree; ++i)
+        derivative[i - 1U] = (double)i * c[i];
+    count = polynomial_unit_roots(derivative, degree - 1U, roots);
+    for (i = 0U; i < count + 2U; ++i) {
+        double u = i < count ? roots[i] : (i == count ? 0.0 : 1.0);
+        double value = polynomial_value(c, degree, u);
+        if (!isfinite(value) || value < minimum - epsilon ||
+            value > maximum + epsilon) return 0;
+    }
+    return 1;
+}
+
+robot_status_t trajectory_polynomial_validate_limits(
+    const trajectory_polynomial_plan_t *plan,
+    const robot_joint_positions_t *minimum,
+    const robot_joint_positions_t *maximum,
+    const robot_joint_velocities_t *max_velocity_deg_s,
+    const trajectory_joint_accelerations_t *max_acceleration_deg_s2)
+{
+    unsigned j, k;
+    double inverse_time;
+    if (plan == NULL || minimum == NULL || maximum == NULL ||
+        max_velocity_deg_s == NULL || max_acceleration_deg_s2 == NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if ((plan->degree != 3U && plan->degree != 5U) ||
+        !isfinite(plan->duration_s) || !(plan->duration_s > 0.0))
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    inverse_time = 1.0 / plan->duration_s;
+    if (!isfinite(inverse_time) || !isfinite(inverse_time * inverse_time))
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    for (j = 0U; j < ROBOT_JOINT_COUNT; ++j) {
+        const double *c = plan->coefficients_deg[j];
+        double velocity[5] = {0}, acceleration[4] = {0};
+        double vmax = max_velocity_deg_s->value[j];
+        double amax = max_acceleration_deg_s2->value[j];
+        double endpoint_scale = 1.0;
+        double p0 = (double)plan->start_positions.value[j] * ROBOT_JOINT_ANGLE_UNIT_DEG;
+        double p1 = (double)plan->goal_positions.value[j] * ROBOT_JOINT_ANGLE_UNIT_DEG;
+        if (minimum->value[j] > maximum->value[j] || !isfinite(vmax) ||
+            !isfinite(amax) || !(vmax > 0.0) || !(amax > 0.0))
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        for (k = 0U; k < 6U; ++k) {
+            if (!isfinite(c[k])) return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            /* Leave headroom for all derivative/Horner intermediate values. */
+            if (fabs(c[k]) > DBL_MAX / 720.0)
+                return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+            if (k > plan->degree && c[k] != 0.0)
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            endpoint_scale += fabs(c[k]);
+        }
+        if (fabs(c[0] - p0) > 64.0 * DBL_EPSILON * endpoint_scale ||
+            fabs(polynomial_value(c, plan->degree, 1.0) - p1) >
+                64.0 * DBL_EPSILON * endpoint_scale)
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        for (k = 1U; k <= plan->degree; ++k) {
+            velocity[k - 1U] = (double)k * c[k] * inverse_time;
+            if (!isfinite(velocity[k - 1U]) ||
+                fabs(velocity[k - 1U]) > DBL_MAX / 720.0)
+                return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        }
+        for (k = 1U; k < plan->degree; ++k) {
+            acceleration[k - 1U] = (double)k * velocity[k] * inverse_time;
+            if (!isfinite(acceleration[k - 1U]) ||
+                fabs(acceleration[k - 1U]) > DBL_MAX / 720.0)
+                return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+        }
+        if (!polynomial_within_bounds(c, plan->degree,
+                (double)minimum->value[j] * ROBOT_JOINT_ANGLE_UNIT_DEG,
+                (double)maximum->value[j] * ROBOT_JOINT_ANGLE_UNIT_DEG) ||
+            !polynomial_within_bounds(velocity, plan->degree - 1U, -vmax, vmax) ||
+            !polynomial_within_bounds(acceleration, plan->degree - 2U, -amax, amax))
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    }
+    return ROBOT_STATUS_OK;
+}
+
 static robot_status_t init_common(
     trajectory_polynomial_plan_t *out,
     const robot_joint_positions_t *start,

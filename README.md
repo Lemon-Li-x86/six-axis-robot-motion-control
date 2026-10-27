@@ -2,7 +2,7 @@
 
 六轴工业机器人嵌入式运动控制固件开发与仿真验证。
 
-> **开发状态（2026-10-26）**：Stage4 核心轨迹规划、解析 IK、六轴 PID、FreeRTOS Control/Trajectory/Monitor 和非驱动仿真回归已经实现。用户确认本机8步统一测试通过；最新GitHub CI补测了失联故障注入 **13/13**、Host回归、PyBullet单轴/六轴及PowerShell语法测试。它们不是实体工业机器人安全认证。开发分支尚未合并main，两份备份不动。
+> **开发状态（2026-10-27）**：第1至第4阶段的基础工程、驱动/协议、UR5 FK/IK、轨迹/PID和FreeRTOS任务均已实现。Stage2 Unity 25/25、ARM/QEMU协议8/8、UART TX 7/7、Motor抽象11/11、GPIO Shadow 13/13通过；Stage3/4 Host与QEMU回归及PyBullet动态验证均有记录。当前分支 `feat/stage5-system-integration-2026-10-27` 的本机更改仍未提交；阶段状态与证据见[第1至4阶段验收状态](docs/phase1-4_acceptance_status_2026-10-27.md)。
 
 目前的架构：
 - `common/` 定义公共类型、角度编码及统一数学常量。
@@ -11,20 +11,19 @@
 - `application/{services,tasks}/` 管理请求、反馈、Trajectory/Control/Monitor任务。
 - `tests/` / `simulation/` 提供Host、ARM/QEMU和同源C控制器的PyBullet验证。
 
-**第4阶段核心软件回归通过，但系统验收尚未完成**。后续需要真实UART↔PyBullet端到端运动请求、反馈断链与故障场景、周期P99/WCET与长时运行、实物急停/硬件保护。Stage4任务和命令输出CMake默认均为OFF；未经独立安全设计，不得用于实体机器人运动。
+**第1至4阶段仿真开发核心已完成，性能覆盖和完整文档交付仍需补齐**。现已有短时QEMU抖动/栈水位数据及Stage2目标测试，但30分钟高负载、全工作空间奇异性和更全面PID场景还没有完成。运动任务与目标输出CMake默认均为OFF。
 
 ### 统一非驱动本机验收（Windows PowerShell）
 
-在仓库根目录，关闭旧QEMU/GDB，再执行：
+在仓库根目录，关闭占用调试端口的旧QEMU/GDB，再执行完整的第1至4阶段非驱动回归：
 
 ```powershell
-git fetch origin
-git switch feat/stage4-trajectory-2026-10-26
-git merge --ff-only origin/feat/stage4-trajectory-2026-10-26
 powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
 ```
 
-日志保存在 `build/stage4-final-validation.log`。脚本验证 UART C/Python常量一致性、6组Host CTest、ARM编译、三组算法QEMU、FreeRTOS启动/故障注入、Native C桥、PyBullet单轴/六轴。脚本不发送真实电机指令。
+日志保存在 `build/stage4-final-validation.log`。脚本验证UART常量一致性、Stage2 Unity、Stage2协议与UART TX/Motor/GPIO QEMU、六组Stage3/4 Host CTest、ARM算法及近奇异测试、FreeRTOS启动/任务自检、Native C桥和PyBullet单轴/六轴。命令输出默认关闭。
+
+本轮新增多项式整段位置/速度/加速度预检（ARM轨迹20项、FreeRTOS拒绝/恢复8项），并将六轴独立PID、速度/加速度上限和超时策略集中到`firmware/freertos_demo/config/robot_defaults.json`。配置修改后重新构建；10项生成器测试拒绝非法输入。详见[程序补强记录](docs/part4/09_polynomial_preflight_and_json_config_2026-10-27.md)。
 
 详细资料：
 - [第四阶段参数登记簿](docs/part4/00_parameter_register.md)

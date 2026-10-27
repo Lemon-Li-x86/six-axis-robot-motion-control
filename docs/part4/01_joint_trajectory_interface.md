@@ -1,8 +1,8 @@
 # 第4阶段·第一模块：独立关节空间轨迹规划（2026-10-26）
 
-> **更新记录（2026-10-26）**：本文件记录第4阶段第一批独立关节规划模块；随后已经在同一工作分支增加笛卡尔轨迹、PID 和可选 FreeRTOS 任务，修改了原有 CMake/main 与公共角度辅助函数。完整当前状态以 `02_stage4_full_implementation_guide.md` 为准，以下早期目录/“未接入”描述仅指第一批提交。\n\n## 与项目手册的对应关系
+> **当前状态（2026-10-27）**：本文件保留第一批关节轨迹接口的设计记录；原先“仅完成独立模块、Cartesian/PID/FreeRTOS任务尚未实现”的表述已经过时。现在这些模块均已实现并通过各自Host/QEMU/PyBullet回归。阶段总体结论、证据及仍未覆盖的场景见 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md) 与 [`06_stage4_requirements_verification_2026-10-27.md`](06_stage4_requirements_verification_2026-10-27.md)。
 
-对应第4阶段核心任务1：六关节三次/五次多项式插值与梯形速度规划。**仅完成独立源码和测试入口；第4阶段任务2（笛卡尔直线/圆弧）、任务3（增量式 PID）、任务4（FreeRTOS Control/Trajectory/Monitor Task）尚未实现。**
+对应第4阶段核心任务1：六关节三次/五次多项式插值与梯形速度规划。下文是该模块在第一批提交时的设计记录；当前各阶段模块实现与验收状态以本页顶部的2026-10-27复核链接为准。
 
 本分支是在第3阶段待本地验收修复提交 `4ea72433` 上创建。另有只读快照 `backup/stage3-review-snapshot-2026-10-26`；修复前备份 `backup/pre-teacher-review-2026-10-26` 也未改变。第3阶段的 near-singular 根因排查和 QEMU FK 回代**仍待用户本地验证**。
 

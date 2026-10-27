@@ -8,6 +8,7 @@
 void test_protocol_parser_accepts_valid_frame(void);
 void test_protocol_parser_rejects_bad_checksum_and_recovers(void);
 void test_protocol_parser_rejects_oversized_payload_and_recovers(void);
+void test_protocol_parser_expires_partial_frame(void);
 void test_protocol_parse_set_parameter(void);
 void test_protocol_parse_set_parameter_rejects_invalid_length(void);
 void test_protocol_build_parameter_ack(void);
@@ -86,6 +87,10 @@ int main(void)
 
     RUN_TEST(
         test_protocol_parser_rejects_oversized_payload_and_recovers
+    );
+
+    RUN_TEST(
+        test_protocol_parser_expires_partial_frame
     );
 
     RUN_TEST(

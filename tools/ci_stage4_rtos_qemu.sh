@@ -30,6 +30,11 @@ target remote localhost:1234
 break stage4_rtos_selftest_done
 continue
 printf "finished=%u\n", g_stage4_rtos_test_finished
+printf "polynomial_checks=%u\n", g_stage4_polynomial_rtos_report.checks
+printf "polynomial_failed=%u\n", g_stage4_polynomial_rtos_report.failed
+printf "polynomial_rejected_before_publish=%u\n", g_stage4_polynomial_rtos_report.rejected_before_publish
+printf "polynomial_valid_started=%u\n", g_stage4_polynomial_rtos_report.valid_execution_started
+printf "polynomial_stack_free_words=%u\n", g_stage4_polynomial_rtos_report.trajectory_stack_free_words
 printf "healthy_duration_ms=%u\n", g_stage4_rtos_healthy_duration_ms
 printf "checks=%u\n", g_stage4_rtos_test_report.checks
 printf "failed=%u\n", g_stage4_rtos_test_report.failed
@@ -94,6 +99,10 @@ if [[ -n "${STAGE4_QEMU_EXPECT_HEALTHY_MS:-}" ]]; then
 fi
 grep -qx 'checks=29' "$out"
 grep -qx 'failed=0' "$out"
+grep -qx 'polynomial_checks=8' "$out"
+grep -qx 'polynomial_failed=0' "$out"
+grep -qx 'polynomial_rejected_before_publish=1' "$out"
+grep -qx 'polynomial_valid_started=1' "$out"
 grep -qx 'accepted=1' "$out"
 for label in trajectory_samples controller_steps monitoring_ticks; do
     value=$(sed -n "s/^$label=//p" "$out" | tail -n 1)

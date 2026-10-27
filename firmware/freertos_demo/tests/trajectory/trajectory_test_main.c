@@ -189,6 +189,111 @@ static void test_invalid_inputs_and_preservation(void)
     CHECK(sample.positions.value[0] == 123456);
 }
 
+static void test_polynomial_whole_curve_limits(void)
+{
+    robot_joint_positions_t start = {{0}}, goal = {{100,0,0,0,0,0}};
+    robot_joint_positions_t low = {{-1000,-1000,-1000,-1000,-1000,-1000}};
+    robot_joint_positions_t high = {{1000,1000,1000,1000,1000,1000}};
+    robot_joint_velocities_t zero = {{0}}, vmax = {{2,2,2,2,2,2}};
+    trajectory_joint_accelerations_t azero = {{0}}, amax = {{6,6,6,6,6,6}};
+    trajectory_polynomial_plan_t plan = {0}, saved;
+
+    /* Rest-to-rest quintic: vmax=1.875 deg/s, |amax|=10/sqrt(3).
+     * Both endpoint velocities and accelerations are zero: endpoint-only
+     * checks cannot discover either of the following violations. */
+    CHECK(trajectory_polynomial_init_quintic(&plan,&start,&goal,
+        &zero,&zero,&azero,&azero,1.0)==ROBOT_STATUS_OK);
+    saved=plan;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_OK);
+    CHECK(memcmp(&saved,&plan,sizeof(plan))==0);
+    vmax.value[0]=1.87F;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    vmax.value[0]=2.0F; amax.value[0]=5.77F;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    amax.value[0]=6.0F;
+    plan.goal_positions.value[0]=101;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    plan=saved;
+    plan.coefficients_deg[0][2]=NAN;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    plan=saved; plan.duration_s=1e-200;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    CHECK(trajectory_polynomial_validate_limits(NULL,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_NULL_POINTER);
+    plan=saved; vmax.value[0]=0.0F;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+
+    /* Equal valid endpoints can still overshoot the position range. */
+    goal=start; zero.value[0]=4.0F;
+    vmax.value[0]=4.0F; amax.value[0]=8.0F;
+    {
+        robot_joint_velocities_t end=zero;
+        end.value[0]=-4.0F;
+        CHECK(trajectory_polynomial_init_cubic(&plan,&start,&goal,
+            &zero,&end,1.0)==ROBOT_STATUS_OK);
+    }
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_OK);
+    high.value[0]=50;
+    CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+        ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+}
+
+/* Independent dense evaluation across varied boundary conditions checks
+ * acceptance/rejection with a 2% margin around observed rate extrema.
+ * This exercises both degree-three and degree-five interior root patterns. */
+static void test_polynomial_extrema_against_dense_samples(void)
+{
+    robot_joint_positions_t start={{0}}, goal={{0}};
+    robot_joint_positions_t low={{-1000000,-1000000,-1000000,-1000000,-1000000,-1000000}};
+    robot_joint_positions_t high={{1000000,1000000,1000000,1000000,1000000,1000000}};
+    robot_joint_velocities_t v0={{0}},v1={{0}},vmax={{1000,1000,1000,1000,1000,1000}};
+    trajectory_joint_accelerations_t a0={{0}},a1={{0}},amax={{1000,1000,1000,1000,1000,1000}};
+    uint32_t trial, seed=0x51A4U;
+    for(trial=0U;trial<32U;trial++) {
+        trajectory_polynomial_plan_t plan={0};
+        trajectory_joint_sample_t sample;
+        double peak_v=0.0,peak_a=0.0,duration=0.5+(double)trial/16.0;
+        uint32_t i;
+        seed=seed*1664525U+1013904223U;
+        goal.value[0]=(int32_t)(seed%2001U)-1000;
+        v0.value[0]=(robot_real_t)((int32_t)((seed>>8)%101U)-50);
+        v1.value[0]=(robot_real_t)((int32_t)((seed>>16)%101U)-50);
+        a0.value[0]=(robot_real_t)((int32_t)((seed>>4)%161U)-80);
+        a1.value[0]=-a0.value[0];
+        if(trial%2U==0U)
+            CHECK(trajectory_polynomial_init_cubic(&plan,&start,&goal,
+                &v0,&v1,duration)==ROBOT_STATUS_OK);
+        else
+            CHECK(trajectory_polynomial_init_quintic(&plan,&start,&goal,
+                &v0,&v1,&a0,&a1,duration)==ROBOT_STATUS_OK);
+        for(i=0U;i<=1000U;i++) {
+            CHECK(trajectory_polynomial_sample(&plan,duration*(double)i/1000.0,
+                &sample)==ROBOT_STATUS_OK);
+            peak_v=fmax(peak_v,fabs((double)sample.velocities.value[0]));
+            peak_a=fmax(peak_a,fabs((double)sample.accelerations.value[0]));
+        }
+        vmax.value[0]=(robot_real_t)(peak_v*1.02);
+        amax.value[0]=(robot_real_t)(peak_a*1.02);
+        CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+            ==ROBOT_STATUS_OK);
+        vmax.value[0]=(robot_real_t)(peak_v*0.98);
+        CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+            ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+        vmax.value[0]=(robot_real_t)(peak_v*1.02);
+        amax.value[0]=(robot_real_t)(peak_a*0.98);
+        CHECK(trajectory_polynomial_validate_limits(&plan,&low,&high,&vmax,&amax)
+            ==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    }
+}
+
 int main(void)
 {
     test_cubic();
@@ -196,6 +301,8 @@ int main(void)
     test_trapezoid();
     test_triangular_and_stationary();
     test_invalid_inputs_and_preservation();
+    test_polynomial_whole_curve_limits();
+    test_polynomial_extrema_against_dense_samples();
     printf("Trajectory checks: %d, failures: %d\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

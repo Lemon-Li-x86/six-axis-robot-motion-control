@@ -1,12 +1,12 @@
-# One-command, non-actuating Stage3/4 acceptance runner for Windows.
+# One-command, non-actuating Stage1-4 acceptance runner for Windows.
 # Run from anywhere: powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
 # Requires CMake, CTest, ARM GNU toolchain, QEMU, GDB and Python+PyBullet.
 #
 # Intentional limits:
 # - Stage4 command output is forcibly OFF; this never drives motors.
 # - Python/PyBullet runs actual native C planner/PID/limiter closed-loop.
-# - QEMU only covers bare-metal algorithms + FreeRTOS task startup,
-#   NOT live UART transport, real-time load/jitter or calibrated PID.
+# - QEMU covers target driver/protocol/algorithm tests and synthetic motion;
+#   only the explicitly gated Stage5 script exercises live QEMU UART feedback.
 # - Stops on first failure, retaining one transcript with all tool output.
 [CmdletBinding()]
 param()
@@ -37,7 +37,8 @@ function Run-QemuGdb {
         [string]$breakpoint,
         [string[]]$fields,
         [hashtable]$expected,
-        [string]$elfBuildDir = 'build/cmake-arm'
+        [string]$elfBuildDir = 'build/cmake-arm',
+        [string[]]$diagnosticFields = @()
     )
     $elf = Join-Path $root "$elfBuildDir/firmware/freertos_demo/$target.elf"
     if (-not (Test-Path $elf)) { throw "ELF not built: $elf" }
@@ -56,7 +57,7 @@ function Run-QemuGdb {
         "break $breakpoint",
         'continue'
     )
-    foreach ($name in $fields) {
+    foreach ($name in ($fields + $diagnosticFields)) {
         # GDB prints one unambiguous value per line for automated parsing.
         $lines += ('printf "' + $name + '=%u\n", ' + $name)
     }
@@ -138,42 +139,103 @@ function Run-QemuGdb {
 }
 
 $passed = $false
+$pythonExe = Join-Path $root '.venv\Scripts\python.exe'
+if (-not (Test-Path $pythonExe)) {
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCommand) { throw 'Python interpreter is missing from PATH and .venv' }
+    $pythonExe = $pythonCommand.Source
+}
 try {
     foreach ($tool in @(
-        'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb','python'
+        'cmake','ctest','qemu-system-arm','arm-none-eabi-gdb'
     )) { Require-Tool $tool }
 
-    Write-Host '[1/8] Verify UART protocol mirror, then build native host tests' -ForegroundColor Cyan
-    & python tools/check_protocol_mirror.py
+    Write-Host '[1/9] Verify UART protocol mirror, then build native host tests' -ForegroundColor Cyan
+    & $pythonExe tools/check_protocol_mirror.py
     Assert-Exit 'Python UART receiver and firmware header consistency'
+    & $pythonExe -m unittest discover -s tools/tests -p test_firmware_defaults.py
+    Assert-Exit 'JSON firmware policy validation tests'
     & cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory
     Assert-Exit 'Host CMake configure'
     & cmake --build build/stage4-trajectory --config Debug
     Assert-Exit 'Host build'
 
-    Write-Host '[2/8] Run six host CTest targets' -ForegroundColor Cyan
+    Write-Host '[2/9] Run six Stage3/4 host CTest targets' -ForegroundColor Cyan
     & ctest --test-dir build/stage4-trajectory -C Debug --output-on-failure
     Assert-Exit 'Host CTest'
 
-    Write-Host '[3/8] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
+    Write-Host '[3/9] Build ARM firmware and QEMU targets, outputs disabled' -ForegroundColor Cyan
     & cmake --preset arm-qemu -DROBOT_ENABLE_STAGE4_TASKS=ON `
         -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF `
         -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
     Assert-Exit 'ARM configure'
     & cmake --build --preset arm-qemu --target `
         freertos_demo qemu_stage4_trajectory_tests qemu_kinematics_perf `
-        qemu_ik_near_singular_trace
+        qemu_ik_near_singular_trace qemu_uart_tx_tests qemu_motor_tests `
+        qemu_gpio_tests
     Assert-Exit 'ARM build'
 
-    Write-Host '[4/8] Run three independent algorithm suites under QEMU' -ForegroundColor Cyan
+    Write-Host '[4/9] Run Stage2 Unity, Cortex-M4 protocol and driver regressions' -ForegroundColor Cyan
+    & cmake -S firmware/freertos_demo/tests/host -B build/stage2-host
+    Assert-Exit 'Stage2 safety/byte-stream Host configure'
+    & cmake --build build/stage2-host --config Debug
+    Assert-Exit 'Stage2 safety/byte-stream Host build'
+    & ctest --test-dir build/stage2-host -C Debug --output-on-failure
+    Assert-Exit 'Stage2 safety/byte-stream Host CTest'
+    & cmake -S firmware/freertos_demo/tests/unity -B build/cmake-host-unity
+    Assert-Exit 'Stage2 Unity configure'
+    & cmake --build build/cmake-host-unity --config Debug
+    Assert-Exit 'Stage2 Unity build'
+    & ctest --test-dir build/cmake-host-unity -C Debug --output-on-failure
+    Assert-Exit 'Stage2 Unity CTest'
+    & cmake --build build/cmake-arm --target `
+        qemu_protocol_tests qemu_uart_tx_tests qemu_motor_tests qemu_gpio_tests
+    Assert-Exit 'Stage2 QEMU protocol and driver target build'
+    Run-QemuGdb 'qemu_protocol_tests' 'qemu_target_test_done' `
+        @('g_qemu_target_test_report.total',
+          'g_qemu_target_test_report.passed',
+          'g_qemu_target_test_report.failed',
+          'g_qemu_target_test_report.results[7]') `
+        @{
+          'g_qemu_target_test_report.total'=8;
+          'g_qemu_target_test_report.passed'=8;
+          'g_qemu_target_test_report.failed'=0;
+          'g_qemu_target_test_report.results[7]'=1
+        }
+    Run-QemuGdb 'qemu_uart_tx_tests' 'qemu_uart_tx_test_done' `
+        @('g_uart_tx_test_report.total','g_uart_tx_test_report.passed',
+          'g_uart_tx_test_report.failed') `
+        @{
+          'g_uart_tx_test_report.total'=7;
+          'g_uart_tx_test_report.passed'=7;
+          'g_uart_tx_test_report.failed'=0
+        }
+    Run-QemuGdb 'qemu_motor_tests' 'qemu_motor_test_done' `
+        @('g_motor_test_report.total','g_motor_test_report.passed',
+          'g_motor_test_report.failed') `
+        @{
+          'g_motor_test_report.total'=11;
+          'g_motor_test_report.passed'=11;
+          'g_motor_test_report.failed'=0
+        }
+    Run-QemuGdb 'qemu_gpio_tests' 'qemu_gpio_test_done' `
+        @('g_gpio_test_report.total','g_gpio_test_report.passed',
+          'g_gpio_test_report.failed') `
+        @{
+          'g_gpio_test_report.total'=13;
+          'g_gpio_test_report.passed'=13;
+          'g_gpio_test_report.failed'=0
+        }
+
+    Write-Host '[5/9] Run three independent Stage3/4 algorithm suites under QEMU' -ForegroundColor Cyan
     Run-QemuGdb 'qemu_stage4_trajectory_tests' 'qemu_stage4_test_done' `
         @('g_stage4_test_finished','g_stage4_test_report.failed',
           'g_stage4_test_report.checks','g_stage4_test_report.passed') `
         @{
           'g_stage4_test_finished'=1;
           'g_stage4_test_report.failed'=0;
-          'g_stage4_test_report.checks'=14;
-          'g_stage4_test_report.passed'=14
+          'g_stage4_test_report.checks'=20;
+          'g_stage4_test_report.passed'=20
         }
 
     Run-QemuGdb 'qemu_kinematics_perf' 'qemu_kinematics_perf_done' `
@@ -202,12 +264,12 @@ try {
           'g_ik_reference_regression_failures'=0
         }
 
-    Write-Host '[5/8] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
+    Write-Host '[6/9] Verify FreeRTOS monitor task startup in QEMU' -ForegroundColor Cyan
     # A breakpoint hit proves the task actually ran under the scheduler;
     # task handles are POINTERS, so they must not be compared to zero.
     Run-QemuGdb 'freertos_demo' 'task_monitor' @() @{}
 
-    Write-Host '[6/8] Isolated FreeRTOS motion+feedback+PID RTOS test' -ForegroundColor Cyan
+    Write-Host '[7/9] Isolated FreeRTOS motion+feedback+PID RTOS test' -ForegroundColor Cyan
     & cmake --preset arm-qemu -B build/cmake-arm-stage4-selftest `
         -DROBOT_ENABLE_STAGE4_TASKS=ON `
         -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF `
@@ -218,14 +280,23 @@ try {
     Run-QemuGdb 'freertos_demo' 'stage4_rtos_selftest_done' `
         @('g_stage4_rtos_test_finished',
           'g_stage4_rtos_test_report.checks',
-          'g_stage4_rtos_test_report.failed') `
+          'g_stage4_rtos_test_report.failed',
+          'g_stage4_polynomial_rtos_report.checks',
+          'g_stage4_polynomial_rtos_report.failed',
+          'g_stage4_polynomial_rtos_report.rejected_before_publish',
+          'g_stage4_polynomial_rtos_report.valid_execution_started') `
         @{
           'g_stage4_rtos_test_finished'=1;
           'g_stage4_rtos_test_report.checks'=29;
-          'g_stage4_rtos_test_report.failed'=0
-        } 'build/cmake-arm-stage4-selftest'
+          'g_stage4_rtos_test_report.failed'=0;
+          'g_stage4_polynomial_rtos_report.checks'=8;
+          'g_stage4_polynomial_rtos_report.failed'=0;
+          'g_stage4_polynomial_rtos_report.rejected_before_publish'=1;
+          'g_stage4_polynomial_rtos_report.valid_execution_started'=1
+        } 'build/cmake-arm-stage4-selftest' `
+        -diagnosticFields @('g_stage4_polynomial_rtos_report.trajectory_stack_free_words')
 
-    Write-Host '[7/8] Build and smoke native C firmware algorithm bridge' -ForegroundColor Cyan
+    Write-Host '[8/9] Build and smoke native C firmware algorithm bridge' -ForegroundColor Cyan
     & cmake -S firmware/freertos_demo/tests/simulation -B build/stage4-simulation
     Assert-Exit 'Native simulation bridge configure'
     & cmake --build build/stage4-simulation --config Debug
@@ -233,7 +304,7 @@ try {
     & ctest --test-dir build/stage4-simulation -C Debug --output-on-failure
     Assert-Exit 'Native simulation bridge smoke'
 
-    Write-Host '[8/8] PyBullet DIRECT closed-loop dynamic verification' -ForegroundColor Cyan
+    Write-Host '[9/9] PyBullet DIRECT closed-loop dynamic verification' -ForegroundColor Cyan
     $candidates = @(
         (Join-Path $root 'build/stage4-simulation/Debug/stage4_sim_bridge.dll'),
         (Join-Path $root 'build/stage4-simulation/stage4_sim_bridge.dll'),
@@ -243,11 +314,11 @@ try {
     $library = $candidates | Where-Object { Test-Path $_ } |
         Select-Object -First 1
     if (-not $library) { throw 'Native Stage4 shared library not found after build' }
-    & python -c 'import pybullet'
+    & $pythonExe -c 'import pybullet'
     Assert-Exit 'PyBullet Python dependency (install with python -m pip install pybullet)'
     foreach ($trial in @('joint2','six_axis')) {
         Write-Host "[PyBullet] $trial" -ForegroundColor Cyan
-        & python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py `
+        & $pythonExe simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py `
             --library $library `
             --scenario $trial `
             --output-dir (Join-Path 'build/stage4-closed-loop' $trial)

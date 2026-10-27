@@ -189,6 +189,29 @@ void protocol_parser_init(
     protocol_parser_t *parser
 );
 
+/**
+ * @brief Discard any partial frame and return the parser to header search.
+ *
+ * @param[in,out] parser Parser state to reset; NULL is ignored.
+ */
+void protocol_parser_reset(
+    protocol_parser_t *parser
+);
+
+/**
+ * @brief Discard a partial frame after the configured byte idle timeout.
+ *
+ * @param[in,out] parser Parser state; NULL returns 0.
+ * @param[in] idle_ticks Ticks elapsed since the last consumed frame byte.
+ * @param[in] timeout_ticks Non-zero timeout in the same tick unit.
+ * @return 1 if a partial frame was reset; otherwise 0.
+ */
+uint8_t protocol_parser_expire_partial_frame(
+    protocol_parser_t *parser,
+    uint32_t idle_ticks,
+    uint32_t timeout_ticks
+);
+
 
 /**
  * @brief 向 Parser 输入一个 Byte。

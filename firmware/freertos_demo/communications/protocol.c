@@ -8,7 +8,7 @@
  * Internal Helpers
  * ========================================================= */
 
-static void protocol_parser_reset(
+void protocol_parser_reset(
     protocol_parser_t *parser
 )
 {
@@ -18,6 +18,24 @@ static void protocol_parser_reset(
 
     parser->frame.command = 0U;
     parser->frame.length = 0U;
+}
+
+
+uint8_t protocol_parser_expire_partial_frame(
+    protocol_parser_t *parser,
+    uint32_t idle_ticks,
+    uint32_t timeout_ticks
+)
+{
+    if (parser == NULL || timeout_ticks == 0U ||
+        parser->state == PROTOCOL_STATE_WAIT_HEADER_0 ||
+        idle_ticks < timeout_ticks)
+    {
+        return 0U;
+    }
+
+    protocol_parser_reset(parser);
+    return 1U;
 }
 
 

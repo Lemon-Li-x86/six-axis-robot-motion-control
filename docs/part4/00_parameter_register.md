@@ -1,13 +1,13 @@
 # 第4阶段参数登记簿（权威版本）
 
-更新时间：2026-10-26。适用分支：`feat/stage4-trajectory-2026-10-26`。本登记簿替代前期逐段追加的“未来实现”“尚未接入”等过时条目；**实际定义位置以源代码为准**，本文不作为第二份可编辑配置。
+更新时间：2026-10-27。适用分支：`feat/stage5-system-integration-2026-10-27`。本登记簿替代前期逐段追加的“未来实现”“尚未接入”等过时条目；**实际定义位置以源代码为准**，本文不作为第二份可编辑配置。
 
 ## 所有权和单位规则
 
 - **机器人事实 Model**：UR5 几何、基座/工具坐标变换及模型关节行程，唯一值源于 `model/ur5_model.c`，其他层只能通过 `robot_model_get_active()` 引用。
 - **公共约定 Common**：关节数量、Canonical/Continuous 编码、单位、纯数学常量，唯一源于 `common/robot_types.h` 与 `common/math_constants.h`。
 - **数值算法门限 Algorithm**：只服务具体算法的稳定性/选解，定义在各自算法模块；不能被默认为真实硬件安全能力。
-- **策略配置 Config**：Stage4 默认 PID、仿真速度、加速度、超时及笛卡尔容差由 `config/stage4_motion_config.c` 提供，注入 Application；任务静态默认值由 JSON/生成头链路提供。
+- **策略配置 Config**：Stage4默认PID、速度、加速度、超时和Cartesian起点容差，以及任务静态默认值统一由`config/robot_defaults.json`生成；`stage4_motion_config.c`只装配生成配置并引用算法派生门限，再注入Application。
 - **运行状态 Runtime**：当前反馈、活动轨迹、队列、PID/限速器状态不能保存在 Model、Const 或 Config 内；由 Task、Motor State、Driver 拥有。
 - **测试策略/样本 Fixture**：PyBullet 测试构型、单次试验接受阈值、GDB 检查计数属于 `tests/` 或 `simulation/`，不能复制回生产控制策略。
 
@@ -51,20 +51,20 @@
 
 ## 3. 应用控制默认值（单点配置）
 
-下列值只在 `firmware/freertos_demo/config/stage4_motion_config.c` 定义，并经 `stage4_motion_default_config()`、`motion_stage4_config_t` 注入，不得复制进 `trajectory_task.c`、`control_task.c`、`pid.c` 或 Python 控制逻辑。
+下列运行策略值定义在`firmware/freertos_demo/config/robot_defaults.json`的`stage4_motion`中，由构建生成C宏，经`stage4_motion_default_config()`、`motion_stage4_config_t`注入。不要直接编辑生成头，也不要复制到算法、任务或Python中。
 
 | 配置项 | 当前仿真初始值 / 单位 | 使用与归属 |
 |---|---|---|
-| `STAGE4_PID_STARTER_GAIN_P` | **0.2**；Ki=0、Kd=0 | 六轴增量式PID默认配置，基于小幅 PyBullet 对照；不是实体硬件标定 |
-| `STAGE4_PID_INTEGRAL_CAP_DEG_S` | 10，°·s（按 `pid_controller_t` 积分存储） | `pid.c` 积分限幅 |
-| `STAGE4_PID_COMMAND_CAP_DEG` | 3° | PID角度修正输出限幅 |
-| `STAGE4_PID_DEADBAND_DEG` | 0.02° | PID 死区 |
-| `STAGE4_SIM_VELOCITY_CAP_DEG_S` | 15°/s | 梯形规划、请求约束与输出限速器 |
-| `STAGE4_SIM_ACCEL_CAP_DEG_S2` | 30°/s² | 梯形规划、输出加减速限幅器 |
-| `STAGE4_FEEDBACK_TIMEOUT_MS` | 3000 ms | Trajectory、Control 反馈新鲜度门禁 |
-| `STAGE4_REFERENCE_TIMEOUT_MS` | `3*T​ASK_PERIOD_TRAJECTORY_MS` | Control目标参考最长保鲜时间；**派生量** |
-| `STAGE4_CARTESIAN_START_TOLERANCE_MM` | 0.5 mm | 请求起点 vs 实际反馈FK对比 |
-| `STAGE4_CARTESIAN_START_ROTATION_TOLERANCE` | 0.01，最大矩阵元素差 | 请求起点姿态容差 |
+| `pid[0..5].kp/ki/kd` | **0.2/0/0**，每轴可独立配置 | 六轴增量式PID默认配置，基于小幅PyBullet对照；不是实体硬件标定 |
+| `pid[0..5].integral_limit_deg_s` | 10，°·s | `pid.c`积分限幅 |
+| `pid[0..5].output_limit_deg` | 3° | PID角度修正输出限幅 |
+| `pid[0..5].deadband_deg` | 0.02° | PID死区 |
+| `max_velocity_deg_s[0..5]` | 15°/s | 梯形规划、多项式整段预检和输出限速器 |
+| `max_acceleration_deg_s2[0..5]` | 30°/s² | 梯形规划、多项式整段预检和输出加减速限幅器 |
+| `feedback_timeout_ms` | 3000ms | Trajectory、Control反馈新鲜度门禁 |
+| `reference_timeout_trajectory_periods` | 3个规划周期；当前60ms | 与`TASK_PERIOD_TRAJECTORY_MS`相乘派生Control参考超时 |
+| `cartesian_start_tolerance_mm` | 0.5mm | 请求起点vs实际反馈FK对比 |
+| `cartesian_start_rotation_matrix_tolerance` | 0.01，最大矩阵元素差 | 请求起点姿态容差 |
 | `STAGE4_CARTESIAN_WAYPOINT_TOLERANCE_MM` | 从 `KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM` 派生 | 每航点FK位置回代 |
 | `STAGE4_CARTESIAN_WAYPOINT_ROTATION_TOLERANCE` | 从 `KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL` 派生 | 每航点FK姿态回代 |
 

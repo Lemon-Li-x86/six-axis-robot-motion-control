@@ -152,6 +152,10 @@
 #define TASK_PERIOD_PROTOCOL_TX_MS \
     FW_DEFAULT_TASK_PERIOD_PROTOCOL_TX_MS
 
+/* Maximum idle interval between bytes in a partial protocol frame. */
+#define PROTOCOL_FRAME_TIMEOUT_MS \
+    FW_DEFAULT_PROTOCOL_FRAME_TIMEOUT_MS
+
 
 /* =========================================================
  * Task Stack Depth

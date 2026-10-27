@@ -95,6 +95,21 @@ static void verify_explicit_timeout_reset(
     CHECK(feed(&parser,frame,PROTOCOL_JOINT_FRAME_LEN,&out)==1U);
 }
 
+static void verify_timeout_reset_discards_stale_partial(
+    const uint8_t frame[PROTOCOL_JOINT_FRAME_LEN])
+{
+    protocol_parser_t parser;
+    protocol_frame_t out={0};
+    protocol_parser_init(&parser);
+    CHECK(feed(&parser,frame,7U,&out)==0U);
+    CHECK(parser.state!=PROTOCOL_STATE_WAIT_HEADER_0);
+    CHECK(protocol_parser_expire_partial_frame(&parser,4U,5U)==0U);
+    CHECK(parser.state!=PROTOCOL_STATE_WAIT_HEADER_0);
+    CHECK(protocol_parser_expire_partial_frame(&parser,5U,5U)==1U);
+    CHECK(parser.state==PROTOCOL_STATE_WAIT_HEADER_0);
+    CHECK(feed(&parser,frame,PROTOCOL_JOINT_FRAME_LEN,&out)==1U);
+}
+
 static void verify_sequenced_motion_request(void)
 {
     protocol_frame_t request={0};
@@ -147,6 +162,7 @@ int main(void)
     verify_checksum_and_overlength(frame);
     verify_lost_byte_followed_by_retransmit(frame);
     verify_explicit_timeout_reset(frame);
+    verify_timeout_reset_discards_stale_partial(frame);
     verify_sequenced_motion_request();
     printf("Stage5 serial byte fault cases: %u assertions, %u failures\n",
            checks,failed);

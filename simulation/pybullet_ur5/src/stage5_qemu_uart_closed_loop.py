@@ -25,7 +25,10 @@ from stage4_dynamic_closed_loop import (
 
 GOAL_RAW = (3000, -4400, 6000, 2000, 500, -1000)
 MAX_WALL_DURATION_S = 50.0
-MAX_TARGET_FRAMES = 130
+MIN_TARGET_FRAMES = 130
+MAX_FINAL_ERROR_DEG = 0.10
+SETTLED_TARGET_FRAMES = 20
+MAX_STARTUP_HOLD_ERROR_DEG = 0.02
 PHYSICS_DT_S = 0.001
 FEEDBACK_PERIOD_S = 0.01
 MIN_JOINT_MOVEMENT_DEG = 0.20
@@ -147,6 +150,56 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
             diag_pending = None
             diag_sent_at = 0.0
             diagnostics = {}
+            diagnostic_rounds = 0
+            next_diagnostic_target = 25
+            settled_frames = 0
+            maximum_startup_hold_error_deg = 0.0
+            first_feedback = angles_raw(p, arm, joints)
+            # Wait for a response from ProtocolRX so the timeout probe does
+            # not race task startup or the UART interrupt enable sequence.
+            sock.sendall(frame(wire.CMD_GET_DIAGNOSTICS, bytes((0,))))
+            rx_ready_deadline = time.monotonic() + 2.0
+            protocol_rx_ready = False
+            while time.monotonic() < rx_ready_deadline:
+                try:
+                    ready_data = sock.recv(4096)
+                except BlockingIOError:
+                    ready_data = None
+                if ready_data:
+                    protocol_rx_ready = any(
+                        command == wire.CMD_DIAGNOSTICS_RESPONSE and len(payload) == 4
+                        for command, payload in incoming.consume(ready_data)
+                    )
+                    if protocol_rx_ready:
+                        break
+                elif ready_data == b"":
+                    raise RuntimeError("QEMU UART disconnected during RX readiness probe")
+                else:
+                    time.sleep(0.001)
+            if not protocol_rx_ready:
+                raise RuntimeError("ProtocolRX did not answer the readiness probe")
+
+            # Exercise the production RX task's actual inter-byte timeout:
+            # send an incomplete feedback frame, wait past its JSON-owned
+            # timeout, then resend the intact frame. A valid ACK is required
+            # before normal feedback pacing or any motion request.
+            defaults = json.loads((ROOT / "firmware/freertos_demo/config/robot_defaults.json")
+                                  .read_text(encoding="utf-8"))
+            timeout_ms = int(defaults["protocol_frame_timeout_ms"])
+            if timeout_ms <= 0:
+                raise ValueError("protocol_frame_timeout_ms must be positive")
+            first_feedback_frame = frame(
+                wire.CMD_JOINT_STATE,
+                struct.pack("<" + str(wire.JOINT_COUNT) + "h", *first_feedback))
+            partial_frame_bytes = 7
+            sock.sendall(first_feedback_frame[:partial_frame_bytes])
+            partial_frame_wait_ms = timeout_ms + 250
+            time.sleep(partial_frame_wait_ms / 1000.0)
+            # Feedback starts independently of target output. The firmware
+            # must hold this measured pose until Control has a valid command.
+            sock.sendall(first_feedback_frame)
+            tx_frames += 1
+            initial_feedback_deadline = time.monotonic() + 2.0
 
             # QEMU can run its virtual Cortex-M4 MUCH slower than host wall
             # time. Each firmware ProtocolTX frame represents a real
@@ -156,6 +209,11 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
             while time.monotonic() - started < MAX_WALL_DURATION_S:
                 if qemu.poll() is not None:
                     raise RuntimeError("QEMU exited while moving")
+                if (received_feedback_acks == 0 and
+                        time.monotonic() >= initial_feedback_deadline):
+                    raise RuntimeError(
+                        "Firmware did not recover the valid feedback frame "
+                        "after the configured partial-frame timeout")
 
                 try:
                     data = sock.recv(8192)
@@ -170,6 +228,11 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                             values = struct.unpack(
                                 "<" + str(wire.JOINT_COUNT) + "h", payload)
                             received_targets += 1
+                            if not move_request_sent:
+                                maximum_startup_hold_error_deg = max(
+                                    maximum_startup_hold_error_deg,
+                                    max(abs(v - a) / wire.JOINT_ANGLE_SCALE
+                                        for v, a in zip(values, first_feedback)))
                             if move_ack_status == 0:
                                 p.setJointMotorControlArray(
                                     arm, joints, p.POSITION_CONTROL,
@@ -191,12 +254,21 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                                 struct.pack("<" + str(wire.JOINT_COUNT) + "h",
                                             *feedback)))
                             tx_frames += 1
+                            final_error = max(
+                                abs(a - b) / wire.JOINT_ANGLE_SCALE
+                                for a, b in zip(feedback, GOAL_RAW))
+                            settled_frames = (settled_frames + 1 if
+                                move_ack_status == 0 and
+                                final_error <= MAX_FINAL_ERROR_DEG else 0)
                             if received_targets % 10 == 0:
                                 output.append({
                                     "elapsed_wall_s": round(time.monotonic()-started, 3),
                                     "simulated_physics_s": round(
                                         received_targets*FEEDBACK_PERIOD_S,3),
                                     "joint2_actual_deg": feedback[1]/100.0,
+                                    "joint_actual_raw": list(feedback),
+                                    "joint_target_raw": list(values),
+                                    "max_goal_error_deg": final_error,
                                     "received_targets": received_targets,
                                     "feedback_acks": received_feedback_acks,
                                     "move_ack": move_ack_status,
@@ -224,7 +296,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                             diag_pending = None
 
                 now = time.monotonic()
-                if (move_ack_status is not None and received_targets >= 25
+                if (move_ack_status is not None and
+                        received_targets >= next_diagnostic_target
                         and diag_pending is None and diag_index < len(diag_items)):
                     diag_name, diag_selector = diag_items[diag_index]
                     sock.sendall(frame(
@@ -236,17 +309,26 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                     diagnostics[diag_pending] = None
                     diag_pending = None
 
-                # Finish on a measured number of QEMU control ticks, after
-                # the serial diagnostics have been returned, not wall time.
-                if (received_targets >= MAX_TARGET_FRAMES and
-                        diag_index == len(diag_items) and
-                        diag_pending is None):
-                    break
+                # A request ACK is only queue admission. Refresh COMPLETE
+                # diagnostic rounds until motion settles; an early snapshot
+                # with zero planner steps must not decide the final result.
+                if diag_index == len(diag_items) and diag_pending is None:
+                    diagnostic_rounds += 1
+                    if (received_targets >= MIN_TARGET_FRAMES and
+                            settled_frames >= SETTLED_TARGET_FRAMES and
+                            (diagnostics.get("trajectory_samples") or 0) > 0 and
+                            (diagnostics.get("controller_steps") or 0) > 0):
+                        break
+                    diag_index = 0
+                    next_diagnostic_target = received_targets + 10
                 if not data:
                     time.sleep(0.001)
 
             movement = abs(
                 angles_raw(p, arm, joints)[1] / 100.0 - first_sim_joint2_deg)
+            final_actual = angles_raw(p, arm, joints)
+            max_final_error = max(abs(a-b) / wire.JOINT_ANGLE_SCALE
+                                  for a,b in zip(final_actual, GOAL_RAW))
             accepted = move_ack_status == 0
             debug_pass = (
                 (diagnostics.get("requests_accepted") or 0) >= 1 and
@@ -255,8 +337,15 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 diagnostics.get("controller_faults") == 0 and
                 diagnostics.get("planner_faults") == 0
             )
-            passed = (accepted and debug_pass and received_feedback_acks >= 5
-                      and received_targets >= 10
+            partial_timeout_recovered = received_feedback_acks > 0
+            passed = (accepted and debug_pass and partial_timeout_recovered
+                      and received_feedback_acks >= 5
+                      and received_targets >= MIN_TARGET_FRAMES
+                      and diagnostic_rounds > 0
+                      and settled_frames >= SETTLED_TARGET_FRAMES
+                      and max_final_error <= MAX_FINAL_ERROR_DEG
+                      and maximum_startup_hold_error_deg <= MAX_STARTUP_HOLD_ERROR_DEG
+                      and incoming.bad_checksum == 0
                       and movement >= MIN_JOINT_MOVEMENT_DEG
                       and max_target_change_deg >= MIN_ACCEPTED_COMMAND_CHANGE_DEG)
             report = {
@@ -268,6 +357,9 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 "simulated_physics_s": round(tx_frames*FEEDBACK_PERIOD_S,3),
                 "feedback_pacing": "one measured feedback per QEMU ProtocolTX control-period frame",
                 "feedback_frames_sent": tx_frames,
+                "partial_feedback_frame_bytes_sent": partial_frame_bytes,
+                "partial_feedback_wait_ms": partial_frame_wait_ms,
+                "partial_frame_timeout_recovered": partial_timeout_recovered,
                 "feedback_acks_received": received_feedback_acks,
                 "target_frames_received": received_targets,
                 "move_request_sent": move_request_sent,
@@ -277,6 +369,13 @@ def run(elf: Path, output_dir: Path, qemu_bin: str) -> dict:
                 "bad_checksum_frames": incoming.bad_checksum,
                 "motion_diagnostics": diagnostics,
                 "motion_diagnostics_passed": debug_pass,
+                "diagnostic_rounds": diagnostic_rounds,
+                "final_actual_raw": list(final_actual),
+                "goal_raw": list(GOAL_RAW),
+                "max_final_error_deg": max_final_error,
+                "acceptance_final_error_deg": MAX_FINAL_ERROR_DEG,
+                "settled_target_frames": settled_frames,
+                "maximum_startup_hold_error_deg": maximum_startup_hold_error_deg,
                 "passed": passed,
                 "not_tested": [
                     "real industrial robot hardware",

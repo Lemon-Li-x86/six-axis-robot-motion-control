@@ -63,6 +63,30 @@ int main(void)
     EXPECT(pid_step(&pid,10.0,0.0,0.01,&correction)==ROBOT_STATUS_OK);
     EXPECT(fabsf(correction-3.0F)<0.001F);
 
+    /* Validate interior polynomial extrema using the production ARM code. */
+    {
+        robot_joint_positions_t lower={{-10000,-10000,-10000,-10000,-10000,-10000}};
+        robot_joint_positions_t upper={{10000,10000,10000,10000,10000,10000}};
+        trajectory_joint_accelerations_t azero={{0}};
+        goal.value[0]=100; goal.value[1]=0;
+        EXPECT(trajectory_polynomial_init_quintic(
+            &poly,&start,&goal,&zero,&zero,&azero,&azero,1.0)==ROBOT_STATUS_OK);
+        EXPECT(trajectory_polynomial_validate_limits(&poly,&lower,&upper,
+            &vmax,&amax)==ROBOT_STATUS_OK);
+        vmax.value[0]=1.87F;
+        EXPECT(trajectory_polynomial_validate_limits(&poly,&lower,&upper,
+            &vmax,&amax)==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+        vmax.value[0]=50.0F; amax.value[0]=5.77F;
+        EXPECT(trajectory_polynomial_validate_limits(&poly,&lower,&upper,
+            &vmax,&amax)==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+        amax.value[0]=100.0F; poly.goal_positions.value[0]=101;
+        EXPECT(trajectory_polynomial_validate_limits(&poly,&lower,&upper,
+            &vmax,&amax)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+        poly.goal_positions.value[0]=100; upper.value[0]=50;
+        EXPECT(trajectory_polynomial_validate_limits(&poly,&lower,&upper,
+            &vmax,&amax)==ROBOT_STATUS_ERROR_OUT_OF_RANGE);
+    }
+
     g_stage4_test_finished=1U;
     qemu_stage4_test_done();
     return 0;

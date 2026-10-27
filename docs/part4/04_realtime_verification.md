@@ -1,5 +1,9 @@
 # 第4阶段 FreeRTOS 实时性与联调验证模板
 
+> **当前验收状态（2026-10-27）**：本页早期“待测”条目保留作历史台账；最新短时与60秒QEMU数据、单位和限制见 [`08_stage4_qemu_timing_and_stack_2026-10-27.md`](08_stage4_qemu_timing_and_stack_2026-10-27.md)。Host、ARM/QEMU运动学和任务回归的最新本机结果记于 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md)。
+
+已测得周期偏差、任务处理经过时间、栈水位和测试ELF内存段；没有FreeRTOS任务CPU占比/独占执行时间数据，短时值也不是WCET。已完成60秒静止反馈QEMU健康运行，30分钟高负载和UART持续干扰长稳尚未测试。
+
 ## 当前证据
 
 - 新增代码：`application/tasks/{trajectory_task,control_task,monitor_task}.c`、`application/services/motion_pipeline.c`。
@@ -10,22 +14,24 @@
 - Control 通过 `motor_state_get_feedback()` 获取整组已加锁的六轴反馈，检查反馈有效性和超时。输出默认关断。
 - Monitor 通过 `uxTaskGetStackHighWaterMark()` 读取剩余栈水位。
 
-## 每次必须记录
+## 历史验收模板及当前结果
+
+下表早期曾作为待填模板；以下状态已依据2026-10-27本机统一验收和QEMU/GDB定时报告更新。各行不代表实物硬件结项。
 
 | 测试 | 判据 | 本次结果 |
 |---|---|---|
-| ARM 编译 | Stage4 OFF / TASKS ON / OUTPUT ON 三种配置均构建 | 待测 |
-| QEMU 纯算法测试 | `g_stage4_test_finished=1`, `failed=0` | 待测 |
-| Host 原生算法 | 当前6个 Stage3/4 CTest 全通过 | GitHub Actions云端通过；Windows最终待验 |
-| Stage2 Host 回归 | 4个既有 CTest 全通过 | 待测 |
-| FreeRTOS 任务启动 | 5个任务均存在、无启动失败 | 待测 |
-| Stack High Water Mark | 无溢出，记录每任务峰值余量 | 待测 |
-| FreeRTOS 队列 | 新请求覆盖旧请求，Target 队列不会积压 | 待测 |
-| 反馈过期 | 停止生成新 Motor Target；fault 计数上升 | 待测 |
-| 控制周期抖动 | 采集执行时间、唤醒间隔、P99 和最大值 | 尚无采样器，待扩展 |
-| IK路径故障 | 无解/近奇异/限位时报告拒绝且不继续指令 | 待测 |
-| Native C→PyBullet闭环 | MAE、RMSE、超调、稳态误差 | 8组云端仿真已实测，详见03；不是UART闭环 |
-| 长时间 | 至少30分钟仿真无异常/泄漏/栈溢出 | 待测 |
+| ARM 编译 | Stage4 OFF / TASKS ON / OUTPUT ON 三种配置均构建 | TASKS ON 且 OUTPUT OFF、默认配置及独立QEMU自检构建通过；OUTPUT ON未作为本次验收项 |
+| QEMU 纯算法测试 | `g_stage4_test_finished=1`, `failed=0` | **20/20通过**，新增多项式整段预检 |
+| Host 原生算法 | 当前6个 Stage3/4 CTest 全通过 | **6/6本机通过** |
+| Stage2 Host 回归 | Unity及纯C Host回归 | **Unity 25/25；纯C CTest 5/5** |
+| FreeRTOS 任务启动 | 任务启动且无启动失败 | **QEMU启动检查通过；原RTOS 29项+新增多项式8项均失败0** |
+| Stack High Water Mark | 记录峰值剩余栈 | 历史健康窗口Control/Trajectory/Monitor 375/609/349 words见08；本轮多项式路径规划最小剩余**467 words**；均非硬件上界 |
+| FreeRTOS 队列 | 新请求替换策略 | RTOS自检覆盖请求提交/控制路径；高频满载队列压力仍需单独扩展 |
+| 反馈过期 | 停止生成新 Motor Target；fault 计数上升 | **已通过QEMU故障注入**，29项总检查失败0 |
+| 控制周期抖动 | 采集执行时间、唤醒间隔、P99 和最大值 | **60秒QEMU健康运行已测**；指标定义和数值见08报告，不代表WCET/CPU占比 |
+| IK路径故障 | 无解/近奇异/限位时报告拒绝且不继续指令 | 近奇异参考输入2/2通过；全部无解/限位路径及任务级安全行为仍需补测 |
+| Native C→PyBullet闭环 | MAE、RMSE、超调、稳态误差 | **本机单轴和六轴场景通过**，指标见03；不是UART/FreeRTOS闭环 |
+| 长时间 | 至少30分钟仿真无异常/泄漏/栈溢出 | 60秒QEMU健康基线通过；30分钟满载尚未执行 |
 
 ## 开关与安全条件
 

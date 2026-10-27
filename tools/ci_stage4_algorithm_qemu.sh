@@ -79,8 +79,8 @@ run_qemu_test "$stage4" qemu_stage4_test_done \
   'printf "passed=%u\n", g_stage4_test_report.passed' \
   'printf "failed=%u\n", g_stage4_test_report.failed'
 check_field "$stage4" finished 1
-check_field "$stage4" checks 14
-check_field "$stage4" passed 14
+check_field "$stage4" checks 20
+check_field "$stage4" passed 20
 check_field "$stage4" failed 0
 
 kin=qemu_kinematics_perf
@@ -112,4 +112,4 @@ check_field "$ik" finished 1
 check_field "$ik" checks 2
 check_field "$ik" failed 0
 
-echo "PASS: QEMU Stage4 trajectory 14/14, FK-IK 128/128, near-singular 2/2."
+echo "PASS: QEMU Stage4 trajectory 20/20, FK-IK 128/128, near-singular 2/2."
