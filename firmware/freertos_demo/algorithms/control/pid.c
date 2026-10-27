@@ -48,6 +48,7 @@ robot_status_t pid_step(pid_controller_t *state,double setpoint_deg,
 {
     pid_controller_t next;
     double error,new_i,delta_p,delta_d,raw,output,ilim,olim;
+    int first_sample;
     if(state==NULL || correction_deg==NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
     if(!isfinite(setpoint_deg) || !isfinite(measured_deg) ||
@@ -57,17 +58,19 @@ robot_status_t pid_step(pid_controller_t *state,double setpoint_deg,
     next=*state;
     error=setpoint_deg-measured_deg;
     if(fabs(error)<=(double)next.config.deadband_deg) error=0.0;
-    if(!next.initialized) {
-        /* First sample applies proportional error without derivative kick. */
-        next.prev_error_deg=0.0;
-        next.prev_prev_error_deg=-error;
+    first_sample=(next.initialized==0U);
+    if(first_sample) {
+        /* The initial proportional response sees zero prior output,
+         * while the derivative history represents a constant initial
+         * error. Do not manufacture a second-tick derivative kick. */
         next.initialized=1U;
     }
     ilim=(double)next.config.integral_limit_deg_s;
     olim=(double)next.config.output_limit_deg;
     new_i=clamp(next.integral_deg_s+error*dt_s,-ilim,ilim);
-    delta_p=(double)next.config.kp*(error-next.prev_error_deg);
-    delta_d=(double)next.config.kd*
+    delta_p=(double)next.config.kp*
+        (first_sample?error:(error-next.prev_error_deg));
+    delta_d=first_sample?0.0:(double)next.config.kd*
         (error-2.0*next.prev_error_deg+next.prev_prev_error_deg)/dt_s;
     raw=next.output_deg+delta_p+
         (double)next.config.ki*(new_i-next.integral_deg_s)+delta_d;
@@ -82,7 +85,7 @@ robot_status_t pid_step(pid_controller_t *state,double setpoint_deg,
     if(!isfinite(output) || fabs(output)>FLT_MAX)
         return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     next.integral_deg_s=new_i;
-    next.prev_prev_error_deg=next.prev_error_deg;
+    next.prev_prev_error_deg=first_sample?error:next.prev_error_deg;
     next.prev_error_deg=error;
     next.output_deg=output;
     *state=next;
