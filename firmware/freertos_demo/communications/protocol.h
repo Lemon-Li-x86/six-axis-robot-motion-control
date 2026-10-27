@@ -38,14 +38,16 @@
 
 #define CMD_SET_JOINT_TARGETS        0x01U
 #define CMD_SET_PARAMETER            0x02U
-#define CMD_REQUEST_JOINT_MOVE       0x03U /* simulator to firmware */
+/* PyBullet -> firmware: command admission, NOT an actuator target. */
+#define CMD_REQUEST_JOINT_MOVE       0x03U
 
 #define CMD_JOINT_STATE              0x81U
 #define CMD_JOINT_STATE_ACK          0x82U
 #define CMD_GET_DIAGNOSTICS          0x83U
 #define CMD_DIAGNOSTICS_RESPONSE     0x84U
 #define CMD_PARAMETER_ACK            0x85U
-#define CMD_JOINT_MOVE_ACK           0x86U /* firmware to simulator */
+/* Firmware -> PyBullet: sequenced request admission status. */
+#define CMD_JOINT_MOVE_ACK           0x86U
 
 
 /* =========================================================
