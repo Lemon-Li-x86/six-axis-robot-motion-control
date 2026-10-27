@@ -10,6 +10,7 @@ on:
       - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
       - 'tools/stage4_pid_study.py'
       - 'tools/stage4_pid_gain_sweep.py'
+      - 'tools/test_stage4_closure.ps1'
       - 'tools/tests/test_stage4_pid_gain_sweep.py'
       - 'tools/tests/test_stage4_pid_study.py'
       - 'firmware/freertos_demo/config/**'
@@ -44,6 +45,21 @@ jobs:
             -B build/stage4-closure-simulation -G Ninja
           cmake --build build/stage4-closure-simulation
           ctest --test-dir build/stage4-closure-simulation --output-on-failure
+
+      - name: Check Windows closure script syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+              'tools/test_stage4_closure.ps1',
+              [ref]$tokens,
+              [ref]$parseErrors
+          )
+          if ($parseErrors.Count -ne 0) {
+              $parseErrors | ForEach-Object { Write-Error $_ }
+              exit 1
+          }
 
       - name: Validate test matrix semantics without a graphical window
         run: |
