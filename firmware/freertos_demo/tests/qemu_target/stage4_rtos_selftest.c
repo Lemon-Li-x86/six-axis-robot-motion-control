@@ -40,6 +40,8 @@ typedef struct
 
 volatile stage4_rtos_test_report_t g_stage4_rtos_test_report = {0};
 volatile uint32_t g_stage4_rtos_test_finished = 0U;
+volatile uint32_t g_stage4_rtos_healthy_duration_ms =
+    ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS;
 
 static void report_check(uint8_t condition)
 {
