@@ -85,3 +85,34 @@ CI 运行完成前不在文档中填写新的实测数字。结果应以对应 A
 原仿真门限：最终最大误差不高于0.25°、J2轨迹RMSE不高于0.25°、J2超调不高于0.15°。**这套门限原本针对2°小幅试验；跨工况比较仅用于揭示跟踪灵敏度，不能直接推断系统正式验收失败或合格。** 六组最终位置误差均在0.02°～0.03°，但中途轨迹误差和超调仍值得继续评估；仅凭终点误差小不能判运动质量好。
 
 上述测量来源为 GitHub Actions 归档 stage4-native-pid-sensitivity-traces 中的 study_matrix.csv，以及对应各工况 stage4_pybullet_metrics.json / stage4_pybullet_samples.csv。测试版 PI/PID 不应作为生产默认参数；这批结果不足以据此计算“最佳PID”。
+
+
+## 2026-10-27 第二轮：分离筛选与保留工况复核
+
+第一轮六轴5°中等幅度工况暴露了6组超出原2°小幅门限的问题：150 N·m 主要是跟踪 RMSE 略超标；60 N·m 还存在0.45°～0.82°的 J2 超调。当前尚不能因此认定生产 PID 算法出错。也不能仅凭最后到位误差很小就忽略整段超调。
+
+为避免重复“拍一个 Kp/Ki/Kd 再盲试”，新增 tools/stage4_pid_gain_sweep.py。只通过测试用 C 桥接接口构造实验控制器：
+- **校准集**：六轴5°、150和60 N·m；
+- **验证集**：未用于排名的 J2 正向、反向移动，同样两档模拟最大力矩；
+- **参数**：Kp 在 JSON 默认的倍率上变化，测试 I/D 有明确有限候选；不修改生产默认；
+- **比较**：对已有0.25° J2 RMSE、0.15° J2超调、0.25°最大最终误差计算最坏超标比，保存每个候选的全部 CSV/JSON；
+- **原则**：先只按校准集排名，再在独立保留工况复查前五名。即使某候选6组均满足门限，也仅代表当前软件夹具，不是最优PID或硬件标定。
+
+运行一次 Windows 本机收尾测试（从仓库根目录）：
+
+~~~powershell
+git fetch origin
+# 在工作区干净的前提下，切换到审查分支
+git switch --track origin/review/stage4-closure-evidence-20261027
+powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline
+~~~
+
+如果本机已有同名本地分支，改用 git switch review/stage4-closure-evidence-20261027 以及 git pull --ff-only。首条命令前需运行 git status --short 检查是否有未提交工作；禁止强制覆盖用户本机修改。
+
+产物位于 build/stage4-closure-local/evidence/：
+- pid-matrix：18组 Stage4 C/PyBullet 试验，包含逐帧关节运动曲线数据；
+- gain-sweep：校准集和保留工况的所有试验目录、calibration.csv、validation.csv、sweep_summary.json。
+
+参数改动、性能门限和硬件安全策略只有在完成验证且被单独审查后才能进入生产配置。**这批实验不能被当作 QEMU + PyBullet 的实时控制链路证据**；Stage4 QEMU 回归会通过原有 tools/test_stage4_once.ps1 独立执行。
+
+云端测试状态不在运行开始时预填 PASS，必须链接实际完成的 Actions run。
