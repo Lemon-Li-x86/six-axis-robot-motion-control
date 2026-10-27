@@ -18,7 +18,7 @@ from pathlib import Path
 def parse_report(log: str) -> dict:
     fields = {}
     for line in log.splitlines():
-        match = re.search(r"(?<![A-Za-z0-9_])([a-z_]+(?:_[a-z_]+)*)=(\d+)\s*$", line)
+        match = re.search(r"(?<![A-Za-z0-9_])([a-z][a-z0-9_]*)=(\d+)\s*$", line)
         if match:
             fields[match.group(1)] = int(match.group(2))
 
