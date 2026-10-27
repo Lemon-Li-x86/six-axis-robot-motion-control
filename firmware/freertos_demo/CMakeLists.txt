@@ -524,6 +524,11 @@ endif()
 if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     target_sources(freertos_demo PRIVATE
         tests/qemu_target/stage4_rtos_selftest.c
+        application/tasks/stage4_timing_probe.c
+    )
+
+    target_include_directories(freertos_demo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/application/tasks
     )
 
     # The normal freertos_demo firmware target does not request DWARF
