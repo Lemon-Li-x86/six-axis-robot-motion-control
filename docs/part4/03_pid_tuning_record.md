@@ -97,3 +97,13 @@ GitHub Actions `.github/workflows/stage4-trajectory-host.yml` 配置自动运行
 | CI结论 | success | success |
 
 相同 CI 的 `stage3-stage4-host`（6组Host回归）亦为 success。本次结果只覆盖这两个模拟构型和该 URDF 物理台架；不包含真实 UART 通道、Cortex-M4 控制任务时间偏差、负载变化或碰撞验证。不能改写为“实物 ±0.02° 精度”。
+
+
+## 第四阶段收尾补充：多工况 C/PyBullet 敏感度矩阵
+
+在独立审查分支 review/stage4-closure-evidence-20261027 新增：
+- tests/simulation/stage4_sim_bridge.c 的六轴试验专用增益 ABI；原 C PID、限速、轨迹实现与 JSON 默认值不改；
+- tools/stage4_pid_study.py，对正反向及六轴中等幅度运动、不同模拟力矩、原始 P/试验 PI/试验 PID 形成18组组合；
+- docs/part4/10_stage4_pid_sensitivity_study.md，固定单一参数源、运行入口与结果证据定义。
+
+这里比较的是软件物理模型灵敏度，不是对正式默认增益的重新标定。试验用非零 Ki/Kd **不能反向覆盖生产配置**。原始数据以对应 CI artifact 中每组 JSON/CSV 为准。即使所有组合可执行，也不代表全部达到同一性能门限。
