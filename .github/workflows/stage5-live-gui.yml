@@ -1,0 +1,62 @@
+name: Stage5 live QEMU PyBullet observer
+
+on:
+  push:
+    branches:
+      - feat/stage5-live-qemu-pybullet-gui-20261027
+    paths:
+      - '.github/workflows/stage5-live-gui.yml'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
+      - 'tools/tests/test_stage5_live_gui.py'
+      - 'firmware/freertos_demo/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-ipc-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test nonblocking live-frame delivery and measurement validation
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_live_gui.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
+
+  genuine-qemu-uart-live-observer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM QEMU and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build
+          python -m pip install pybullet
+      - name: Build real Cortex-M4 FreeRTOS UART firmware
+        run: |
+          cmake -S . -B build/stage5-live-uart -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON \
+            -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+          cmake --build build/stage5-live-uart --target freertos_demo
+      - name: Observe measured joint movement DURING QEMU UART feedback
+        run: |
+          timeout 240s python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --headless-observer \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis \
+            --output-dir build/stage5-live-evidence
+      - name: Preserve physical trace and protocol diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-live-qemu-measured-state-evidence
+          path: build/stage5-live-evidence/*
+          if-no-files-found: ignore
