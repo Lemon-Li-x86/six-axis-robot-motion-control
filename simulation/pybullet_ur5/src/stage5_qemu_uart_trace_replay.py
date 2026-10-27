@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, URDF, joint_indices
+from stage5_qemu_uart_closed_loop import PHYSICS_DT_S
 from stage5_qemu_uart_visual_demo import DemoOptions, run
 
 
@@ -86,7 +87,7 @@ def replay(frames: list[tuple[float, int, tuple[float, ...]]],
     try:
         p.setRealTimeSimulation(0)
         p.setGravity(0, 0, 0)  # 回放阶段不再施加动力学扰动。
-        p.setTimeStep(0.001)
+        p.setTimeStep(PHYSICS_DT_S)
         arm = p.loadURDF(str(URDF), useFixedBase=True)
         joints = joint_indices(p, arm)
         p.setJointMotorControlArray(
