@@ -77,3 +77,13 @@
 - <https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40538029092> Linux CI：C固件编译、三段 DIRECT 闭环、`--headless-step-delay-ms 18` 慢消费端压力测试均 **success**；UART流控至少在此环境没有破坏正常闭环，且压力条件下可以完结。
 - 同一 Linux CI 中原有三次 PyBullet 外部转矩注入/回位断言为 **failure**。历史记录证明该测试的外力未产生预期位移（`peak_displacement_deg` 过小），不可将它视为大幅拖拽回位验收。完整 workflow 结论因此仍为 failure，不隐瞒。
 - 同轮 Windows CI 安装/运行步骤尚未得到最终结果；Windows 原生 `p.GUI` 鼠标拾取、大扰动、实际回位不属于 CI DIRECT 验证范围，必须另行确认。
+
+
+### 2026-10-28 S5-013 时间同步缺陷：模拟已到位不等于闭环动态合格
+
+- **新本机现象**：Windows GUI 无拖拽仍大幅逐渐摆动，流控版无法稳定完成三段。暂停 Windows GUI 验收，禁止将其标记为已修复。
+- **核验的原始 Linux native-GUI 产物**：Actions [#40539424716](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40539424716) 的 `stage5-gui-nodrag-xvfb` 附件 `result.json` 显示 `passed=true`、`segments_settled=3`、196帧×10ms=**1.96s PyBullet物理时间**，而 `trajectory_samples=362`×20ms=**7.24s 固件轨迹任务名义运行时间**，比值 **3.69**；真实墙钟 8.36s。终点误差 0.06° 不能掩盖时间失配。该CI绿色是**错误验收标准下的假阳性**。
+- **流控自身的回归**：Actions [#40538029092](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40538029092) Linux `result.json` 中原有DIRECT亦仅196帧/1.96s，而 `trajectory_samples=388`×20ms=7.76s（时间比值3.96）；慢消费者DIRECT 196帧/1.96s、`trajectory_samples=380`×20ms=7.60s（3.88）。因此 `9a4bca1c` 的反馈信用流控**阻止目标队列膨胀的同时破坏时间对应关系**，并非可交付修复。
+- **撤回流控**：`72b03aee` 在唯一生产 `firmware/freertos_demo/application/protocol_tasks.c` 中精确恢复流控前源码，不改变PID与URDF。
+- **验收加固**：`c38a971c`、`96453585` 添加每次 C `trajectory_samples` × JSON唯一参数源中的20ms 与 PyBullet物理时间比值，默认差异超过25%就记录 `clock_alignment_failed` 和 `passed=false`；这一量只是任务样本数对应的**名义时间估计**，并非高精度硬件计时，但足以揭示上面的3～4倍明显错位。旧版 DIRECT 用户实测 319样本×20ms=6.38s 与6.40s物理时间匹配。
+- **当前结论**：最强实证是**GUI/QEMU异步时间轴不对齐导致闭环动态不能被现有终点误差证明**；Windows大幅振荡的每关节时域根因仍须用用户失败的`joint_trace.csv`查证。解决方向需让QEMU虚拟控制时钟与实际物理步进一致、或明确拆分可验证的DIRECT控制物理与异步GUI交互；不能再用目标帧背压或视觉帧节流代替正确的同步设计。
