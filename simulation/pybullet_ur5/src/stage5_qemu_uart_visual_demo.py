@@ -734,7 +734,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 trajectory_period_s)
             passed = (
                 clock_aligned
-                sequencer.done
+                and sequencer.done
                 and feedback_acks >= 3
                 and bad_acks == 0
                 and hold_rearms == hold_rearm_acks
