@@ -4,8 +4,8 @@ Two independent processes:
   worker: real ARM QEMU <-> UART <-> PyBullet DIRECT physical feedback loop
   parent: PyBullet GUI mirrors *current measured joint angles* as they arrive
 
-The GUI does not control physics, calculate the trajectory, or send UART
-feedback. Frames may be dropped if rendering falls behind; the authoritative
+The GUI sends leased mouse-grab intent to DIRECT; it does not calculate
+trajectories, run PID, or fabricate UART feedback. Frames may be dropped if rendering falls behind; the authoritative
 trace and verdict are always written by the worker. No prior recording is
 required or played back. Windows spawn multiprocessing is supported.
 """
@@ -26,6 +26,7 @@ from typing import Any
 import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
 from stage5_qemu_uart_visual_demo import DemoOptions, SCENARIOS, run
+from stage5_drag_interaction import DragMailbox, MouseDrag, PhysicalDrag
 
 # Display-only policies. The serial/physics controller has no GUI delays.
 REFRESH_HZ = 30.0
@@ -72,7 +73,8 @@ class LatestMailbox:
 
 def capture_worker(
     elf: str, output: str, qemu: str, scenario: str, timeout_s: float,
-    channel: Any, stop: Any,
+    channel: Any, stop: Any, drag_channel=None, ready=None,
+    interactive=False, hold_seconds=None, test_drag=False,
 ) -> None:
     """Run unchanged firmware-driven feedback physics in a spawned process."""
     options = DemoOptions(
@@ -81,11 +83,67 @@ def capture_worker(
         frame_delay_s=0.0,
         timeout_s=timeout_s,
         hold_window=False,
+        interactive_hold=interactive,
+        hold_duration_s=hold_seconds,
     )
+    physical_drag = PhysicalDrag(drag_channel) if drag_channel is not None else None
+    hold_at = None
+    test_anchor = None
+    recovery = dict(peak_displacement_deg=0.0, recovered_frames=0,
+                    max_uart_change_deg=0.0, released=False)
+    initial_targets = None
+
+    def physics(bullet, arm, joints, sim_time, done, ending):
+        nonlocal hold_at, test_anchor
+        if done and hold_at is None:
+            hold_at = sim_time
+            if ready is not None:
+                ready.set()
+        if test_drag and done:
+            elapsed = sim_time-hold_at
+            # Same input mailbox and DIRECT point constraint used by mouse drag.
+            link = joints[2]
+            if test_anchor is None:
+                pose = bullet.getLinkState(arm, link, computeForwardKinematics=True)
+                test_anchor = tuple(pose[0])
+            active = 1.0 <= elapsed < 1.8 and not ending
+            target = tuple(v+d for v,d in zip(test_anchor, (0.08, 0.04, 0.06)))
+            drag_channel.publish(active, link, (0.,0.,0.), target)
+        if physical_drag is not None:
+            if ending:
+                drag_channel.publish(False, -1, (0.,0.,0.), (0.,0.,0.))
+            before = (physical_drag.started, physical_drag.released)
+            physical_drag.apply(bullet, arm)
+            after = (physical_drag.started, physical_drag.released)
+            if after[0] > before[0]:
+                recovery["released"] = False
+                recovery["recovered_frames"] = 0
+            if after[1] > before[1]:
+                recovery["released"] = True
+            if before != after:
+                with (Path(output) / "drag_events.jsonl").open("a", encoding="utf-8") as events:
+                    events.write(json.dumps(dict(sim_time_s=sim_time, started=after[0],
+                        released=after[1], active=physical_drag.active)) + "\n")
+            return after[1] > before[1], physical_drag.active
+
     def push(stamp, segment, measured, targets, acks, bad):
+        nonlocal initial_targets
         channel.publish(stamp, segment, measured, targets, acks, bad)
+        if hold_at is not None:
+            goal = SCENARIOS[scenario][-1]
+            error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, goal))
+            if initial_targets is None:
+                initial_targets = targets
+            change = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(targets, initial_targets))
+            recovery["max_uart_change_deg"] = max(recovery["max_uart_change_deg"], change)
+            if physical_drag is not None and physical_drag.active:
+                recovery["peak_displacement_deg"] = max(recovery["peak_displacement_deg"], error)
+            if recovery["released"]:
+                recovery["recovered_frames"] = recovery["recovered_frames"]+1 if error <= 0.25 else 0
+                recovery["final_error_deg"] = error
 
     Path(output).mkdir(parents=True, exist_ok=True)
+    (Path(output) / "drag_events.jsonl").unlink(missing_ok=True)
     log = (Path(output) / "worker.log").open("w", encoding="utf-8", buffering=1)
     # Redirect native extension writes too (PyBullet uses C stdout/stderr).
     os.dup2(log.fileno(), 1)
@@ -97,8 +155,18 @@ def capture_worker(
     faulthandler.dump_traceback_later(20, repeat=True, file=log)
     try:
         report = run(
-            Path(elf), Path(output), qemu, options, on_sample=push, stop_requested=stop.is_set
+            Path(elf), Path(output), qemu, options, on_sample=push, stop_requested=stop.is_set,
+            on_physics=physics if interactive else None
         )
+        if interactive:
+            recovery.update(drag_started=physical_drag.started, drag_released=physical_drag.released,
+                            input_dropped=int(drag_channel.dropped.value), scripted_test=test_drag)
+            if test_drag:
+                recovery["passed"] = (recovery["peak_displacement_deg"] >= 2.0 and
+                    recovery["recovered_frames"] >= 15 and recovery["max_uart_change_deg"] >= 0.2)
+                report["passed"] = bool(report["passed"] and recovery["passed"])
+            report["drag_recovery"] = recovery
+            (Path(output) / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         if report.get("passed") is not True:
             raise RuntimeError("QEMU/FreeRTOS/UART physics verdict failed")
         print(
@@ -173,10 +241,10 @@ def render_measurement(
     if prior_tool_xyz is not None:
         bullet.addUserDebugLine(
             prior_tool_xyz, tool, [0.1, 0.7, 1.0],
-            lineWidth=2, lifeTime=0,
+            lineWidth=2, lifeTime=10,
         )
     label_id = bullet.addUserDebugText(
-        f"LIVE QEMU UART | segment {segment}/3 | physics {sim_time:.2f}s",
+        f"LIVE UART | segment {segment}/3 | physics {sim_time:.2f}s | left-drag link; Q exits",
         [-0.65, -0.65, 0.85],
         textColorRGB=[0.1, 0.9, 0.2],
         replaceItemUniqueId=label_id,
@@ -187,7 +255,8 @@ def render_measurement(
 def run_live(
     elf: Path, output_dir: Path, qemu: str, scenario: str,
     timeout_s: float, refresh_hz: float, headless_observer: bool,
-    hold_window: bool,
+    hold_window: bool, interactive: bool | None = None,
+    hold_seconds: float | None = None, test_drag: bool = False, opengl2: bool = False,
 ) -> dict:
     """Show latest physical measurements while the real QEMU loop runs."""
     if not elf.is_file():
@@ -199,6 +268,14 @@ def run_live(
     if scenario not in SCENARIOS:
         raise ValueError(f"Unknown scene: {scenario}")
 
+    if interactive is None:
+        interactive = not headless_observer and hold_window
+    if test_drag:
+        interactive = True
+    if hold_seconds is not None and (not math.isfinite(hold_seconds) or hold_seconds <= 0):
+        raise ValueError("Hold seconds must be positive")
+    if headless_observer and interactive and hold_seconds is None:
+        raise ValueError("Headless interactive test needs bounded --hold-seconds")
     p = None
     client = -1
     arm = -1
@@ -208,11 +285,13 @@ def run_live(
     measurements = LiveMeasurements()
     if not headless_observer:
         import pybullet as p
-        client = p.connect(p.GUI)
+        client = p.connect(p.GUI, options="--opengl2" if opengl2 else "")
         if client < 0:
             raise RuntimeError("PyBullet GUI could not open")
         try:
             p.setRealTimeSimulation(0)
+            p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0)
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
             p.setGravity(0, 0, 0)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
             joints = joint_indices(p, arm)
@@ -235,10 +314,14 @@ def run_live(
     context = mp.get_context("spawn")
     channel = LatestMailbox(context)
     stop = context.Event()
+    ready = context.Event()
+    drag_channel = DragMailbox(context)
+    mouse = MouseDrag(drag_channel, output_dir / "mouse_events.jsonl")
     worker = context.Process(
         target=capture_worker,
         args=(str(elf.resolve()), str(output_dir.resolve()),
-              qemu, scenario, timeout_s, channel, stop),
+              qemu, scenario, timeout_s, channel, stop, drag_channel, ready,
+              interactive, hold_seconds, test_drag),
         name="stage5-qemu-uart-pybullet-direct",
     )
     last_visible_update = 0.0
@@ -246,11 +329,14 @@ def run_live(
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "observer_result.json").unlink(missing_ok=True)
+        (output_dir / "mouse_events.jsonl").unlink(missing_ok=True)
         worker.start()
         started = time.monotonic()
         console_at = 0.0
         rendered = 0
         rendered_sequence = 0
+        hold_announced = False
+        hold_wall = None
         audit = (output_dir / "observer.jsonl").open("w", encoding="utf-8", buffering=1)
         print("[LIVE] QEMU + FreeRTOS + UART + PyBullet DIRECT running now", flush=True)
         while True:
@@ -269,7 +355,20 @@ def run_live(
                               f"{len(SCENARIOS[scenario])}", flush=True)
                         last_segment = segment
             now = time.monotonic()
-            if (p is not None and measurements.latest is not None and
+            connected = p is not None and p.isConnected(client)
+            if p is not None and not connected:
+                stop.set()
+            if connected:
+                keys = p.getKeyboardEvents()
+                if keys.get(ord("q"), 0) & p.KEY_WAS_TRIGGERED:
+                    stop.set()
+                if interactive and not test_drag:
+                    mouse.poll(p, arm)
+            if ready.is_set() and not hold_announced:
+                print("[HOLD] Left-drag a robot link; release to recover. Q or close GUI to exit.", flush=True)
+                hold_announced = True
+                hold_wall = now
+            if (connected and measurements.latest is not None and
                     channel.seen != rendered_sequence and
                     now - last_visible_update >= 1.0 / refresh_hz):
                 last_tool, text_id = render_measurement(
@@ -278,9 +377,10 @@ def run_live(
                 last_visible_update = now
                 rendered += 1
                 rendered_sequence = channel.seen
-            if p is not None and not p.isConnected(client):
-                raise RuntimeError("GUI closed during live control")
-            if now - started > timeout_s + 25.0:
+            deadline = (hold_wall + hold_seconds + 25.0 if hold_wall is not None and hold_seconds is not None
+                        else float("inf") if hold_wall is not None and interactive
+                        else started + timeout_s + 25.0)
+            if now > deadline:
                 raise TimeoutError("Worker exceeded wall deadline; inspect worker.log and uart_live.jsonl")
             if measurements.latest is not None and now - console_at >= 1.0:
                 status = channel.status
@@ -360,12 +460,13 @@ def run_live(
         if "audit" in locals():
             audit.close()
         if p is not None and client >= 0:
-            if hold_window and worker.exitcode == 0:
+            if hold_window and not interactive and worker.exitcode == 0:
                 try:
                     input("[GUI] 实时运动结束，按 Enter 关闭窗口...")
                 except EOFError:
                     pass
-            p.disconnect(client)
+            if p.isConnected(client):
+                p.disconnect(client)
 
 
 def main() -> int:
@@ -380,10 +481,16 @@ def main() -> int:
     parser.add_argument("--headless-observer", action="store_true",
                         help="CI: receive live frames without an OpenGL window")
     parser.add_argument("--no-hold", action="store_true")
+    parser.add_argument("--opengl2", action="store_true", help="Compatible Windows GUI renderer")
+    parser.add_argument("--interactive", action="store_true", default=None,
+                        help="Keep true UART control active after three segments; GUI defaults to this")
+    parser.add_argument("--hold-seconds", type=float, default=None)
+    parser.add_argument("--test-drag-recovery", action="store_true",
+                        help="Bounded physical grab/release test through the mouse IPC")
     args = parser.parse_args()
     run_live(args.elf, args.output_dir, args.qemu, args.scenario,
              args.timeout_s, args.refresh_hz, args.headless_observer,
-             not args.no_hold)
+             not args.no_hold, args.interactive, args.hold_seconds, args.test_drag_recovery, args.opengl2)
     return 0
 
 

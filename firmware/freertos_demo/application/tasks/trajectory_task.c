@@ -157,6 +157,10 @@ static void task_trajectory(void *arg)
             if(xQueueReceive(r->request_queue,&request,0U)==pdTRUE) {
                 armed=0U;
                 moving=0U;
+                /* A disable reference can be overwritten by the first enabled
+                 * sample before Control next wakes. Carry a persistent request
+                 * generation so Control cannot miss the required state reset. */
+                reference.request_generation++;
                 /* Invalidate previously streamed target BEFORE replanning. */
                 reference.enabled=0U;
                 reference.created_tick=xTaskGetTickCount();

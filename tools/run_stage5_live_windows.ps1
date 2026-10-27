@@ -13,7 +13,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed" }
     $liveArgs = @("simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py",
         "--elf", "build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf",
-        "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir)
+        "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2")
     if ($NoHold) { $liveArgs += "--no-hold" }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
     & $Python @liveArgs

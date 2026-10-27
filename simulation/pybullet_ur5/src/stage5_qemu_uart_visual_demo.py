@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from collections import deque
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -80,6 +81,8 @@ class DemoOptions:
     frame_delay_s: float
     timeout_s: float
     hold_window: bool
+    interactive_hold: bool = False
+    hold_duration_s: float | None = None
 
 
 class MotionSequencer:
@@ -226,6 +229,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         on_measurement: Callable[[float, int, tuple[int, ...]], None] | None = None,
         on_sample: Callable | None = None,
         stop_requested: Callable[[], bool] | None = None,
+        on_physics: Callable | None = None,
         ) -> dict:
     """启动真实 ARM 固件并与 PyBullet 双向交互，返回真实观测统计。"""
     import pybullet as p
@@ -243,7 +247,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError("Feedback period must be divisible by the physics step")
 
     sequencer = MotionSequencer(SCENARIOS[options.scenario])
-    trace: list[dict] = []
+    trace = deque(maxlen=6000) if options.interactive_hold else []
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
@@ -264,6 +268,19 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     last_audit = 0.0
     next_diagnostic = 0.0
     final_diagnostics = False
+    hold_started = None
+    ending = False
+    hold_request_sequence = None
+    hold_request_at = 0.0
+    hold_rearms = 0
+    hold_rearm_acks = 0
+    hold_replan_needed = False
+    recovering = False
+    recovery_attempts = 0
+    recovery_quiet = 0
+    recovery_settled = 0
+    recovery_previous = None
+    last_measured = tuple(START_RAW)
     live_trace = (output_dir / "joint_trace.csv").open("w", encoding="utf-8", newline="")
     trace_writer = csv.DictWriter(live_trace, fieldnames=TRACE_HEADER)
     trace_writer.writeheader()
@@ -347,9 +364,23 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             sock.sendall(joint_feedback_frame(angles_raw(p, arm, joints)))
             start_wall = time.monotonic()
             last_frame_wall = start_wall
-            while time.monotonic() - start_wall < options.timeout_s:
+            while True:
+                now = time.monotonic()
+                if sequencer.done and hold_started is None:
+                    hold_started = now
+                    if options.interactive_hold:
+                        print("[HOLD] Live UART controller remains active; drag a link, release to recover", flush=True)
                 if stop_requested is not None and stop_requested():
-                    raise InterruptedError("Observer requested live control shutdown")
+                    if not sequencer.done or not options.interactive_hold:
+                        raise InterruptedError("Observer requested live control shutdown")
+                    ending = True
+                if options.interactive_hold and hold_started is not None:
+                    if options.hold_duration_s is not None and now-hold_started >= options.hold_duration_s:
+                        ending = True
+                elif now-start_wall >= options.timeout_s:
+                    raise TimeoutError(f"Demo timed out; completed {sequencer.completed}/{len(sequencer.goals)} segments")
+                if hold_request_sequence is not None and now-hold_request_at > 8.0:
+                    raise TimeoutError("Hold recovery movement ACK timeout")
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
                 if time.monotonic() - last_frame_wall > 8.0:
@@ -384,7 +415,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 "<" + str(wire.JOINT_COUNT) + "h", payload)
                             # 仅在运动请求已被接受后执行固件位置目标；启动
                             # 时始终保持首次实测姿态，不能执行历史演示角度。
-                            if sequencer.accepted:
+                            if sequencer.accepted or (sequencer.done and options.interactive_hold):
                                 p.setJointMotorControlArray(
                                     arm, joints, p.POSITION_CONTROL,
                                     targetPositions=[
@@ -393,11 +424,56 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     ],
                                     forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                 )
+                            if on_physics is not None:
+                                released, grabbed = on_physics(p, arm, joints, target_frames * FEEDBACK_STEP_S,
+                                                      sequencer.done, ending)
+                                if grabbed:
+                                    recovering = False
+                                    hold_replan_needed = False
+                                if released and sequencer.done and not ending:
+                                    hold_replan_needed = True
+                                    recovering = True
+                                    recovery_attempts = 0
+                                    recovery_quiet = 0
+                                    recovery_settled = 0
+                                    recovery_previous = None
                             for _ in range(SIMULATED_STEPS_PER_TARGET):
                                 p.stepSimulation()
                             target_frames += 1
                             measured = angles_raw(p, arm, joints)
+                            last_measured = tuple(measured)
                             sock.sendall(joint_feedback_frame(measured))
+                            if recovering and not ending:
+                                error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, sequencer.goals[-1]))
+                                recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
+                                quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
+                                recovery_quiet = recovery_quiet+1 if quiet else 0
+                                recovery_previous = tuple(measured)
+                                if recovery_settled >= SETTLE_FRAME_COUNT:
+                                    recovering = False
+                                    audit.write(json.dumps(dict(event="drag_recovered", error_deg=error,
+                                        attempts=recovery_attempts)) + "\n")
+                                elif recovery_quiet >= round(0.5 / FEEDBACK_STEP_S) and hold_request_sequence is None:
+                                    # The unchanged incremental controller can settle with a
+                                    # residual after saturation. Ask its C planner for the same
+                                    # destination again; this is bounded motion sequencing,
+                                    # never an additional Python servo or changed target.
+                                    if recovery_attempts >= 8:
+                                        raise RuntimeError(f"Drag recovery did not converge: {error:.2f}deg")
+                                    hold_replan_needed = True
+                                    recovery_quiet = 0
+                            if hold_replan_needed and hold_request_sequence is None and not ending:
+                                # Reuse the C planner/PID with the SAME final goal.
+                                # No joint reset, Python PID or fabricated measurement.
+                                hold_rearms += 1
+                                recovery_attempts += 1
+                                hold_request_sequence = (sequencer.sequence + hold_rearms) & 0xff
+                                hold_request_at = time.monotonic()
+                                payload_request = bytes((hold_request_sequence,)) + struct.pack("<6h", *sequencer.goals[-1])
+                                sock.sendall(integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload_request))
+                                hold_replan_needed = False
+                                audit.write(json.dumps(dict(event="release_replan", sequence=hold_request_sequence,
+                                    goal_raw=sequencer.goals[-1], measured_raw=measured)) + "\n")
                             tool_xyz = p.getLinkState(
                                 arm, p.getNumJoints(arm) - 1,
                                 computeForwardKinematics=True,
@@ -474,6 +550,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             if len(payload) != wire.MOVE_ACK_PAYLOAD_LEN:
                                 bad_acks += 1
                                 continue
+                            if hold_request_sequence is not None:
+                                seq, status = struct.unpack("<Bb", payload)
+                                if seq != hold_request_sequence or status != 0:
+                                    raise RuntimeError(f"Hold recovery rejected: seq={seq}, status={status}")
+                                hold_request_sequence = None
+                                hold_rearm_acks += 1
+                                audit.write(json.dumps(dict(event="release_replan_ack", sequence=seq)) + "\n")
+                                continue
                             sequencer.acknowledge(payload)
                             print(f"[ACCEPTED] Segment {sequencer.index + 1}/"
                                   f"{len(sequencer.goals)}")
@@ -486,13 +570,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 wall_s=time.monotonic()-start_wall)) + "\n")
                             diagnostics_pending = None
 
-                if not sequencer.done and not diagnostics_pending and time.monotonic() >= next_diagnostic:
+                live_polling = not sequencer.done or (options.interactive_hold and not ending)
+                if live_polling and not diagnostics_pending and time.monotonic() >= next_diagnostic:
                     diagnostics_pending = names[diagnostics_index % len(names)]
                     diagnostics_index += 1
                     diagnostics_pending_at = time.monotonic()
                     next_diagnostic = diagnostics_pending_at + 0.25
                     request_diagnostics(sock, diagnostics_pending)
-                if sequencer.done and not diagnostics_pending:
+                if sequencer.done and not live_polling and not diagnostics_pending:
                     if not final_diagnostics:
                         diagnostics_index = 0
                         final_diagnostics = True
@@ -506,12 +591,6 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         break
                 if not data:
                     select.select([sock], [], [], 0.002)
-            else:
-                raise TimeoutError(
-                    f"Demo timed out after {options.timeout_s}s; "
-                    f"completed {sequencer.completed}/{len(sequencer.goals)} segments"
-                )
-
             # 校验多个请求确实经 C 任务执行，不能仅凭 GUI 运动判断成功。
             fault_names = (
                 "controller_faults", "planner_faults", "feedback_stale_count",
@@ -521,6 +600,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 sequencer.done
                 and feedback_acks >= 3
                 and bad_acks == 0
+                and hold_rearms == hold_rearm_acks
+                and not recovering
+                and (not options.interactive_hold or max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                    for a,b in zip(last_measured, sequencer.goals[-1])) <= SETTLE_TOLERANCE_DEG)
                 and parser.bad_checksum == 0
                 and diagnostic_values.get("requests_accepted", -1)
                     >= len(sequencer.goals)
@@ -548,6 +631,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "uart_would_block": sock.would_block,
                 "qemu_clock": "adaptive_icount" if sys.platform == "win32" else "wall",
                 "wall_duration_s": time.monotonic()-start_wall,
+                "interactive_hold": options.interactive_hold,
+                "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                    for a,b in zip(last_measured, sequencer.goals[-1])),
+                "hold_rearms": hold_rearms,
+                "hold_rearm_acks": hold_rearm_acks,
+                "hold_wall_s": 0.0 if hold_started is None else time.monotonic()-hold_started,
                 "diagnostics": diagnostic_values,
                 "fault_counters": faults,
                 "passed": passed,

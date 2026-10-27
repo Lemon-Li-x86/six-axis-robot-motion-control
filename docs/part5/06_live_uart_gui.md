@@ -88,3 +88,49 @@ CI `.github/workflows/stage5-live-gui.yml` 在 Windows 和 Linux 上分别运行
 IPC/协议单元测试及真实 ARM/QEMU/UART/DIRECT 闭环并上传日志。
 CI 使用 `--headless-observer`，不证明 OpenGL 可见画面。
 GUI 的 render 调用计数也只证明提交了姿态更新，不能替代逐帧视觉验收。
+
+
+## 持续交互：拉偏后松手回位
+
+默认 `./tools/run_stage5_live_windows.ps1` 现在在三段结束后进入 HOLD，
+不会停止 QEMU/FreeRTOS/UART。等终端出现 `[HOLD]`，在 GUI 中用**鼠标左键
+按住机械臂的连杆并拖动**，松手后回到最后一个请求目标。
+底座固定，拖空白区域不产生扰动。按 **Q** 或关闭 GUI 结束会话。
+`-NoHold` 保留原有三段自动退出行为。
+
+鼠标事件通过独立非阻塞共享内存传到 DIRECT，创建有限力的物理抓取约束；
+没有用 resetJointState 修改后台物理姿态。测量值仍由真实物理引擎产生并
+通过 UART 写给原 C 固件。GUI 停顿/失联超过 0.4 秒会释放物理抓取。
+
+释放抓取后，通过 UART 重新请求**同一个最终目标**，由既有 C 轨迹模块
+从当前实测姿态重新规划回位。若不再运动却有残余偏差，会有界重试该目标
+（最多 8 次），每次请求和 ACK 都写入 `uart_live.jsonl`；不是额外 Python PID。
+请求目标、C PID 算法/参数和机器人限制不变。固件任务为每个运动请求携带
+持久 generation，避免单槽参考队列覆盖瞬时 disable 消息、漏掉控制器重置。
+
+长时间会话不再使用三段演示的总时限退出；UART 断流和请求 ACK 仍有超时。
+图形轨迹只保留最近 10 秒，内存绘图样本有界；CSV 继续保存全部实际样本。
+`drag_events.jsonl` 记录物理抓取开始/释放；结束时 `result.json` 记录
+`hold_rearms`、`hold_rearm_acks` 和 `drag_recovery`。若仍未回位就退出，
+会返回失败，不能把早先三段通过作为回位通过。
+
+自动物理扰动测试（有界运行，不需要鼠标或 OpenGL）：
+
+```powershell
+.\.venv\Scripts\python.exe simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-drag-recovery --hold-seconds 16 --no-hold --output-dir build/stage5-drag-recovery
+```
+
+它经相同输入邮箱和物理抓取路径施加扰动，要求至少拉偏 2°、UART 目标有
+实际响应、释放后连续至少 15 帧全轴误差不超过 0.25°，且固件故障为零。
+这项测试验证物理链路；真实桌面鼠标事件的验收需另外记录。
+
+本轮桌面验收使用 Windows 兼容图形路径：真实鼠标拾取 link 2，按下/松开
+合并事件也成功作用于物理引擎，释放后两次同目标请求均收到 ACK，
+`drag_recovered` 记录全轴最大误差 0.07°。相关本机证据在
+`build/stage5-drag-rapid-mouse/`，包含鼠标射线拾取、实际抓取和 UART 轨迹。
+原生 PowerShell 入口默认使用 OpenGL2 兼容路径，并隐藏无关的相机调试面板。
+直接运行 Python 入口可加 `--opengl2` 选择同一图形路径。
+
+非常快速的拖拽可能被 Bullet 合并成同时按下和松开的事件；此时会施加
+至多 80ms 的有界物理抓取脉冲，避免整次鼠标拖拽被忽略。普通长按拖动
+始终在松开时释放，GUI 失联仍受 0.4 秒租约约束。
