@@ -60,6 +60,8 @@ SCENARIOS: dict[str, tuple[tuple[int, ...], ...]] = {
 PHYSICS_STEP_S = integration.PHYSICS_DT_S
 FEEDBACK_STEP_S = integration.FEEDBACK_PERIOD_S
 SIMULATED_STEPS_PER_TARGET = round(FEEDBACK_STEP_S / PHYSICS_STEP_S)
+# Preserve exactly the old 100 internal warm-up steps, independent of GUI API calls.
+INITIAL_SETTLE_INTERNAL_STEPS = 100
 SETTLE_TOLERANCE_DEG = 0.15
 SETTLE_FRAME_COUNT = 15
 # Interactive HOLD policies (not UR5 model parameters or PID gains).
@@ -95,6 +97,24 @@ class DemoOptions:
     opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
     hold_observe_only: bool = False  # Passive PID observation, no replan requests.
+
+
+def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
+    """Return (API calls per feedback, warm-up calls).
+
+    In GUI mode one client/server call advances a full feedback interval
+    using Bullet's native fixed substeps. This keeps the 1 ms integrator and
+    10 ms feedback interval but avoids 10 GUI thread round trips per UART
+    target. DIRECT preserves the previously validated stepping behavior.
+    """
+    if headless:
+        bullet.setTimeStep(PHYSICS_STEP_S)
+        return SIMULATED_STEPS_PER_TARGET, INITIAL_SETTLE_INTERNAL_STEPS
+    bullet.setTimeStep(FEEDBACK_STEP_S)
+    bullet.setPhysicsEngineParameter(numSubSteps=SIMULATED_STEPS_PER_TARGET)
+    if INITIAL_SETTLE_INTERNAL_STEPS % SIMULATED_STEPS_PER_TARGET:
+        raise ValueError("Warm-up step count must divide native substep count")
+    return 1, INITIAL_SETTLE_INTERNAL_STEPS // SIMULATED_STEPS_PER_TARGET
 
 
 class MotionSequencer:
@@ -268,6 +288,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
+    step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
     feedback_acks = 0
     target_frames = 0
     bad_acks = 0
@@ -317,6 +338,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         native_gui_picking=not options.headless,
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
         feedback_step_s=FEEDBACK_STEP_S, physics_step_s=PHYSICS_STEP_S,
+        pybullet_step_calls_per_feedback=step_calls_per_feedback,
+        internal_substeps_per_feedback=SIMULATED_STEPS_PER_TARGET,
         note="config hash is current source; use preset build for matching ELF")
     (output_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     qemu = None
@@ -347,7 +370,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 # sole physical GUI look like an empty rendering viewport.
                 p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
             p.setGravity(0, 0, -9.81)
-            p.setTimeStep(PHYSICS_STEP_S)
+            step_calls_per_feedback, warmup_calls = configure_physics_stepping(
+                p, options.headless)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
             joints = joint_indices(p, arm)
             for idx, raw in zip(joints, START_RAW):
@@ -358,7 +382,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                  for v in START_RAW],
                 forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
             )
-            for _ in range(100):
+            for _ in range(warmup_calls):
                 p.stepSimulation()
             if not options.headless:
                 p.resetDebugVisualizerCamera(
@@ -473,7 +497,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 on_physics(p, arm, joints,
                                            target_frames * FEEDBACK_STEP_S,
                                            sequencer.done, ending)
-                            for _ in range(SIMULATED_STEPS_PER_TARGET):
+                            for _ in range(step_calls_per_feedback):
                                 p.stepSimulation()
                             target_frames += 1
                             measured = angles_raw(p, arm, joints)
@@ -709,6 +733,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     sequencer.segment_final_errors_deg, default=None
                 ),
                 "simulated_physics_s": round(target_frames * FEEDBACK_STEP_S, 3),
+                "pybullet_step_calls_per_feedback": step_calls_per_feedback,
+                "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
                 "feedback_acks": feedback_acks,
                 "bad_ack_frames": bad_acks,
