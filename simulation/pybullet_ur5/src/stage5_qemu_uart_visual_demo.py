@@ -67,6 +67,7 @@ HOLD_DEVIATION_TRIGGER_DEG = 0.5
 HOLD_STAGNANT_PERIOD_S = 0.5
 HOLD_MAX_REPLAN_ATTEMPTS = 8
 HOLD_TRACE_LIFETIME_S = 10.0
+DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 MAX_PAYLOAD_RAW = 32767
 TRACE_HEADER = (
@@ -89,6 +90,8 @@ class DemoOptions:
     interactive_hold: bool = False
     hold_duration_s: float | None = None
     opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
+    diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
+    hold_observe_only: bool = False  # Passive PID observation, no replan requests.
 
 
 class MotionSequencer:
@@ -246,6 +249,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise FileNotFoundError(f"UR5 model missing: {URDF}")
     if options.frame_delay_s < 0 or options.timeout_s <= 0:
         raise ValueError("Delay must be >= 0 and timeout must be > 0")
+    if (not math.isfinite(options.diagnostics_timeout_s) or
+            not DIAGNOSTICS_TIMEOUT_S <= options.diagnostics_timeout_s <= 60.0):
+        raise ValueError("Diagnostics timeout must be between 5 and 60 seconds")
+    if options.hold_observe_only and not options.interactive_hold:
+        raise ValueError("Passive HOLD observation requires interactive HOLD")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -287,6 +295,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     recovery_quiet = 0
     recovery_settled = 0
     recovery_previous = None
+    recovery_stalled_reported = False
     last_measured = tuple(START_RAW)
     live_trace = (output_dir / "joint_trace.csv").open("w", encoding="utf-8", newline="")
     trace_writer = csv.DictWriter(live_trace, fieldnames=TRACE_HEADER)
@@ -415,9 +424,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 ):
                     raise TimeoutError("Movement request ACK timeout")
                 if diagnostics_pending and (
-                    time.monotonic() - diagnostics_pending_at > 5.0
+                    time.monotonic() - diagnostics_pending_at > options.diagnostics_timeout_s
                 ):
-                    raise TimeoutError(f"Diagnostics timeout: {diagnostics_pending}")
+                    audit.write(json.dumps(dict(
+                        event="diagnostics_timeout", selector=diagnostics_pending,
+                        last_diagnostics=diagnostic_values, target_frames=target_frames,
+                        feedback_acks=feedback_acks, bad_checksum=parser.bad_checksum,
+                        elapsed_s=time.monotonic() - diagnostics_pending_at,
+                    )) + "\n")
+                    raise TimeoutError(f"Diagnostics timeout: {diagnostics_pending}; "
+                                       f"UART targets={target_frames}, ACK={feedback_acks}")
 
                 try:
                     data = sock.recv(8192)
@@ -463,6 +479,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                 for a,b in zip(measured, sequencer.goals[-1]))
                                 if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
+                                    recovery_stalled_reported = False
                                     recovering = True
                                     recovery_attempts = 0
                                     recovery_quiet = 0
@@ -481,14 +498,26 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     hold_recoveries += 1
                                     audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
                                         attempts=recovery_attempts)) + "\n")
-                                elif recovery_quiet >= round(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S) and hold_request_sequence is None:
-                                    # A stagnant motor command can leave residual
-                                    # position error. Reissue the SAME goal through
-                                    # C motion planning; no Python servo or mouse
-                                    # release event is involved.
-                                    if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
-                                        raise RuntimeError(f"Hold recovery did not converge: {error:.2f}deg")
-                                    hold_replan_needed = True
+                                elif (recovery_quiet >= round(
+                                        HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+                                      and hold_request_sequence is None):
+                                    if options.hold_observe_only:
+                                        # Passive experiment: keep the C PID active,
+                                        # never add another motion request or stop
+                                        # solely because the joint error persists.
+                                        if not recovery_stalled_reported:
+                                            audit.write(json.dumps(dict(
+                                                event="hold_observe_stalled",
+                                                error_deg=error,
+                                            )) + "\n")
+                                            recovery_stalled_reported = True
+                                    else:
+                                        # Normal mode: bounded replan from current
+                                        # feedback using the SAME firmware goal.
+                                        if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
+                                            raise RuntimeError(
+                                                f"Hold recovery did not converge: {error:.2f}deg")
+                                        hold_replan_needed = True
                                     recovery_quiet = 0
                             if hold_replan_needed and hold_request_sequence is None and not ending:
                                 # Replan from measured pose using the original
@@ -660,6 +689,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "qemu_clock": "adaptive_icount" if sys.platform == "win32" else "wall",
                 "wall_duration_s": time.monotonic()-start_wall,
                 "interactive_hold": options.interactive_hold,
+                "hold_observe_only": options.hold_observe_only,
+                "diagnostics_timeout_s": options.diagnostics_timeout_s,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                     for a,b in zip(last_measured, sequencer.goals[-1])),
                 "hold_recoveries": hold_recoveries,
