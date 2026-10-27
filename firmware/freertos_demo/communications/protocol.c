@@ -208,26 +208,22 @@ uint8_t protocol_parser_process_byte(
                 return 1U;
             }
 
-            protocol_parser_reset(parser);
-
-            break;
-
-        default:
-
             /*
-             * A dropped payload byte can consume the very next frame's
-             * first header byte as the old frame's bad checksum.
-             * Re-consider that SAME byte as a new frame start instead of
-             * silently discarding the following valid retransmission.
-             *
-             * Only checksum failure uses this transition. The parser
-             * still accepts no frame without a full valid checksum.
+             * If a prior payload byte was lost, this byte may be the
+             * next frame's 0xAA header rather than the old checksum.
+             * Re-use it as a candidate header on CHECKSUM FAILURE.
              */
             protocol_parser_reset(parser);
             if (byte == PROTOCOL_HEADER_0)
             {
                 parser->state = PROTOCOL_STATE_WAIT_HEADER_1;
             }
+
+            break;
+
+        default:
+
+            protocol_parser_reset(parser);
 
             break;
     }
