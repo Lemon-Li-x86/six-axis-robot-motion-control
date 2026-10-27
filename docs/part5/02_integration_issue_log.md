@@ -40,3 +40,15 @@
 - **不等价的证据**：此前另一轮报告 `Diagnostics timeout: last_fault`，只能证明该字段的诊断响应未及时到达，并不表示 C 控制器返回了 `last_fault` 错误码。QEMU 反馈 ACK 计数落后目标帧数是异常线索，但不能未经协议追踪计算“丢包数”。
 - **已经提供的取证功能**：仅仿真选项 `-ObserveHold` 跳过自动重复重规划，让已有 C PID 在原参考角下持续运行；`-DiagnosticsTimeoutSeconds 30` 对单条诊断查询设置有限延长等待。UART 失联、QEMU 停机、命令 ACK 和真实故障仍保持硬门禁；未恢复仍写 `passed=false`，不宣称回位完成。
 - **下一步必须验证**：原始 `worker.log` 的末尾异常，`uart_live.jsonl` 的 `hold_deviation`/`hold_observe_stalled`/`hold_replan`/`diagnostics_timeout`，`result.json` 的 `controller_faults`/`feedback_stale_count`，以及在鼠标完全释放、无新增运动请求时 `joint_trace.csv` 距最终请求目标的误差趋势。验证物理拾取是否保持约束，不能通过增加超时掩盖控制停用。
+
+
+## 2026-10-27 新证据 S5-013：第二段运行时 UART 诊断超时与反馈积压
+
+**级别**：P1。**状态**：根因待定位，尚未修复。
+
+- **本机真实复现**：`-ObserveHold -DiagnosticsTimeoutSeconds 30`，第一段 `[SETTLED]`，第二段 `[ACCEPTED]` 后始终未完成。工作进程最终报 `Diagnostics timeout: controller_steps; UART targets=7900, ACK=5275`，墙钟等待 `33.937s`，`segments_settled=1`，绝未进入 `HOLD`。
+- **最后成功获取的不同时间点计数**：`requests_accepted=2`、`trajectory_samples=2865`、`controller_steps=444`、`controller_faults=0`、`planner_faults=0`、`feedback_stale_count=0`、`last_fault=0`、`monitoring_ticks=260`。这些都是诊断**历史快照**，不是超时发生时的控制器实时状态。
+- **关键区别**：`7900 * 0.01=79s` 是 Python 依赖 **UART 目标帧数量**推进的 PyBullet 仿真时间，而不是独立的 FreeRTOS 时钟证据；`7900-5275=2625` 是目标帧数与反馈 ACK 数的计数差，**不能直接命名为丢帧**。
+- **架构风险点**：`stage5_qemu_uart_visual_demo.py` 每收到一个 UART 目标帧，在同一个阻塞轮询中运行 10 次 PyBullet 步进、生成反馈再读取下一批串口数据；原生 GUI 的渲染/鼠标交互可能放大积压。C 的 `protocol_commands.c` 通过 `uart_tx_manager_send_frame()` 提交诊断响应，但忽略返回状态；缓冲区满时可能静默丢失诊断响应。此两点目前仅为**源码级候选原因**。
+- **只加取证，不改控制**：在 Python 复用已存在的 C 协议 `DIAGNOSTICS_METRIC_RX_DROP_COUNT=0`，以 `uart_rx_dropped_bytes` 查询 UART RX 溢出，并在 `uart_live.jsonl` 输出 `uart_batch_delay` 事件（帧数、处理墙钟耗时和 ACK 滞后），不降低 UART 频率、不丢弃目标帧、不掩盖故障、不修改 FreeRTOS/PID/URDF。补丁提交 `612b02fa`、`8ad479fc`。
+- **下一步验证**：如 RX 丢字节快速增加，检查控制器调度/输入环形缓冲区；如处理批次耗时长且 ACK 滞后增加，检查 GUI 同步物理步进造成的 UART 积压；如两者正常却诊断丢失，再审查 TX 缓冲与诊断回包发送返回值。不能简单增大超时宣称已修复。
