@@ -14,6 +14,12 @@ import re
 import sys
 from pathlib import Path
 
+# Test acceptance policy ONLY. This is not a production task constant:
+# <=10% P99 start-interval deviation and max processing < 100% period
+# under the specific 1.2s QEMU healthy-motion fixture.
+MAX_P99_JITTER_FRACTION = 0.10
+MAX_PROCESSING_FRACTION = 1.00
+
 
 def parse_report(log: str) -> dict:
     fields = {}
@@ -48,6 +54,10 @@ def parse_report(log: str) -> dict:
         if expected <= 0 or p99_jitter > max_jitter or (
                 p99_processing > max_processing):
             raise ValueError(f"{kind} timing distribution is inconsistent")
+        if p99_jitter > expected * MAX_P99_JITTER_FRACTION:
+            raise ValueError(f"{kind} P99 interval jitter exceeds QEMU test policy")
+        if max_processing >= expected * MAX_PROCESSING_FRACTION:
+            raise ValueError(f"{kind} elapsed activation exceeds QEMU test period")
         usec_per_tick = 1e6 / frequency
         metrics[kind] = {
             "interval_sample_count": interval_samples,
@@ -89,6 +99,11 @@ def parse_report(log: str) -> dict:
             "30-minute full-load stability",
         ],
         "timing_frequency_hz": frequency,
+        "test_policy": {
+            "maximum_p99_abs_jitter_fraction_of_period": MAX_P99_JITTER_FRACTION,
+            "maximum_processing_elapsed_fraction_of_period_exclusive": MAX_PROCESSING_FRACTION,
+            "scope": "QEMU short-run only; not a hard real-time certification",
+        },
         "percentile_definition": "nearest-rank 99th percentile",
         "jitter_definition": "absolute difference between observed consecutive wake-start intervals and nominal period",
         "processing_definition": "wall elapsed simulated Timer0 ticks from after vTaskDelayUntil to activation end, including preemption",
