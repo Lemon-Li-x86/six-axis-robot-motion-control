@@ -7,6 +7,7 @@ on:
     paths:
       - 'firmware/freertos_demo/**'
       - 'tools/check_protocol_mirror.py'
+      - 'simulation/pybullet_ur5/src/stage5_static_obstacle_probe.py'
       - '.github/workflows/stage5-system-integration.yml'
   workflow_dispatch:
 
@@ -32,3 +33,28 @@ jobs:
             -B build/stage4-trajectory -G Ninja
           cmake --build build/stage4-trajectory
           ctest --test-dir build/stage4-trajectory --output-on-failure
+
+  pybullet-static-cuboid-c-apf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install physics simulator
+        run: python -m pip install pybullet
+      - name: Build real C avoidance algorithm as host shared library
+        run: |
+          cmake -S firmware/freertos_demo/tests/avoidance \
+            -B build/stage5-avoidance -G Ninja
+          cmake --build build/stage5-avoidance
+          ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Verify C APF step against PyBullet static box geometry
+        run: |
+          python simulation/pybullet_ur5/src/stage5_static_obstacle_probe.py \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --output-dir build/stage5-pybullet
+      - name: Preserve geometry and planner diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-static-cuboid-c-apf-probe
+          path: build/stage5-pybullet/*
+          if-no-files-found: ignore
