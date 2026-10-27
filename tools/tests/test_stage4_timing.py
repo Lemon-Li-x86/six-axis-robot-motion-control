@@ -55,6 +55,22 @@ class TimingReportTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_report(damaged)
 
+    def test_rejects_excessive_qemu_p99_jitter(self):
+        damaged = fixture().replace(
+            "control_jitter_p99_ticks=250",
+            "control_jitter_p99_ticks=26000").replace(
+            "control_jitter_max_ticks=700",
+            "control_jitter_max_ticks=26000")
+        with self.assertRaisesRegex(ValueError, "P99 interval jitter"):
+            parse_report(damaged)
+
+    def test_rejects_activation_longer_than_control_period(self):
+        damaged = fixture().replace(
+            "control_processing_max_ticks=15000",
+            "control_processing_max_ticks=251000")
+        with self.assertRaisesRegex(ValueError, "exceeds QEMU test period"):
+            parse_report(damaged)
+
     def test_rejects_impossible_stack_watermark(self):
         damaged = fixture().replace(
             "stack_words_monitor=100",
