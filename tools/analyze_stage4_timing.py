@@ -35,6 +35,9 @@ def parse_report(log: str) -> dict:
 
     if require("finished") != 1 or require("checks") != 29 or require("failed") != 0:
         raise ValueError("The 29-item ARM/FreeRTOS self-test did not pass")
+    duration_ms = require("healthy_duration_ms")
+    if not 1200 <= duration_ms <= 1800000:
+        raise ValueError("Invalid compiled QEMU healthy run duration")
     frequency = require("timing_frequency_hz")
     if not 1_000_000 <= frequency <= 100_000_000:
         raise ValueError(f"Unsupported Timer0 frequency: {frequency}")
@@ -99,6 +102,7 @@ def parse_report(log: str) -> dict:
             "30-minute full-load stability",
         ],
         "timing_frequency_hz": frequency,
+        "healthy_duration_ms": duration_ms,
         "test_policy": {
             "maximum_p99_abs_jitter_fraction_of_period": MAX_P99_JITTER_FRACTION,
             "maximum_processing_elapsed_fraction_of_period_exclusive": MAX_PROCESSING_FRACTION,
@@ -107,7 +111,7 @@ def parse_report(log: str) -> dict:
         "percentile_definition": "nearest-rank 99th percentile",
         "jitter_definition": "absolute difference between observed consecutive wake-start intervals and nominal period",
         "processing_definition": "wall elapsed simulated Timer0 ticks from after vTaskDelayUntil to activation end, including preemption",
-        "samples": "first up to 128 healthy activations per task, no heap or artificial busy-work",
+        "samples": "most recent up to 128 healthy activations per task (bounded circular buffer), no heap or artificial busy-work",
         "tasks": metrics,
         "stacks": stacks,
     }
