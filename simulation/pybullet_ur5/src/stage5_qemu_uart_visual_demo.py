@@ -116,6 +116,7 @@ def hold_replan_allowed(
     command_quiet_frames: int,
     attempts: int,
     frames_since_last_request: int,
+    frames_since_last_gui_stop: int | None = None,
 ) -> bool:
     """A stalled HOLD needs BOTH motor command and physical position quiet.
 
@@ -130,6 +131,10 @@ def hold_replan_allowed(
         and measured_quiet_frames >= quiet_frames
         and command_quiet_frames >= quiet_frames
         and (attempts == 0 or frames_since_last_request >= cooldown_frames)
+        # The user may still be holding the native mouse constraint against
+        # a joint stop. Don't exhaust C retry attempts while still dragging.
+        and (frames_since_last_gui_stop is None
+             or frames_since_last_gui_stop >= quiet_frames)
     )
 
 
@@ -764,6 +769,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     gui_joint_stop_corrections = 0
     gui_joint_stop_last = None
     gui_joint_stop_last_log_at = float("-inf")
+    last_gui_joint_stop_frame = -1_000_000
     hold_replan_needed = False
     recovering = False
     recovery_attempts = 0
@@ -991,6 +997,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     joint_stop_contacts = enforce_gui_joint_hard_stops(
                                         p, arm, joints, joint_limits_rad)
                                     if joint_stop_contacts:
+                                        last_gui_joint_stop_frame = target_frames
                                         gui_joint_stop_corrections += len(joint_stop_contacts)
                                         gui_joint_stop_last = joint_stop_contacts[-1]
                                         # Keep a full event on first encounter,
@@ -1089,7 +1096,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         elif hold_replan_allowed(
                                                 recovery_quiet, recovery_command_quiet,
                                                 recovery_attempts,
-                                                target_frames - last_hold_replan_frame):
+                                                target_frames - last_hold_replan_frame,
+                                                target_frames - last_gui_joint_stop_frame):
                                             # Re-submit to the existing C motion
                                             # queue. ACK is queue admission, not
                                             # trajectory success. Retry only on
