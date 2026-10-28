@@ -31,3 +31,35 @@ jobs:
         run: python -m unittest discover -s tools/tests -p 'test_stage5_memory_map.py' -v
       - name: Syntax check
         run: python -m py_compile tools/stage5_memory_map.py tools/tests/test_stage5_memory_map.py
+
+  arm-link-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bare-metal ARM compiler and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build
+      - name: Configure production ARM image with optional Stage5 linker map
+        run: |
+          cmake -S . -B build/stage5-arm -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE5_LINK_MAP=ON \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+      - name: Compile and measure the actual linked firmware
+        run: |
+          cmake --build build/stage5-arm --target freertos_demo
+          python tools/stage5_memory_map.py \
+            build/stage5-arm/firmware/freertos_demo/stage5_firmware.map \
+            --output build/stage5-arm/stage5-link-map-report.json
+          python -c 'import json; p=json.load(open("build/stage5-arm/stage5-link-map-report.json"))["current"]; print("FLASH bytes:",p["flash_allocated_bytes"],"RAM bytes:",p["ram_allocated_bytes"])'
+      - name: Preserve linked ELF, original map and machine-readable report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-arm-memory-map-evidence
+          path: |
+            build/stage5-arm/firmware/freertos_demo/freertos_demo.elf
+            build/stage5-arm/firmware/freertos_demo/stage5_firmware.map
+            build/stage5-arm/stage5-link-map-report.json
+          if-no-files-found: ignore
