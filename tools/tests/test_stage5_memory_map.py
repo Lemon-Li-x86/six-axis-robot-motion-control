@@ -56,6 +56,14 @@ class LinkerMapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Load images outside"):
             self.parse(HEADER.replace("load address 0x00000140", "load address 0x00100000"))
 
+    def test_real_ld_nobits_bss_lma_is_not_a_flash_initializer(self):
+        # GNU ld displays a load address even for zero-initialized .bss.
+        result = self.parse(HEADER.replace(
+            ".bss             0x20000020         0x00000080",
+            ".bss             0x20000020         0x00000080 load address 0x00000160"))
+        self.assertEqual(result["ram_initial_values_in_flash_bytes"], 0x20)
+        self.assertEqual(result["flash_allocated_bytes"], 0x160)
+
     def test_overlapping_ram_sections_rejected(self):
         with self.assertRaisesRegex(ValueError, "Overlapping RAM"):
             self.parse(HEADER + ".overlap         0x20000050         0x00000010\n")
