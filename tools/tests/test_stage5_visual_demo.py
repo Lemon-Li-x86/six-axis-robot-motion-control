@@ -35,6 +35,8 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     joint_feedback_frame,
     canonical_physical_feedback,
     closest_physical_motor_targets,
+    continuous_firmware_servo_targets,
+    joint_motor_efforts_from_urdf,
     JointFeedbackRangeError,
     preserve_gui_after_physics_fault,
     validate_physical_feedback_step,
@@ -273,6 +275,72 @@ class MotionSequencerTests(unittest.TestCase):
             closest_physical_motor_targets(
                 (0,) * 6, (0,) * 6, ((float("nan"), 1),) + limits[1:])
 
+    def test_continuous_servo_target_does_not_flip_with_unrelated_axis_crossing(self):
+        import math
+        rad = math.radians
+        limits = (
+            (rad(-360), rad(360)),
+            (rad(-360), rad(360)),
+            (rad(-180), rad(180)),
+            (rad(-360), rad(360)),
+            (rad(-360), rad(360)),
+            (rad(-360), rad(360)),
+        )
+        previous = tuple(map(rad, (179, 20, 0, 10, 0, 0)))
+        # Measured axis 1 crosses 180; an independent axis is mouse-dragged
+        # near +350. The C command for that axis must NOT flip by 360.
+        measured = (18100, 35000, 0, 1000, 0, 0)
+        command = (-17900, 2000, 0, 1000, 0, 0)
+        result = continuous_firmware_servo_targets(
+            command, measured, previous, limits, rebase=False)
+        self.assertAlmostEqual(math.degrees(result[0]), 181.0)
+        self.assertAlmostEqual(math.degrees(result[1]), 20.0)
+        self.assertAlmostEqual(math.degrees(result[3]), 10.0)
+        # The same canonical target stays on the previous continuous turn
+        # even if the physical arm is subsequently moved toward -350.
+        result2 = continuous_firmware_servo_targets(
+            command, (-35000, -35000, 0, 0, 0, 0),
+            result, limits, rebase=False)
+        self.assertEqual(tuple(round(math.degrees(v)) for v in result2),
+                         (181, 20, 0, 10, 0, 0))
+
+    def test_only_accepted_new_generation_rebases_servo_turn_to_feedback(self):
+        import math
+        rad = math.radians
+        limits = ((rad(-360), rad(360)),) * 6
+        previous = (rad(40),) + (0.0,) * 5
+        command = (-1000,) + (0,) * 5
+        measured = (35000,) + (0,) * 5
+        old_generation = continuous_firmware_servo_targets(
+            command, measured, previous, limits, rebase=False)
+        new_generation = continuous_firmware_servo_targets(
+            command, measured, previous, limits, rebase=True)
+        self.assertAlmostEqual(math.degrees(old_generation[0]), -10.0)
+        self.assertAlmostEqual(math.degrees(new_generation[0]), 350.0)
+        # Subsequent commands unwind continuously from the newly rebased
+        # physical turn rather than jumping to canonical -9deg.
+        next_command = (-900,) + (0,) * 5
+        next_target = continuous_firmware_servo_targets(
+            next_command, measured, new_generation, limits, rebase=False)
+        self.assertAlmostEqual(math.degrees(next_target[0]), 351.0)
+
+    def test_motor_torque_caps_match_loaded_urdf_per_axis(self):
+        class FakeBullet:
+            JOINT_REVOLUTE = 0
+            def getJointInfo(self, body, index):
+                self.last_body = body
+                info = [None] * 11
+                info[2] = self.JOINT_REVOLUTE
+                info[10] = (150, 150, 150, 28, 28, 28)[index]
+                return info
+        bullet = FakeBullet()
+        self.assertEqual(joint_motor_efforts_from_urdf(
+            bullet, 7, tuple(range(6))),
+            (150, 150, 150, 28, 28, 28))
+        self.assertEqual(bullet.last_body, 7)
+        with self.assertRaises(ValueError):
+            joint_motor_efforts_from_urdf(bullet, 7, tuple(range(5)))
+
     def test_gui_stop_clamps_only_out_of_urdf_joint_with_velocity_zero(self):
         import math
         class Bullet:
@@ -351,8 +419,9 @@ class MotionSequencerTests(unittest.TestCase):
         for _, i, values in physics.configured:
             self.assertEqual(values["jointLowerLimit"], limits[i][0])
             self.assertEqual(values["jointUpperLimit"], limits[i][1])
-            self.assertGreaterEqual(values["jointLimitForce"],
-                                    150.0 * GUI_JOINT_STOP_FORCE_MULTIPLIER)
+            self.assertAlmostEqual(
+                values["jointLimitForce"],
+                (28.0 if i >= 3 else 150.0) * GUI_JOINT_STOP_FORCE_MULTIPLIER)
 
     def test_gui_solver_tolerance_only_allows_tiny_penetration_not_real_overtravel(self):
         import math
