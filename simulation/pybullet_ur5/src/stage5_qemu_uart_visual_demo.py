@@ -942,7 +942,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     finally:
         # QEMU 停止后才保持 GUI，避免固件在暂停反馈时误报失联。
         if qemu is not None:
-            qemu.terminate()
+            if qemu.poll() is None:
+                qemu.terminate()
             try:
                 qemu.communicate(timeout=3)
             except subprocess.TimeoutExpired:
