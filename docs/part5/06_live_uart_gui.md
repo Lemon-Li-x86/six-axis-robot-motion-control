@@ -359,10 +359,12 @@ C `protocol_commands.c` 的 MOVE ACK 只确认 `motion_pipeline_submit_joint`
 - 记录 `hold_replan` 的 attempt 及当时 C 诊断快照；
   观察期固件 `controller_faults` / `planner_faults` 若增长，
   会新增 `hold_firmware_fault_counter_increased` 审计事件和
-  `[C MOTION FAULT]` 控制台告警；这是固件实际故障计数，
+  `worker.log` 中的 `[C MOTION FAULT]` 提示；Stage5 worker stdout
+  重定向到 `build/stage5-live-windows/worker.log`，这条提示不会直接
+  显示在父进程 PowerShell 终端。这是固件实际故障计数，
   不应被活跃的 UART ACK 所掩盖。若尚未轮询到 `last_fault`，
   告警不臆测具体故障码。
-  超过预算则记录 `hold_recovery_stalled` 并在控制台显示，
+  超过预算则记录 `hold_recovery_stalled` 并在 `worker.log` 中显示，
   **不将停在中途的状态报成 PASS，也不隐藏 C 故障**；
   GUI/UART 保持运行，供人工采集证据。
 - 这些保护能允许一次 C 轨迹取消之后的安全重试，
