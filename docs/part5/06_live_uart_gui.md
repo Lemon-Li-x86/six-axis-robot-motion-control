@@ -213,3 +213,14 @@ PyBullet，也出现了同样的访问冲突。因此已移除后台定时栈采
 再分别试图越过模型行程，确认应报明示的安全故障而不是让固件在越界姿态下盲控。
 Windows 原生鼠标抓取仍必须由真人桌面验收；CI 的 DIRECT 自动外力不等于 GUI 拖拽。
 
+
+
+
+## 2026-10-28 PyBullet 原生鼠标拾取的物理关节挡块（PR #3，待 Windows GUI 人工验收）
+
+- 当前六轴 URDF 全部是 `revolute`，均有实际 `<limit lower/upper/effort>`，不允许为方便交互偷偷改成 `continuous` 或扩大范围。
+- Bullet 默认已能从 URDF 加载 `btMultiBodyJointLimitConstraint`，但约束由数值求解，极强原生鼠标拾取力下可产生少量越界。GUI 模式现在 **只对当前已加载的真实 PyBullet 机器人** 使用 `changeDynamics(...jointLowerLimit=URDF值,jointUpperLimit=URDF值,jointLimitForce=...)` 强化原生物理挡块，适当提高约束求解迭代次数。限位来源仍为 `getJointInfo`，无第二套数值、无 `resetJointState` 动态瞬移、无鼠标事件邮箱和第二套机器人。
+- 约束强度系数和 solver 迭代属于**仿真数值夹具**，不对应实物机械强度或安全额定值。额外 0.10° 的 GUI 求解器穿透容差只决定是否触发重大越界故障，**不是允许的机械行程**；实际测量不裁剪，依然存 CSV 并按原 UART 协议规范化传输。
+- 新增 `test_stage5_native_joint_stops.py`：在真实 PyBullet DIRECT 中只于初始化时设置 J1 接近上限的姿态，连续施加真实关节力矩，测量最大位置，再反向施力验证没有被冻结。此测试**不能证明 GUI 原生鼠标抓取已成功阻挡**，后者需要 Windows 人工反复拖拽观察并记录位置峰值与 ACK。
+- 拖拽靠近上限应由 Bullet 物理约束阻挡，**不应仅靠 Python 检测越界后冻结进程**。若原生拾取仍能将关节推出 URDF 物理范围，收集 `result.json` 的 `fault_type` 和 `joint_trace.csv` 原始角度再修，绝不绕过固件安全门禁或伪造实际位置。
+
