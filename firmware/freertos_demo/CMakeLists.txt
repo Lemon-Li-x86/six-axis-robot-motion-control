@@ -645,3 +645,20 @@ target_sources(freertos_demo PRIVATE
 target_include_directories(freertos_demo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/avoidance
 )
+
+
+# QEMU-only Stage5 task utilization instrumentation. Defaults OFF, so
+# production scheduling, PID and Stage4 acceptance remain unchanged.
+option(ROBOT_ENABLE_STAGE5_CPU_TRACE
+    "Instrument FreeRTOS switches/ticks with Timer0 task CPU trace" OFF)
+if(ROBOT_ENABLE_STAGE5_CPU_TRACE)
+    if(NOT ROBOT_ENABLE_STAGE4_TASKS)
+        message(FATAL_ERROR
+            "Stage5 CPU trace requires the FreeRTOS motion tasks")
+    endif()
+    target_sources(freertos_demo PRIVATE
+        diagnostics/stage5_cpu_trace.c)
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE5_CPU_TRACE=$<BOOL:${ROBOT_ENABLE_STAGE5_CPU_TRACE}>
+)
