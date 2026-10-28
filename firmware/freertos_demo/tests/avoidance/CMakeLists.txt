@@ -29,6 +29,7 @@ add_test(NAME stage5_potential_field_host COMMAND stage5_potential_field_host)
 # implementation in Python and no shared library in the ARM firmware.
 add_library(stage5_apf_bridge SHARED
     ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field.c
+    ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field_path.c
 )
 target_include_directories(stage5_apf_bridge PRIVATE
     ${FIRMWARE_ROOT}/common
