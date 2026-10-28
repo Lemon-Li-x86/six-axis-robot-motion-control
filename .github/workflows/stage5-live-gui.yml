@@ -14,6 +14,7 @@ on:
       - 'simulation/pybullet_ur5/src/qemu_clock_gate.py'
       - 'tools/tests/test_stage5_live_gui.py'
       - 'tools/tests/test_stage5_visual_demo.py'
+      - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
       - 'CMakePresets.json'
@@ -66,6 +67,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
           "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
           python -m pip install numpy pybullet
+      - name: Real Bullet URDF joint-stop physics against imposed torque
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_native_joint_stops.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
