@@ -20,7 +20,7 @@ from pathlib import Path
 
 import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import (
-    ROOT, URDF, JOINT_NAMES, START_RAW, joint_indices, angles_raw,
+    ROOT, URDF, JOINT_NAMES, START_RAW, DEFAULT_JSON, joint_indices, angles_raw,
 )
 
 GOAL_RAW = (3000, -4400, 6000, 2000, 500, -1000)
@@ -30,7 +30,9 @@ MAX_FINAL_ERROR_DEG = 0.10
 SETTLED_TARGET_FRAMES = 20
 MAX_STARTUP_HOLD_ERROR_DEG = 0.02
 PHYSICS_DT_S = 0.001
-FEEDBACK_PERIOD_S = 0.01
+# main.c selects TASK_PERIOD_CONTROL_MS for the Stage5 UART TX period.
+# Read the same JSON source used to generate that C constant.
+FEEDBACK_PERIOD_S = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))["task_period_ms"]["control"] / 1000.0
 MIN_JOINT_MOVEMENT_DEG = 0.20
 MIN_ACCEPTED_COMMAND_CHANGE_DEG = 0.20
 TIMEOUT_CONNECT_S = 15.0
@@ -84,15 +86,60 @@ def vacant_tcp_port() -> int:
         return sock.getsockname()[1]
 
 
-def join_qemu_serial(port: int, process: subprocess.Popen) -> socket.socket:
+class BufferedUART:
+    """Bounded nonblocking TX; retain partial writes and retry on each RX poll."""
+    def __init__(self, sock):
+        self.sock = sock
+        self.pending = bytearray()
+        self.partial_writes = 0
+        self.would_block = 0
+
+    def sendall(self, data):
+        if len(self.pending) + len(data) > 65536:
+            raise BufferError("UART TX backlog exceeded 64 KiB")
+        self.pending.extend(data)
+        self.flush()
+
+    def flush(self):
+        if not self.pending:
+            return
+        try:
+            sent = self.sock.send(self.pending)
+        except BlockingIOError:
+            self.would_block += 1
+            return
+        if sent == 0:
+            raise ConnectionError("UART socket closed during TX")
+        if sent < len(self.pending):
+            self.partial_writes += 1
+        del self.pending[:sent]
+
+    def recv(self, size):
+        self.flush()
+        return self.sock.recv(size)
+
+    def fileno(self):
+        return self.sock.fileno()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.sock.close()
+
+
+def join_qemu_serial(port: int, process: subprocess.Popen, stop_requested=None) -> BufferedUART:
     deadline = time.monotonic() + TIMEOUT_CONNECT_S
     while time.monotonic() < deadline:
+        if stop_requested is not None and stop_requested():
+            raise InterruptedError("UART startup cancelled by observer")
         if process.poll() is not None:
             raise RuntimeError(f"QEMU quit at startup (exit {process.returncode})")
         try:
             sock = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             sock.setblocking(False)
-            return sock
+            return BufferedUART(sock)
         except OSError:
             time.sleep(0.1)
     raise RuntimeError("QEMU UART TCP socket did not appear")
