@@ -29,6 +29,8 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     advance_physics_step_batch,
     assess_clock_alignment,
     joint_feedback_frame,
+    canonical_physical_feedback,
+    closest_physical_motor_targets,
     JointFeedbackRangeError,
     preserve_gui_after_feedback_range_fault,
     validate_goals,
@@ -225,6 +227,45 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(packet[3], wire.JOINT_PAYLOAD_LEN)
         self.assertEqual(struct.unpack("<6h", packet[4:-1]), raw)
         self.assertEqual(packet[-1], sum(packet[2:-1]) & 0xFF)
+
+    def test_actual_multi_turn_angles_use_canonical_wire_but_keep_physical_pose(self) -> None:
+        physical = (35000, 36100, -19000, 18000, -54000, 0)
+        canonical = canonical_physical_feedback(physical)
+        self.assertEqual(canonical, (-1000, 100, 17000, -18000, -18000, 0))
+        self.assertEqual(physical[0], 35000)  # no physical state mutation
+        packet = joint_feedback_frame(canonical)
+        self.assertEqual(struct.unpack("<6h", packet[4:-1]), canonical)
+        for extreme in (-32769, 32768, 72000, -72000):
+            wire_angle = canonical_physical_feedback(
+                (extreme, 0, 0, 0, 0, 0))[0]
+            self.assertGreaterEqual(wire_angle, -18000)
+            self.assertLess(wire_angle, 18000)
+            joint_feedback_frame((wire_angle,) + (0,) * 5)
+
+    def test_multiturn_motor_commands_use_nearest_urdf_legal_pose(self) -> None:
+        degrees = __import__("math").radians
+        limits = (
+            (degrees(-360), degrees(360)),
+            (degrees(-360), degrees(360)),
+            (degrees(-180), degrees(180)),
+            (degrees(-360), degrees(360)),
+            (degrees(-360), degrees(360)),
+            (degrees(-360), degrees(360)),
+        )
+        command = (-1000, -18000, -17000, 3000, 0, 0)
+        physical = (35000, 17900, 17000, 0, 0, 0)
+        result = closest_physical_motor_targets(command, physical, limits)
+        self.assertAlmostEqual(__import__("math").degrees(result[0]), 350.0)
+        self.assertAlmostEqual(__import__("math").degrees(result[1]), 180.0)
+        self.assertAlmostEqual(__import__("math").degrees(result[2]), -170.0)
+        self.assertAlmostEqual(__import__("math").degrees(result[3]), 30.0)
+        # A 390deg candidate is outside a +/-360deg model; never choose it.
+        alternate = closest_physical_motor_targets(
+            (3000, 0, 0, 0, 0, 0), (26000, 0, 0, 0, 0, 0), limits)
+        self.assertAlmostEqual(__import__("math").degrees(alternate[0]), 30.0)
+        with self.assertRaisesRegex(ValueError, "joint limits"):
+            closest_physical_motor_targets(
+                (0,) * 6, (0,) * 6, ((float("nan"), 1),) + limits[1:])
 
     def test_feedback_signed_int16_boundaries_are_not_changed(self) -> None:
         raw = (-32768, 32767, 0, 0, 0, 0)
