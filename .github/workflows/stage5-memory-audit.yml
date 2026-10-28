@@ -1,0 +1,25 @@
+name: Stage5 link map parser tests
+
+on:
+  push:
+    branches:
+      - feat/stage5-memory-audit-20261028
+    paths:
+      - 'tools/stage5_memory_map.py'
+      - 'tools/tests/test_stage5_memory_map.py'
+      - 'firmware/freertos_demo/CMakeLists.txt'
+      - '.github/workflows/stage5-memory-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-map-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Stage5 GNU ld map accounting and fail-closed cases
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_memory_map.py' -v
+      - name: Syntax check
+        run: python -m py_compile tools/stage5_memory_map.py tools/tests/test_stage5_memory_map.py
