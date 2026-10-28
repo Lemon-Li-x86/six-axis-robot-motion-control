@@ -12,6 +12,7 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
       - 'simulation/pybullet_ur5/src/qemu_clock_gate.py'
       - 'tools/tests/test_stage5_live_gui.py'
+      - 'tools/tests/test_stage5_visual_demo.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
       - 'CMakePresets.json'
