@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 import qemu_uart_receiver as wire
+from qemu_clock_gate import QemuClockGate
 import stage5_qemu_uart_closed_loop as integration
 from stage4_dynamic_closed_loop import (
     JOINT_NAMES,
@@ -136,6 +137,29 @@ def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
     if INITIAL_SETTLE_INTERNAL_STEPS % SIMULATED_STEPS_PER_TARGET:
         raise ValueError("Warm-up step count must divide native substep count")
     return 1, INITIAL_SETTLE_INTERNAL_STEPS // SIMULATED_STEPS_PER_TARGET
+
+
+def advance_physics_step_batch(
+    bullet, step_calls: int, start_time_s: float,
+    on_physics: Callable | None, arm, joints, done: bool, ending: bool,
+) -> None:
+    """Apply each physical disturbance for every DIRECT 1 ms integration step.
+
+    Bullet external torque/force applies to the next simulation step, not the
+    whole following 10 ms feedback interval. GUI uses one native 10-substep
+    call and therefore retains exactly one callback per UART frame.
+    All time intervals derive from the existing FEEDBACK_STEP_S source.
+    """
+    if step_calls not in (1, SIMULATED_STEPS_PER_TARGET):
+        raise ValueError("Unexpected physics steps per feedback interval")
+    substep_s = FEEDBACK_STEP_S / step_calls
+    for index in range(step_calls):
+        if on_physics is not None:
+            on_physics(
+                bullet, arm, joints, start_time_s + index * substep_s,
+                done, ending,
+            )
+        bullet.stepSimulation()
 
 
 class MotionSequencer:
@@ -351,6 +375,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     live_trace.flush()
     qemu_error = (output_dir / "qemu_stderr.log").open("w", encoding="utf-8")
     port = integration.vacant_tcp_port()
+    qmp_port = integration.vacant_tcp_port()
+    while qmp_port == port:
+        qmp_port = integration.vacant_tcp_port()
     metadata = dict(elf=str(elf.resolve()),
         elf_sha256=hashlib.sha256(elf.read_bytes()).hexdigest(),
         config_sha256=hashlib.sha256(DEFAULT_JSON.read_bytes()).hexdigest(),
@@ -360,6 +387,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         physics_mode="DIRECT" if options.headless else "GUI",
         native_gui_picking=not options.headless,
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
+        physics_clock_gate="QMP stop/cont per UART target batch",
         feedback_step_s=FEEDBACK_STEP_S, physics_step_s=PHYSICS_STEP_S,
         pybullet_step_calls_per_feedback=step_calls_per_feedback,
         internal_substeps_per_feedback=SIMULATED_STEPS_PER_TARGET,
@@ -371,6 +399,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         qemu = subprocess.Popen(
             [qemu_executable, "-M", "mps2-an386", "-kernel", str(elf.resolve()),
              "-display", "none", "-monitor", "none",
+             "-qmp", f"tcp:127.0.0.1:{qmp_port},server=on,wait=off",
              # Windows wall-clock timer bursts can advance RTOS control without
              # corresponding Python feedback. Pace virtual time adaptively; this
              # remains live ARM execution with real UART feedback, not trace replay.
@@ -379,7 +408,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             stdout=subprocess.DEVNULL,
             stderr=qemu_error,
         )
-        with integration.join_qemu_serial(port, qemu, stop_requested) as sock:
+        with (QemuClockGate.connect(qmp_port, qemu) as clock_gate,
+              integration.join_qemu_serial(port, qemu, stop_requested) as sock):
             # One authoritative physics world. GUI owns both native picking
             # and simulation; DIRECT runs the identical physics path in CI.
             client = (p.connect(p.DIRECT) if options.headless else
@@ -498,194 +528,202 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     last_frame_wall = time.monotonic()
                     batch_started = last_frame_wall
                     parsed_frames = parser.consume(data)
-                    for command, payload in parsed_frames:
-                        if (command == wire.CMD_SET_JOINT_TARGETS and
-                                len(payload) == wire.JOINT_PAYLOAD_LEN):
-                            targets = struct.unpack(
-                                "<" + str(wire.JOINT_COUNT) + "h", payload)
-                            # 仅在运动请求已被接受后执行固件位置目标；启动
-                            # 时始终保持首次实测姿态，不能执行历史演示角度。
-                            if sequencer.accepted or (sequencer.done and options.interactive_hold):
-                                p.setJointMotorControlArray(
-                                    arm, joints, p.POSITION_CONTROL,
-                                    targetPositions=[
-                                        math.radians(v / wire.JOINT_ANGLE_SCALE)
-                                        for v in targets
-                                    ],
-                                    forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
-                                )
-                            if on_physics is not None:
-                                # Optional test force or GUI stop key. Native
-                                # mouse picking needs no Python event handler.
-                                on_physics(p, arm, joints,
-                                           target_frames * FEEDBACK_STEP_S,
-                                           sequencer.done, ending)
-                            for _ in range(step_calls_per_feedback):
-                                p.stepSimulation()
-                            target_frames += 1
-                            measured = angles_raw(p, arm, joints)
-                            last_measured = tuple(measured)
-                            sock.sendall(joint_feedback_frame(measured))
-                            # Detect a real joint-space deviation, irrespective
-                            # of whether it came from mouse picking or test
-                            # forces. Never interpret UART motor commands as
-                            # the final requested joint goal.
-                            if sequencer.done and options.interactive_hold and not ending:
-                                deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
-                                                for a,b in zip(measured, sequencer.goals[-1]))
-                                if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
-                                    recovery_stalled_reported = False
-                                    recovering = True
-                                    recovery_attempts = 0
-                                    recovery_quiet = 0
-                                    recovery_settled = 0
-                                    recovery_previous = None
-                                    audit.write(json.dumps(dict(event="hold_deviation",
-                                        error_deg=deviation)) + "\n")
-                            if recovering and not ending:
-                                error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, sequencer.goals[-1]))
-                                recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
-                                quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
-                                recovery_quiet = recovery_quiet+1 if quiet else 0
-                                recovery_previous = tuple(measured)
-                                if recovery_settled >= SETTLE_FRAME_COUNT:
-                                    recovering = False
-                                    hold_recoveries += 1
-                                    audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
-                                        attempts=recovery_attempts)) + "\n")
-                                elif (recovery_quiet >= round(
-                                        HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
-                                      and hold_request_sequence is None):
-                                    if options.hold_observe_only:
-                                        # Passive experiment: keep the C PID active,
-                                        # never add another motion request or stop
-                                        # solely because the joint error persists.
-                                        if not recovery_stalled_reported:
-                                            audit.write(json.dumps(dict(
-                                                event="hold_observe_stalled",
-                                                error_deg=error,
-                                            )) + "\n")
-                                            recovery_stalled_reported = True
-                                    else:
-                                        # Normal mode: bounded replan from current
-                                        # feedback using the SAME firmware goal.
-                                        if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
-                                            raise RuntimeError(
-                                                f"Hold recovery did not converge: {error:.2f}deg")
-                                        hold_replan_needed = True
-                                    recovery_quiet = 0
-                            if hold_replan_needed and hold_request_sequence is None and not ending:
-                                # Replan from measured pose using the original
-                                # C controller and identical final goal.
-                                hold_rearms += 1
-                                recovery_attempts += 1
-                                hold_request_sequence = (sequencer.sequence + hold_rearms) & 0xff
-                                hold_request_at = time.monotonic()
-                                payload_request = bytes((hold_request_sequence,)) + struct.pack("<6h", *sequencer.goals[-1])
-                                sock.sendall(integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload_request))
-                                hold_replan_needed = False
-                                audit.write(json.dumps(dict(event="hold_replan", sequence=hold_request_sequence,
-                                    goal_raw=sequencer.goals[-1], measured_raw=measured)) + "\n")
-                            tool_xyz = p.getLinkState(
-                                arm, p.getNumJoints(arm) - 1,
-                                computeForwardKinematics=True,
-                            )[4]
-                            # Render trail/text at 10 Hz, not at the
-                            # 100 Hz UART rate. The C controller, PyBullet
-                            # physics, feedback and CSV stay per target frame.
-                            # With a 10 s lifetime this also bounds visible
-                            # trail objects to roughly 100 instead of 1000.
-                            if not options.headless and target_frames % 10 == 0:
-                                if last_tool_xyz is not None:
-                                    p.addUserDebugLine(
-                                        last_tool_xyz, tool_xyz,
-                                        [0.1, 0.7, 1.0], lineWidth=2,
-                                        lifeTime=HOLD_TRACE_LIFETIME_S,
+                    # Stop guest RTOS time for the *entire* physical batch.
+                    # It cannot schedule another 10 ms Control/TX period while
+                    # PyBullet spends wall time integrating or rendering this one.
+                    with clock_gate.paused_for_physics(any(
+                            cmd == wire.CMD_SET_JOINT_TARGETS
+                            for cmd, _ in parsed_frames)):
+                        for command, payload in parsed_frames:
+                            if (command == wire.CMD_SET_JOINT_TARGETS and
+                                    len(payload) == wire.JOINT_PAYLOAD_LEN):
+                                targets = struct.unpack(
+                                    "<" + str(wire.JOINT_COUNT) + "h", payload)
+                                # 仅在运动请求已被接受后执行固件位置目标；启动
+                                # 时始终保持首次实测姿态，不能执行历史演示角度。
+                                if sequencer.accepted or (sequencer.done and options.interactive_hold):
+                                    p.setJointMotorControlArray(
+                                        arm, joints, p.POSITION_CONTROL,
+                                        targetPositions=[
+                                            math.radians(v / wire.JOINT_ANGLE_SCALE)
+                                            for v in targets
+                                        ],
+                                        forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                     )
-                                last_tool_xyz = tuple(tool_xyz)
-                                debug_text_id = p.addUserDebugText(
-                                    f"Segment {sequencer.index + 1}/"
-                                    f"{len(sequencer.goals)} | "
-                                    f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
-                                    [-0.65, -0.65, 0.85],
-                                    textColorRGB=[0.1, 0.9, 0.2],
-                                    textSize=1.25,
-                                    replaceItemUniqueId=debug_text_id,
+                                # A DIRECT frame is ten 1ms physics steps.
+                                # Force/torque fixtures must act at EACH step,
+                                # not only the first; otherwise motor servoing
+                                # conceals the applied disturbance.
+                                advance_physics_step_batch(
+                                    p, step_calls_per_feedback,
+                                    target_frames * FEEDBACK_STEP_S,
+                                    on_physics, arm, joints,
+                                    sequencer.done, ending,
                                 )
-                            row = {
-                                "simulated_time_s": round(
-                                    target_frames * FEEDBACK_STEP_S, 3),
-                                "segment": max(0, sequencer.index + 1),
-                                "tool_x_m": tool_xyz[0],
-                                "tool_y_m": tool_xyz[1],
-                                "tool_z_m": tool_xyz[2],
-                            }
-                            for name, target, actual in zip(
-                                JOINT_NAMES, targets, measured
-                            ):
-                                row[f"command_{name}_deg"] = target / wire.JOINT_ANGLE_SCALE
-                                row[f"actual_{name}_deg"] = actual / wire.JOINT_ANGLE_SCALE
-                                row[f"error_{name}_deg"] = (
-                                    target - actual) / wire.JOINT_ANGLE_SCALE
-                            trace.append(row)
-                            trace_writer.writerow(row)
-                            # Optional nonblocking stream of actual PyBullet
-                            # measurements. The receiver must never render or
-                            # wait here: UART feedback has already been sent.
-                            if on_measurement is not None:
-                                on_measurement(
-                                    row["simulated_time_s"], row["segment"],
-                                    tuple(measured),
-                                )
+                                target_frames += 1
+                                measured = angles_raw(p, arm, joints)
+                                last_measured = tuple(measured)
+                                sock.sendall(joint_feedback_frame(measured))
+                                # Detect a real joint-space deviation, irrespective
+                                # of whether it came from mouse picking or test
+                                # forces. Never interpret UART motor commands as
+                                # the final requested joint goal.
+                                if sequencer.done and options.interactive_hold and not ending:
+                                    deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                                                    for a,b in zip(measured, sequencer.goals[-1]))
+                                    if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
+                                        recovery_stalled_reported = False
+                                        recovering = True
+                                        recovery_attempts = 0
+                                        recovery_quiet = 0
+                                        recovery_settled = 0
+                                        recovery_previous = None
+                                        audit.write(json.dumps(dict(event="hold_deviation",
+                                            error_deg=deviation)) + "\n")
+                                if recovering and not ending:
+                                    error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, sequencer.goals[-1]))
+                                    recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
+                                    quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
+                                    recovery_quiet = recovery_quiet+1 if quiet else 0
+                                    recovery_previous = tuple(measured)
+                                    if recovery_settled >= SETTLE_FRAME_COUNT:
+                                        recovering = False
+                                        hold_recoveries += 1
+                                        audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
+                                            attempts=recovery_attempts)) + "\n")
+                                    elif (recovery_quiet >= round(
+                                            HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+                                          and hold_request_sequence is None):
+                                        if options.hold_observe_only:
+                                            # Passive experiment: keep the C PID active,
+                                            # never add another motion request or stop
+                                            # solely because the joint error persists.
+                                            if not recovery_stalled_reported:
+                                                audit.write(json.dumps(dict(
+                                                    event="hold_observe_stalled",
+                                                    error_deg=error,
+                                                )) + "\n")
+                                                recovery_stalled_reported = True
+                                        else:
+                                            # Normal mode: bounded replan from current
+                                            # feedback using the SAME firmware goal.
+                                            if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
+                                                raise RuntimeError(
+                                                    f"Hold recovery did not converge: {error:.2f}deg")
+                                            hold_replan_needed = True
+                                        recovery_quiet = 0
+                                if hold_replan_needed and hold_request_sequence is None and not ending:
+                                    # Replan from measured pose using the original
+                                    # C controller and identical final goal.
+                                    hold_rearms += 1
+                                    recovery_attempts += 1
+                                    hold_request_sequence = (sequencer.sequence + hold_rearms) & 0xff
+                                    hold_request_at = time.monotonic()
+                                    payload_request = bytes((hold_request_sequence,)) + struct.pack("<6h", *sequencer.goals[-1])
+                                    sock.sendall(integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload_request))
+                                    hold_replan_needed = False
+                                    audit.write(json.dumps(dict(event="hold_replan", sequence=hold_request_sequence,
+                                        goal_raw=sequencer.goals[-1], measured_raw=measured)) + "\n")
+                                tool_xyz = p.getLinkState(
+                                    arm, p.getNumJoints(arm) - 1,
+                                    computeForwardKinematics=True,
+                                )[4]
+                                # Render trail/text at 10 Hz, not at the
+                                # 100 Hz UART rate. The C controller, PyBullet
+                                # physics, feedback and CSV stay per target frame.
+                                # With a 10 s lifetime this also bounds visible
+                                # trail objects to roughly 100 instead of 1000.
+                                if not options.headless and target_frames % 10 == 0:
+                                    if last_tool_xyz is not None:
+                                        p.addUserDebugLine(
+                                            last_tool_xyz, tool_xyz,
+                                            [0.1, 0.7, 1.0], lineWidth=2,
+                                            lifeTime=HOLD_TRACE_LIFETIME_S,
+                                        )
+                                    last_tool_xyz = tuple(tool_xyz)
+                                    debug_text_id = p.addUserDebugText(
+                                        f"Segment {sequencer.index + 1}/"
+                                        f"{len(sequencer.goals)} | "
+                                        f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
+                                        [-0.65, -0.65, 0.85],
+                                        textColorRGB=[0.1, 0.9, 0.2],
+                                        textSize=1.25,
+                                        replaceItemUniqueId=debug_text_id,
+                                    )
+                                row = {
+                                    "simulated_time_s": round(
+                                        target_frames * FEEDBACK_STEP_S, 3),
+                                    "segment": max(0, sequencer.index + 1),
+                                    "tool_x_m": tool_xyz[0],
+                                    "tool_y_m": tool_xyz[1],
+                                    "tool_z_m": tool_xyz[2],
+                                }
+                                for name, target, actual in zip(
+                                    JOINT_NAMES, targets, measured
+                                ):
+                                    row[f"command_{name}_deg"] = target / wire.JOINT_ANGLE_SCALE
+                                    row[f"actual_{name}_deg"] = actual / wire.JOINT_ANGLE_SCALE
+                                    row[f"error_{name}_deg"] = (
+                                        target - actual) / wire.JOINT_ANGLE_SCALE
+                                trace.append(row)
+                                trace_writer.writerow(row)
+                                # Optional nonblocking stream of actual PyBullet
+                                # measurements. The receiver must never render or
+                                # wait here: UART feedback has already been sent.
+                                if on_measurement is not None:
+                                    on_measurement(
+                                        row["simulated_time_s"], row["segment"],
+                                        tuple(measured),
+                                    )
 
-                            if on_sample is not None:
-                                on_sample(row["simulated_time_s"], row["segment"],
-                                          tuple(measured), targets, feedback_acks,
-                                          parser.bad_checksum)
-                            wall = time.monotonic()
-                            if wall - last_audit >= 1.0:
-                                audit.write(json.dumps(dict(wall_s=wall-start_wall,
-                                    target_frames=target_frames, feedback_acks=feedback_acks,
-                                    feedback_ack_lag=target_frames-feedback_acks,
-                                    bad_checksum=parser.bad_checksum, **row)) + "\n")
-                                last_audit = wall
-                                live_trace.flush()
+                                if on_sample is not None:
+                                    on_sample(row["simulated_time_s"], row["segment"],
+                                              tuple(measured), targets, feedback_acks,
+                                              parser.bad_checksum)
+                                wall = time.monotonic()
+                                if wall - last_audit >= 1.0:
+                                    audit.write(json.dumps(dict(wall_s=wall-start_wall,
+                                        target_frames=target_frames, feedback_acks=feedback_acks,
+                                        feedback_ack_lag=target_frames-feedback_acks,
+                                        bad_checksum=parser.bad_checksum, **row)) + "\n")
+                                    last_audit = wall
+                                    live_trace.flush()
 
-                            if sequencer.observe(measured):
-                                print(f"[SETTLED] Segment {sequencer.completed}/"
-                                      f"{len(sequencer.goals)}")
-                                if not sequencer.done:
+                                if sequencer.observe(measured):
+                                    print(f"[SETTLED] Segment {sequencer.completed}/"
+                                          f"{len(sequencer.goals)}")
+                                    if not sequencer.done:
+                                        sock.sendall(sequencer.next_request(time.monotonic()))
+                                if options.frame_delay_s > 0:
+                                    time.sleep(options.frame_delay_s)
+                            elif (command == wire.CMD_JOINT_STATE_ACK and
+                                  len(payload) == wire.JOINT_PAYLOAD_LEN):
+                                feedback_acks += 1
+                                if sequencer.index < 0 and feedback_acks >= 3:
                                     sock.sendall(sequencer.next_request(time.monotonic()))
-                            if options.frame_delay_s > 0:
-                                time.sleep(options.frame_delay_s)
-                        elif (command == wire.CMD_JOINT_STATE_ACK and
-                              len(payload) == wire.JOINT_PAYLOAD_LEN):
-                            feedback_acks += 1
-                            if sequencer.index < 0 and feedback_acks >= 3:
-                                sock.sendall(sequencer.next_request(time.monotonic()))
-                        elif command == wire.CMD_JOINT_MOVE_ACK:
-                            if len(payload) != wire.MOVE_ACK_PAYLOAD_LEN:
-                                bad_acks += 1
-                                continue
-                            if hold_request_sequence is not None:
-                                seq, status = struct.unpack("<Bb", payload)
-                                if seq != hold_request_sequence or status != 0:
-                                    raise RuntimeError(f"Hold recovery rejected: seq={seq}, status={status}")
-                                hold_request_sequence = None
-                                hold_rearm_acks += 1
-                                audit.write(json.dumps(dict(event="hold_replan_ack", sequence=seq)) + "\n")
-                                continue
-                            sequencer.acknowledge(payload)
-                            print(f"[ACCEPTED] Segment {sequencer.index + 1}/"
-                                  f"{len(sequencer.goals)}")
-                        elif (command == wire.CMD_DIAGNOSTICS_RESPONSE and
-                              len(payload) == 4 and diagnostics_pending):
-                            diagnostic_values[diagnostics_pending] = (
-                                struct.unpack("<I", payload)[0])
-                            audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
-                                value=diagnostic_values[diagnostics_pending],
-                                wall_s=time.monotonic()-start_wall)) + "\n")
-                            diagnostics_pending = None
+                            elif command == wire.CMD_JOINT_MOVE_ACK:
+                                if len(payload) != wire.MOVE_ACK_PAYLOAD_LEN:
+                                    bad_acks += 1
+                                    continue
+                                if hold_request_sequence is not None:
+                                    seq, status = struct.unpack("<Bb", payload)
+                                    if seq != hold_request_sequence or status != 0:
+                                        raise RuntimeError(f"Hold recovery rejected: seq={seq}, status={status}")
+                                    hold_request_sequence = None
+                                    hold_rearm_acks += 1
+                                    audit.write(json.dumps(dict(event="hold_replan_ack", sequence=seq)) + "\n")
+                                    continue
+                                sequencer.acknowledge(payload)
+                                print(f"[ACCEPTED] Segment {sequencer.index + 1}/"
+                                      f"{len(sequencer.goals)}")
+                            elif (command == wire.CMD_DIAGNOSTICS_RESPONSE and
+                                  len(payload) == 4 and diagnostics_pending):
+                                diagnostic_values[diagnostics_pending] = (
+                                    struct.unpack("<I", payload)[0])
+                                audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
+                                    value=diagnostic_values[diagnostics_pending],
+                                    wall_s=time.monotonic()-start_wall)) + "\n")
+                                diagnostics_pending = None
                     # A large GUI physics batch can delay the next socket
                     # read and feedback ACK processing. Measure it without
                     # dropping any motor command or altering the control loop.
@@ -776,6 +814,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "uart_partial_writes": sock.partial_writes,
                 "uart_would_block": sock.would_block,
                 "qemu_clock": "adaptive_icount" if sys.platform == "win32" else "wall",
+                "physics_clock_gate": "qmp_stop_cont",
+                "qmp_physics_pauses": clock_gate.pauses,
                 "wall_duration_s": time.monotonic()-start_wall,
                 "interactive_hold": options.interactive_hold,
                 "hold_observe_only": options.hold_observe_only,

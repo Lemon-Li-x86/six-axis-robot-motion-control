@@ -30,6 +30,10 @@ REFRESH_HZ = 30.0
 MIN_OBSERVED_MOTION_DEG = 2.0
 # Test fixture only. Physical motor limits remain in firmware config.
 TEST_TORQUE_NM = 300.0
+# Stop external torque once actual joint displacement is measurable. Applying
+# 300 N*m for the entire 0.8s fixture can spin the joint outside UART range.
+TEST_MIN_DISPLACEMENT_DEG = 2.0
+TEST_STOP_DISPLACEMENT_DEG = 3.0
 TEST_PERIOD_S = 12.0
 TEST_FORCE_START_S = 1.0
 TEST_FORCE_END_S = 1.8
@@ -90,6 +94,9 @@ def capture_worker(
     )
     hold_at = None
     peak_error_deg = 0.0
+    injected_steps = [0] * disturbance_cycles
+    cycle_peak_displacements_deg = [0.0] * disturbance_cycles
+    completed_injections: set[int] = set()
 
     def physics(bullet, arm, joints, sim_time, done, ending):
         nonlocal hold_at
@@ -117,11 +124,24 @@ def capture_worker(
             cycle = int(elapsed // TEST_PERIOD_S)
             phase = elapsed - TEST_PERIOD_S * cycle
             if (cycle < disturbance_cycles and
-                    TEST_FORCE_START_S <= phase < TEST_FORCE_END_S):
-                axis = bullet.getJointInfo(arm, joints[1])[13]
-                torque = [TEST_TORQUE_NM * component for component in axis]
-                bullet.applyExternalTorque(
-                    arm, joints[1], torque, bullet.LINK_FRAME)
+                    TEST_FORCE_START_S <= phase < TEST_FORCE_END_S and
+                    cycle not in completed_injections):
+                # Monitor the *same shoulder-lift joint* receiving the
+                # external torque. Stop as soon as it leaves the final goal
+                # by 3 degrees; don't keep accelerating it for 0.8s.
+                # This is an external physics perturbation, not an edited
+                # measured angle or a bypass of the production C controller.
+                actual_deg = math.degrees(bullet.getJointState(arm, joints[1])[0])
+                requested_deg = (SCENARIOS[scenario][-1][1] /
+                                 wire.JOINT_ANGLE_SCALE)
+                if abs(actual_deg - requested_deg) >= TEST_STOP_DISPLACEMENT_DEG:
+                    completed_injections.add(cycle)
+                else:
+                    axis = bullet.getJointInfo(arm, joints[1])[13]
+                    torque = [TEST_TORQUE_NM * component for component in axis]
+                    bullet.applyExternalTorque(
+                        arm, joints[1], torque, bullet.LINK_FRAME)
+                    injected_steps[cycle] += 1
 
     def publish(stamp, segment, measured, targets, acks, bad):
         nonlocal peak_error_deg
@@ -133,6 +153,12 @@ def capture_worker(
                 max(abs(a - b) / wire.JOINT_ANGLE_SCALE
                     for a, b in zip(measured, goal)),
             )
+            if test_disturbance:
+                cycle = int((stamp - hold_at) // TEST_PERIOD_S)
+                if 0 <= cycle < disturbance_cycles:
+                    joint_error_deg = abs(measured[1] - goal[1]) / wire.JOINT_ANGLE_SCALE
+                    cycle_peak_displacements_deg[cycle] = max(
+                        cycle_peak_displacements_deg[cycle], joint_error_deg)
 
     destination = Path(output)
     destination.mkdir(parents=True, exist_ok=True)
@@ -153,11 +179,15 @@ def capture_worker(
         if test_disturbance:
             regression = {
                 "peak_displacement_deg": peak_error_deg,
+                "peak_displacement_per_cycle_deg": cycle_peak_displacements_deg,
+                "external_torque_substeps_per_cycle": injected_steps,
                 "expected_disturbances": disturbance_cycles,
                 "hold_recoveries": report.get("hold_recoveries", 0),
             }
             regression["passed"] = (
-                peak_error_deg >= 2.0
+                all(count > 0 for count in injected_steps)
+                and all(peak >= TEST_MIN_DISPLACEMENT_DEG
+                        for peak in cycle_peak_displacements_deg)
                 and report.get("hold_recoveries", 0) >= disturbance_cycles
             )
             report["disturbance_regression"] = regression

@@ -87,3 +87,30 @@
 - **撤回流控**：`72b03aee` 在唯一生产 `firmware/freertos_demo/application/protocol_tasks.c` 中精确恢复流控前源码，不改变PID与URDF。
 - **验收加固**：`c38a971c`、`96453585` 添加每次 C `trajectory_samples` × JSON唯一参数源中的20ms 与 PyBullet物理时间比值，默认差异超过25%就记录 `clock_alignment_failed` 和 `passed=false`；这一量只是任务样本数对应的**名义时间估计**，并非高精度硬件计时，但足以揭示上面的3～4倍明显错位。旧版 DIRECT 用户实测 319样本×20ms=6.38s 与6.40s物理时间匹配。
 - **当前结论**：最强实证是**GUI/QEMU异步时间轴不对齐导致闭环动态不能被现有终点误差证明**；Windows大幅振荡的每关节时域根因仍须用用户失败的`joint_trace.csv`查证。解决方向需让QEMU虚拟控制时钟与实际物理步进一致、或明确拆分可验证的DIRECT控制物理与异步GUI交互；不能再用目标帧背压或视觉帧节流代替正确的同步设计。
+
+
+### 2026-10-28 S5-013 修复候选：QMP 暂停虚拟时钟期间执行物理批次
+
+- **修复分支**：`fix/stage5-qmp-physics-clock-gate-20261028`，基于 `2dfb19e`；源分支和备份均未直接更改。
+- **修改范围**：`simulation/pybullet_ur5/src/qemu_clock_gate.py` 新增标准 QMP 控制接口，`stage5_qemu_uart_visual_demo.py` 在消费 UART 目标帧对应的 PyBullet 物理批次前调用 `stop`，确认 `query-status=paused`，批次结束后 `cont` 并确认运行。即使 Python 物理回调抛错也尝试恢复运行；故障会使本次测试失败。仅限 Stage5 QEMU 仿真平台，不改 PID、轨迹规划、URDF、数据源或真实电机的调度路径。
+- **设计边界**：这是针对“物理引擎阻塞时固件虚拟时钟继续推进”的时间门控，不是声称 QEMU 与 PyBullet 已获得精确硬实时锁步。QMP 交互发生在已收到 UART 帧之后，不能消除停机前已排队的旧数据；因此继续保留最终时间比值、故障计数与慢消费端测试，不得仅凭终点误差验收。
+- **回归**：`tools/tests/test_stage5_visual_demo.py` 新增 QMP 停/启与物理异常时恢复的模拟测试；现有 Actions `stage5-live-gui.yml` 对新分支运行 Linux/Windows 单元测试、固件回归、原生 GUI 无拖拽、真实 QEMU/UART 三段闭环及 18ms 处理延迟。首轮 CI：<https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809>。应逐项查看测试步骤；外部力扰动仍为独立问题，Windows 本机原生鼠标拖拽回位仍需独立验收。
+
+- **首次实证（Linux）**：同轮 Actions `native-gui-no-drag-xvfb` 成功；`genuine-qemu-uart-live-observer (ubuntu-latest)` 中三段 DIRECT 和 18ms 慢消费者测试均成功。慢消费者 `result.json` 的物理时间 7.14s、规划任务名义时间 6.78s，比值 0.9496，时钟验收通过、三段到位、`passed=true`。随后执行的外部转矩扰动回位步骤仍失败，使整项 Job 标红；不能以此宣称物理拖拽恢复通过。Windows 集成和本机原生 GUI 交互未在此证据覆盖。
+
+
+### 2026-10-28 S5-012 / S5-013 扰动回位回归的真实物理缺陷与修复证据
+
+- **失败证据（旧夹具）**：[Actions #40604154809](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809) Linux/Windows DIRECT 的三段关节运动、时钟门控和慢消费者均正常，外部转矩恢复却判失败。Linux 工件 `disturbance-recovery/result.json` 的实测峰值仅 **0.06°**、`hold_recoveries=0`、故障计数0。检查发现 PyBullet DIRECT 每个 UART 反馈间隔有 **10次1ms stepSimulation()**，原 `on_physics` 只在这10次积分前施加 **一次** `applyExternalTorque`，不能把一次外力视为10ms内持续生效。
+- **修正物理输入**：`stage5_qemu_uart_visual_demo.py` 在 DIRECT 每个物理子步前调用可选外部扰动回调；GUI仍为每帧单次原生10子步调用。未改变JSON控制周期、PID、URDF或生产固件。Linux中未经幅度限制的300 N·m连续扰动把J2转到321°并触发`int16`反馈越界报错，**明确失败，不截断、重映射或伪造反馈**。
+- **边界限制与逐轮验收**：`stage5_qemu_uart_live_gui.py` 仅在headless测试夹具中观察**被施力J2的真实关节状态**，实际偏离请求终点达到3°即停止当前轮外部力矩；同轮不会重复激励。保留至少2°真实偏移门槛；新增各轮外部转矩子步计数和J2峰值，全部轮次均须至少施力一次、超过偏移门槛，并确认C侧HOLD回位次数达到要求。这不是由Python直接复位关节的作弊。
+- **首轮实际通过（Linux）**：[Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) 的 `stage5-live-qemu-measured-state-evidence-Linux` 中：`disturbance_regression.passed=true`，J2三次峰值 **9.25° / 9.23° / 9.21°**，外力子步 **42 / 42 / 42**，`hold_recoveries=3`，`hold_rearms=3`、每次ACK成功，原三段及三次恢复共6次C运动请求，固件fault计数和UART RX dropped均为0。PyBullet 39.37s对固件规划名义39.12s，时钟比0.99365，HOLD最终误差0.02°。该实例的 `passed=true` 经工件JSON和轨迹核查。
+- **仍未覆盖**：上述为Linux **DIRECT+实际外部转矩** 回归，`hold_rearms=3` 明确包含固件侧重规划，不能冒充“PID不重规划被动HOLD也恢复”；Windows PyBullet原生 GUI 鼠标抓取与释放仍须单独验收，不能把DIRECT外力与GUI鼠标操作视为完全等价。Windows版本的相同CI按独立结果更新，不以 Linux 代替。
+
+
+### 2026-10-28 最终跨平台自动化复验（提交 7c28958）
+
+- [Stage5 全量 Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) **6/6 job success**：Linux+Windows 单元回归，C原生固件回归，Linux原生GUI无拖拽，Linux+Windows真QEMU/FreeRTOS/UART/PyBullet DIRECT基本闭环、18ms慢消费者与三次实际外力扰动回位。原版同一外力测试曾失败，本轮真实修复路径通过；未修改 PID、IK、URDF 和生产C运动调度。
+- **Windows工件实证** `stage5-live-qemu-measured-state-evidence-Windows/disturbance-recovery/result.json`：三轮施力42/42/42物理子步，J2实测峰值9.25°/9.21°/9.21°，三次回位3/3、重规划请求ACK 3/3；固件轨迹名义65.66s、PyBullet65.68s，比例**0.999695**；HOLD末误差0.02°，所有固件fault、UART RX dropped、checksum错误均为0；`passed=true`。同平台18ms慢消费者时间比**0.995334**，`passed=true`。
+- **Linux工件实证**：三轮J2峰值9.25°/9.23°/9.21°，恢复3/3，时钟比0.993650，HOLD末误差0.02°，所有固件fault和UART RX dropped均0；`passed=true`。
+- **边界/交付判定**：S5-013原本反复出现的 **自动化 DIRECT/慢消费者与Linux无拖拽GUI** 现已按当前门限验证通过；这不等于精确硬实时锁步。S5-012的 **原生Windows GUI鼠标大扰动**、不重规划的被动PID恢复、真实电机安全联锁、整臂障碍碰撞、长时WCET不在上述结果中，仍不得标记通过。继续保留PR草稿直到本机原生GUI的最终独立验收。
