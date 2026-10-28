@@ -139,6 +139,29 @@ def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
     return 1, INITIAL_SETTLE_INTERNAL_STEPS // SIMULATED_STEPS_PER_TARGET
 
 
+def advance_physics_step_batch(
+    bullet, step_calls: int, start_time_s: float,
+    on_physics: Callable | None, arm, joints, done: bool, ending: bool,
+) -> None:
+    """Apply each physical disturbance for every DIRECT 1 ms integration step.
+
+    Bullet external torque/force applies to the next simulation step, not the
+    whole following 10 ms feedback interval. GUI uses one native 10-substep
+    call and therefore retains exactly one callback per UART frame.
+    All time intervals derive from the existing FEEDBACK_STEP_S source.
+    """
+    if step_calls not in (1, SIMULATED_STEPS_PER_TARGET):
+        raise ValueError("Unexpected physics steps per feedback interval")
+    substep_s = FEEDBACK_STEP_S / step_calls
+    for index in range(step_calls):
+        if on_physics is not None:
+            on_physics(
+                bullet, arm, joints, start_time_s + index * substep_s,
+                done, ending,
+            )
+        bullet.stepSimulation()
+
+
 class MotionSequencer:
     """按真实反馈到位情况依次发出关节请求，不覆盖未完成的请求。"""
 
@@ -527,14 +550,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         ],
                                         forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                     )
-                                if on_physics is not None:
-                                    # Optional test force or GUI stop key. Native
-                                    # mouse picking needs no Python event handler.
-                                    on_physics(p, arm, joints,
-                                               target_frames * FEEDBACK_STEP_S,
-                                               sequencer.done, ending)
-                                for _ in range(step_calls_per_feedback):
-                                    p.stepSimulation()
+                                # A DIRECT frame is ten 1ms physics steps.
+                                # Force/torque fixtures must act at EACH step,
+                                # not only the first; otherwise motor servoing
+                                # conceals the applied disturbance.
+                                advance_physics_step_batch(
+                                    p, step_calls_per_feedback,
+                                    target_frames * FEEDBACK_STEP_S,
+                                    on_physics, arm, joints,
+                                    sequencer.done, ending,
+                                )
                                 target_frames += 1
                                 measured = angles_raw(p, arm, joints)
                                 last_measured = tuple(measured)
