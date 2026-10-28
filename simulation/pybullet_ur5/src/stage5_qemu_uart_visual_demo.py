@@ -78,6 +78,12 @@ DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 # Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
+# GUI-only physics solver settings; never robot model/firmware joint limits.
+GUI_JOINT_STOP_SOLVER_ITERATIONS = 80
+GUI_JOINT_STOP_FORCE_MULTIPLIER = 20.0
+# Numerical penetration allowance for the native Bullet joint-limit solver.
+# This is NOT extra authorized travel and is not fed to the C firmware as a limit.
+GUI_JOINT_STOP_NUMERICAL_SLOP_DEG = 0.10
 TRACE_HEADER = (
     "simulated_time_s", "segment", "tool_x_m", "tool_y_m", "tool_z_m",
     *(f"command_{name}_deg" for name in JOINT_NAMES),
@@ -137,6 +143,38 @@ def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
     if INITIAL_SETTLE_INTERNAL_STEPS % SIMULATED_STEPS_PER_TARGET:
         raise ValueError("Warm-up step count must divide native substep count")
     return 1, INITIAL_SETTLE_INTERNAL_STEPS // SIMULATED_STEPS_PER_TARGET
+
+
+def configure_native_urdf_joint_stops(
+    bullet, arm: int, joints: Sequence[int],
+) -> tuple[tuple[float, float], ...]:
+    """Reinforce Bullet's own URDF revolute limit constraints for native picking.
+
+    A strong native mouse constraint can drive a reduced-coordinate multibody
+    slightly beyond the limit at finite solver force. Configure the *existing*
+    native joint-limit constraint with the URDF's authoritative bounds and a
+    larger simulated stop impulse. No extra ghost robot, mouse drag controller
+    or resetJointState correction is created.
+    """
+    if len(joints) != wire.JOINT_COUNT:
+        raise ValueError("URDF stop setup requires six actuated joints")
+    limits = []
+    for name, index in zip(JOINT_NAMES, joints):
+        info = bullet.getJointInfo(arm, index)
+        low, high = float(info[8]), float(info[9])
+        if info[2] != bullet.JOINT_REVOLUTE or not (
+                math.isfinite(low) and math.isfinite(high) and low < high):
+            raise ValueError(f"{name} lacks a finite revolute URDF travel range")
+        effort = float(info[10])
+        if not math.isfinite(effort) or effort <= 0:
+            raise ValueError(f"{name} lacks positive URDF joint effort")
+        bullet.changeDynamics(
+            arm, index, jointLowerLimit=low, jointUpperLimit=high,
+            jointLimitForce=max(effort, SERVO_MAX_TORQUE_NM)
+            * GUI_JOINT_STOP_FORCE_MULTIPLIER,
+        )
+        limits.append((low, high))
+    return tuple(limits)
 
 
 def advance_physics_step_batch(
@@ -327,6 +365,7 @@ class JointPhysicalSafetyError(ValueError):
 def validate_physical_feedback_step(
     current: Sequence[int], previous: Sequence[int],
     joint_limits_rad: Sequence[tuple[float, float]],
+    numerical_slop_deg: float = 0.0,
 ) -> None:
     """Guard C driver's shortest-delta reconstruction and URDF joint travel.
 
@@ -334,6 +373,8 @@ def validate_physical_feedback_step(
     180deg or more between samples. Joint travel is read from loaded URDF,
     not a second independently maintained limit table.
     """
+    if not 0.0 <= numerical_slop_deg <= GUI_JOINT_STOP_NUMERICAL_SLOP_DEG:
+        raise ValueError("Invalid Bullet solver penetration tolerance")
     if (len(current) != wire.JOINT_COUNT
             or len(previous) != wire.JOINT_COUNT
             or len(joint_limits_rad) != wire.JOINT_COUNT):
@@ -343,9 +384,11 @@ def validate_physical_feedback_step(
             zip(current, previous, joint_limits_rad)):
         if type(actual) is not int or type(last) is not int:
             raise TypeError("Physical feedback raw values must be integers")
-        # One centidegree of tolerance covers quantization at exact limits.
-        low_raw = round(math.degrees(lower) * wire.JOINT_ANGLE_SCALE) - 1
-        high_raw = round(math.degrees(upper) * wire.JOINT_ANGLE_SCALE) + 1
+        # One centidegree for rounding plus the documented GUI-only
+        # solver penetration allowance. Never clamp real feedback.
+        slop_raw = round(numerical_slop_deg * wire.JOINT_ANGLE_SCALE)
+        low_raw = round(math.degrees(lower) * wire.JOINT_ANGLE_SCALE) - 1 - slop_raw
+        high_raw = round(math.degrees(upper) * wire.JOINT_ANGLE_SCALE) + 1 + slop_raw
         if actual < low_raw or actual > high_raw:
             raise JointPhysicalSafetyError(
                 index, actual, "urdf_joint_travel_exceeded",
@@ -595,8 +638,19 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             p.setGravity(0, 0, -9.81)
             step_calls_per_feedback, warmup_calls = configure_physics_stepping(
                 p, options.headless)
+            if not options.headless:
+                p.setPhysicsEngineParameter(
+                    numSolverIterations=GUI_JOINT_STOP_SOLVER_ITERATIONS)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
             joints = joint_indices(p, arm)
+            if not options.headless:
+                joint_limits_rad = configure_native_urdf_joint_stops(
+                    p, arm, joints)
+            else:
+                joint_limits_rad = tuple(
+                    (p.getJointInfo(arm, index)[8], p.getJointInfo(arm, index)[9])
+                    for index in joints
+                )
             for idx, raw in zip(joints, START_RAW):
                 p.resetJointState(arm, idx, math.radians(raw / wire.JOINT_ANGLE_SCALE))
             physical_motor_targets_rad = tuple(
@@ -642,10 +696,6 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 raise TimeoutError("FreeRTOS ProtocolRX did not become ready")
 
             # 首个反馈主动发送：ProtocolTX 在未收到反馈前不会发布目标。
-            joint_limits_rad = tuple(
-                (p.getJointInfo(arm, index)[8], p.getJointInfo(arm, index)[9])
-                for index in joints
-            )
             sock.sendall(joint_feedback_frame(
                 canonical_physical_feedback(angles_raw(p, arm, joints))))
             start_wall = time.monotonic()
@@ -752,7 +802,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 target_frames += 1
                                 measured = angles_raw(p, arm, joints)
                                 validate_physical_feedback_step(
-                                    measured, last_measured, joint_limits_rad)
+                                    measured, last_measured, joint_limits_rad,
+                                    numerical_slop_deg=(
+                                        GUI_JOINT_STOP_NUMERICAL_SLOP_DEG
+                                        if not options.headless else 0.0))
                                 last_measured = tuple(measured)
                                 sock.sendall(joint_feedback_frame(
                                     canonical_physical_feedback(measured)))
