@@ -177,6 +177,52 @@ def configure_native_urdf_joint_stops(
     return tuple(limits)
 
 
+def enforce_gui_joint_hard_stops(
+    bullet, arm: int, joints: Sequence[int],
+    joint_limits_rad: Sequence[tuple[float, float]],
+) -> list[dict]:
+    """Keep the *actual* simulated GUI robot within URDF travel.
+
+    Bullet's native picking constraint can overpower finite joint-limit
+    impulses. After each GUI physics step, snap ONLY an out-of-range joint
+    to its URDF hard stop with zero outward velocity. This is an explicit
+    kinematic interaction guard, not a claim of physically simulated impact.
+    It is never called in DIRECT/QEMU acceptance tests and never changes
+    ordinary in-range states or firmware target commands.
+
+    Returns the *pre-correction* physical angle and the applied stop so the
+    non-physical correction is auditable instead of silently faked.
+    """
+    if len(joints) != wire.JOINT_COUNT or len(joint_limits_rad) != len(joints):
+        raise ValueError("GUI joint-stop guard requires six URDF joint limits")
+    states = bullet.getJointStates(arm, list(joints))
+    if len(states) != len(joints):
+        raise RuntimeError("PyBullet returned incomplete joint states")
+    contacts = []
+    for index, (joint, state, (low, high)) in enumerate(
+            zip(joints, states, joint_limits_rad)):
+        position = float(state[0])
+        velocity = float(state[1])
+        if not (math.isfinite(position) and math.isfinite(velocity)):
+            raise JointPhysicalSafetyError(
+                index, 0, "nonfinite_physical_joint_state",
+                "PyBullet position or velocity is non-finite")
+        if position < low or position > high:
+            stop = low if position < low else high
+            # Apply correction to the ONE authoritative physics body, not a
+            # display mirror. Future dynamics and canonical UART feedback
+            # continue from this bounded physical state.
+            bullet.resetJointState(
+                arm, joint, targetValue=stop, targetVelocity=0.0)
+            contacts.append(dict(
+                joint_index=index, joint=JOINT_NAMES[index],
+                before_deg=math.degrees(position),
+                stop_deg=math.degrees(stop),
+                overshoot_deg=math.degrees(position - stop),
+            ))
+    return contacts
+
+
 def advance_physics_step_batch(
     bullet, step_calls: int, start_time_s: float,
     on_physics: Callable | None, arm, joints, done: bool, ending: bool,
@@ -574,6 +620,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     hold_rearms = 0
     hold_rearm_acks = 0
     hold_recoveries = 0
+    gui_joint_stop_corrections = 0
+    gui_joint_stop_last = None
+    gui_joint_stop_last_log_at = float("-inf")
     hold_replan_needed = False
     recovering = False
     recovery_attempts = 0
@@ -800,6 +849,31 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     sequencer.done, ending,
                                 )
                                 target_frames += 1
+                                if not options.headless:
+                                    joint_stop_contacts = enforce_gui_joint_hard_stops(
+                                        p, arm, joints, joint_limits_rad)
+                                    if joint_stop_contacts:
+                                        gui_joint_stop_corrections += len(joint_stop_contacts)
+                                        gui_joint_stop_last = joint_stop_contacts[-1]
+                                        # Keep a full event on first encounter,
+                                        # then rate-limit during sustained picking.
+                                        if (time.monotonic()
+                                                - gui_joint_stop_last_log_at >= 1.0):
+                                            audit.write(json.dumps(dict(
+                                                event="gui_urdf_hard_stop",
+                                                contacts=joint_stop_contacts,
+                                                corrections_total=gui_joint_stop_corrections,
+                                                target_frames=target_frames,
+                                            )) + "\n")
+                                            gui_joint_stop_last_log_at = time.monotonic()
+                                            print(
+                                                "[JOINT STOP] "
+                                                + ", ".join(
+                                                    f"{c['joint']}: "
+                                                    f"{c['before_deg']:.2f}deg "
+                                                    f"-> {c['stop_deg']:.2f}deg"
+                                                    for c in joint_stop_contacts
+                                                ), flush=True)
                                 measured = angles_raw(p, arm, joints)
                                 validate_physical_feedback_step(
                                     measured, last_measured, joint_limits_rad,
@@ -1075,6 +1149,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                     for a,b in zip(last_measured, sequencer.goals[-1])),
                 "hold_recoveries": hold_recoveries,
+                "gui_joint_stop_corrections": gui_joint_stop_corrections,
+                "gui_joint_stop_last": gui_joint_stop_last,
+                "gui_joint_stop_implementation": (
+                    "post_physics_urdf_joint_state_guard"
+                    if not options.headless else "disabled_in_direct"),
                 "hold_rearms": hold_rearms,
                 "hold_rearm_acks": hold_rearm_acks,
                 "hold_wall_s": 0.0 if hold_started is None else time.monotonic()-hold_started,
@@ -1104,7 +1183,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     except BaseException as error:
         failure = dict(passed=False, error=repr(error),
             target_frames=target_frames, feedback_acks=feedback_acks,
-            segments_settled=sequencer.completed, diagnostics=diagnostic_values)
+            segments_settled=sequencer.completed, diagnostics=diagnostic_values,
+            gui_joint_stop_corrections=gui_joint_stop_corrections,
+            gui_joint_stop_last=gui_joint_stop_last)
         if isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError)):
             fault_type = error.fault_type
             failure.update(
