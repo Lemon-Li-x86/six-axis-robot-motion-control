@@ -97,3 +97,12 @@
 - **回归**：`tools/tests/test_stage5_visual_demo.py` 新增 QMP 停/启与物理异常时恢复的模拟测试；现有 Actions `stage5-live-gui.yml` 对新分支运行 Linux/Windows 单元测试、固件回归、原生 GUI 无拖拽、真实 QEMU/UART 三段闭环及 18ms 处理延迟。首轮 CI：<https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809>。应逐项查看测试步骤；外部力扰动仍为独立问题，Windows 本机原生鼠标拖拽回位仍需独立验收。
 
 - **首次实证（Linux）**：同轮 Actions `native-gui-no-drag-xvfb` 成功；`genuine-qemu-uart-live-observer (ubuntu-latest)` 中三段 DIRECT 和 18ms 慢消费者测试均成功。慢消费者 `result.json` 的物理时间 7.14s、规划任务名义时间 6.78s，比值 0.9496，时钟验收通过、三段到位、`passed=true`。随后执行的外部转矩扰动回位步骤仍失败，使整项 Job 标红；不能以此宣称物理拖拽恢复通过。Windows 集成和本机原生 GUI 交互未在此证据覆盖。
+
+
+### 2026-10-28 S5-012 / S5-013 扰动回位回归的真实物理缺陷与修复证据
+
+- **失败证据（旧夹具）**：[Actions #40604154809](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809) Linux/Windows DIRECT 的三段关节运动、时钟门控和慢消费者均正常，外部转矩恢复却判失败。Linux 工件 `disturbance-recovery/result.json` 的实测峰值仅 **0.06°**、`hold_recoveries=0`、故障计数0。检查发现 PyBullet DIRECT 每个 UART 反馈间隔有 **10次1ms stepSimulation()**，原 `on_physics` 只在这10次积分前施加 **一次** `applyExternalTorque`，不能把一次外力视为10ms内持续生效。
+- **修正物理输入**：`stage5_qemu_uart_visual_demo.py` 在 DIRECT 每个物理子步前调用可选外部扰动回调；GUI仍为每帧单次原生10子步调用。未改变JSON控制周期、PID、URDF或生产固件。Linux中未经幅度限制的300 N·m连续扰动把J2转到321°并触发`int16`反馈越界报错，**明确失败，不截断、重映射或伪造反馈**。
+- **边界限制与逐轮验收**：`stage5_qemu_uart_live_gui.py` 仅在headless测试夹具中观察**被施力J2的真实关节状态**，实际偏离请求终点达到3°即停止当前轮外部力矩；同轮不会重复激励。保留至少2°真实偏移门槛；新增各轮外部转矩子步计数和J2峰值，全部轮次均须至少施力一次、超过偏移门槛，并确认C侧HOLD回位次数达到要求。这不是由Python直接复位关节的作弊。
+- **首轮实际通过（Linux）**：[Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) 的 `stage5-live-qemu-measured-state-evidence-Linux` 中：`disturbance_regression.passed=true`，J2三次峰值 **9.25° / 9.23° / 9.21°**，外力子步 **42 / 42 / 42**，`hold_recoveries=3`，`hold_rearms=3`、每次ACK成功，原三段及三次恢复共6次C运动请求，固件fault计数和UART RX dropped均为0。PyBullet 39.37s对固件规划名义39.12s，时钟比0.99365，HOLD最终误差0.02°。该实例的 `passed=true` 经工件JSON和轨迹核查。
+- **仍未覆盖**：上述为Linux **DIRECT+实际外部转矩** 回归，`hold_rearms=3` 明确包含固件侧重规划，不能冒充“PID不重规划被动HOLD也恢复”；Windows PyBullet原生 GUI 鼠标抓取与释放仍须单独验收，不能把DIRECT外力与GUI鼠标操作视为完全等价。Windows版本的相同CI按独立结果更新，不以 Linux 代替。
