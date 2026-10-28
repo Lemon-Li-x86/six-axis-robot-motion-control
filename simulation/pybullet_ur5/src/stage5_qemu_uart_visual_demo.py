@@ -83,6 +83,7 @@ MIN_PAYLOAD_RAW = -MAX_PAYLOAD_RAW - 1  # signed int16; reuse existing protocol 
 TRACE_HEADER = (
     "simulated_time_s", "segment", "tool_x_m", "tool_y_m", "tool_z_m",
     *(f"command_{name}_deg" for name in JOINT_NAMES),
+    *(f"servo_target_{name}_deg" for name in JOINT_NAMES),
     *(f"actual_{name}_deg" for name in JOINT_NAMES),
     *(f"error_{name}_deg" for name in JOINT_NAMES),
 )
@@ -310,7 +311,7 @@ def closest_physical_motor_targets(
 
 
 class JointFeedbackRangeError(ValueError):
-    """Actual PyBullet measurement cannot fit the existing signed-int16 UART frame."""
+    """A caller bypassed canonical conversion before encoding UART feedback."""
 
     def __init__(self, index: int, raw_centideg: int):
         self.joint_index = index
@@ -327,7 +328,7 @@ class JointFeedbackRangeError(ValueError):
 
 
 def joint_feedback_frame(raw: Sequence[int]) -> bytes:
-    """Encode actual measured angles; reject unrepresentable poses without fabrication."""
+    """Encode already-canonical raw angles; physical readings must be normalized first."""
     if len(raw) != wire.JOINT_COUNT:
         raise ValueError("Joint-state feedback requires exactly six angles")
     for index, value in enumerate(raw):
@@ -397,8 +398,8 @@ def write_plot(output_dir: Path, rows: list[dict]) -> bool:
     time_s = [row["simulated_time_s"] for row in rows]
     fig, axes = plt.subplots(3, 2, figsize=(13, 10), sharex=True)
     for ax, name in zip(axes.flat, JOINT_NAMES):
-        ax.plot(time_s, [r[f"command_{name}_deg"] for r in rows],
-                label="Firmware UART target", linewidth=1.5)
+        ax.plot(time_s, [r[f"servo_target_{name}_deg"] for r in rows],
+                label="Physical actuator target (C UART + URDF turn)", linewidth=1.5)
         ax.plot(time_s, [r[f"actual_{name}_deg"] for r in rows],
                 label="PyBullet measurement", linestyle="--", linewidth=1)
         ax.set_title(name)
@@ -547,10 +548,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             joints = joint_indices(p, arm)
             for idx, raw in zip(joints, START_RAW):
                 p.resetJointState(arm, idx, math.radians(raw / wire.JOINT_ANGLE_SCALE))
+            physical_motor_targets_rad = tuple(
+                math.radians(v / wire.JOINT_ANGLE_SCALE) for v in START_RAW
+            )
             p.setJointMotorControlArray(
                 arm, joints, p.POSITION_CONTROL,
-                targetPositions=[math.radians(v / wire.JOINT_ANGLE_SCALE)
-                                 for v in START_RAW],
+                targetPositions=physical_motor_targets_rad,
                 forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
             )
             for _ in range(warmup_calls):
@@ -665,11 +668,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 # 仅在运动请求已被接受后执行固件位置目标；启动
                                 # 时始终保持首次实测姿态，不能执行历史演示角度。
                                 if sequencer.accepted or (sequencer.done and options.interactive_hold):
+                                    physical_motor_targets_rad = closest_physical_motor_targets(
+                                        targets, last_measured, joint_limits_rad
+                                    )
                                     p.setJointMotorControlArray(
                                         arm, joints, p.POSITION_CONTROL,
-                                        targetPositions=closest_physical_motor_targets(
-                                            targets, last_measured, joint_limits_rad
-                                        ),
+                                        targetPositions=physical_motor_targets_rad,
                                         forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                     )
                                 # A DIRECT frame is ten 1ms physics steps.
@@ -781,13 +785,20 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     "tool_y_m": tool_xyz[1],
                                     "tool_z_m": tool_xyz[2],
                                 }
-                                for name, target, actual in zip(
-                                    JOINT_NAMES, targets, measured
+                                for name, target, servo_target_rad, actual in zip(
+                                    JOINT_NAMES, targets, physical_motor_targets_rad,
+                                    measured
                                 ):
+                                    # Raw UART command is canonical; actual position
+                                    # and actuator target are continuous. Do not
+                                    # subtract unlike coordinate representations.
                                     row[f"command_{name}_deg"] = target / wire.JOINT_ANGLE_SCALE
+                                    row[f"servo_target_{name}_deg"] = math.degrees(servo_target_rad)
                                     row[f"actual_{name}_deg"] = actual / wire.JOINT_ANGLE_SCALE
                                     row[f"error_{name}_deg"] = (
-                                        target - actual) / wire.JOINT_ANGLE_SCALE
+                                        math.degrees(servo_target_rad)
+                                        - actual / wire.JOINT_ANGLE_SCALE
+                                    )
                                 trace.append(row)
                                 trace_writer.writerow(row)
                                 # Optional nonblocking stream of actual PyBullet
