@@ -32,7 +32,9 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     canonical_physical_feedback,
     closest_physical_motor_targets,
     JointFeedbackRangeError,
-    preserve_gui_after_feedback_range_fault,
+    preserve_gui_after_physics_fault,
+    validate_physical_feedback_step,
+    JointPhysicalSafetyError,
     validate_goals,
     write_trace,
 )
@@ -267,6 +269,42 @@ class MotionSequencerTests(unittest.TestCase):
             closest_physical_motor_targets(
                 (0,) * 6, (0,) * 6, ((float("nan"), 1),) + limits[1:])
 
+    def test_physical_continuity_allows_crossing_180_and_327_degree_boundaries(self):
+        import math
+        limits = (
+            (math.radians(-360), math.radians(360)),
+        ) * 6
+        before = (17900, 32600, 35000, 0, 0, 0)
+        after = (18100, 32900, 35500, 0, 0, 0)
+        validate_physical_feedback_step(after, before, limits)
+        self.assertEqual(
+            canonical_physical_feedback(after)[:3],
+            (-17900, -3100, -500),
+        )
+
+    def test_physical_limit_and_unresolvable_wrap_stop_without_fake_feedback(self):
+        import math
+        limits = (
+            (math.radians(-360), math.radians(360)),
+            (math.radians(-360), math.radians(360)),
+            (math.radians(-180), math.radians(180)),
+            (math.radians(-360), math.radians(360)),
+            (math.radians(-360), math.radians(360)),
+            (math.radians(-360), math.radians(360)),
+        )
+        with self.assertRaises(JointPhysicalSafetyError) as overtravel:
+            validate_physical_feedback_step(
+                (36100, 0, 0, 0, 0, 0), (35900, 0, 0, 0, 0, 0), limits)
+        self.assertEqual(overtravel.exception.fault_type,
+                         "urdf_joint_travel_exceeded")
+        self.assertEqual(overtravel.exception.joint_name, "shoulder_pan_joint")
+        with self.assertRaises(JointPhysicalSafetyError) as aliased:
+            validate_physical_feedback_step(
+                (20000, 0, 0, 0, 0, 0), (0,) * 6, limits)
+        self.assertEqual(aliased.exception.fault_type,
+                         "ambiguous_multi_turn_feedback")
+        self.assertIn("one UART physical sample", str(aliased.exception))
+
     def test_feedback_signed_int16_boundaries_are_not_changed(self) -> None:
         raw = (-32768, 32767, 0, 0, 0, 0)
         packet = joint_feedback_frame(raw)
@@ -316,10 +354,10 @@ class MotionSequencerTests(unittest.TestCase):
         qemu = FakeProcess()
         bullet = FakeBullet()
         fault = JointFeedbackRangeError(0, 35000)
-        preserve_gui_after_feedback_range_fault(bullet, qemu, None, fault)
+        preserve_gui_after_physics_fault(bullet, qemu, None, fault)
         self.assertTrue(qemu.killed)
         self.assertEqual(bullet.polled, 1)
-        self.assertIn("FEEDBACK RANGE FAULT", bullet.labels[0])
+        self.assertIn("PHYSICAL FEEDBACK FAULT", bullet.labels[0])
 
 
     def test_csv_has_explicit_units_and_all_six_axes(self) -> None:
