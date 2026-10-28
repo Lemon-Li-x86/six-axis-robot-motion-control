@@ -621,3 +621,17 @@ target_compile_definitions(qemu_ik_near_singular_trace PRIVATE
     ROBOT_KINEMATICS_ELBOW_TRACE=1
 )
 configure_qemu_target(qemu_ik_near_singular_trace m)
+
+
+# Stage5 link-time memory audit, opt-in and isolated from Stage4 self-test.
+# Not a runtime CPU/stack benchmark and not a hardware memory measurement.
+option(ROBOT_ENABLE_STAGE5_LINK_MAP
+    "Generate GNU ld .map for the current Stage5 ARM firmware build" OFF)
+if(ROBOT_ENABLE_STAGE5_LINK_MAP)
+    if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+        message(FATAL_ERROR
+            "Stage5 map audit and Stage4 self-test map cannot share this build")
+    endif()
+    target_link_options(freertos_demo PRIVATE
+        "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/stage5_firmware.map")
+endif()
