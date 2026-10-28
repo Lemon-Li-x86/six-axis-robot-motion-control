@@ -188,3 +188,192 @@ PyBullet，也出现了同样的访问冲突。因此已移除后台定时栈采
 异常退出时父进程另写 `worker_exit.json`，记录十进制/十六进制退出码和
 最后显示样本；新运行前清除旧记录。更长时段的扰动回归用于覆盖以往
 20/40 秒以后才会暴露的问题，早先十几秒的 CI 通过不覆盖这种原生崩溃。
+
+
+
+## 2026-10-28 规范化角度与连续物理关节角（PR #3，待本机大拖拽复验）
+
+用户 Windows 原生 GUI 在三段结束后拖出大圆：实际 J1 已到 260.48°，
+随后 Python `struct.pack("<6h", ...)` 因超过 int16 抛异常，导致物理进程退出。
+日志此前出现反馈 ACK 滞后，不能仅将此现象视作 Python 打包异常：
+`protocol.c::decode_joint_payload` **只接受 [-180°,180°) 的规范化反馈**，
+而原仿真把 PyBullet 连续角度直接通过 0x81 发送，实测超过 180° 已被 C 协议拒收。
+
+**保持现有合同而非升级/复制协议：**
+
+- `robot_types.h` 定义 UART 为 `int16` 规范化角度、Motor Driver 在 C 内部维护 `int32` 连续位置。PyBullet 真实连续角度仍不变；仅在 UART 0x81 边界按整圈等价关系规范化。例如真实 +350° 传 -10°，真实 +181° 传 -179°，C 的 `motor_driver.c` 按邻近采样恢复连续运动。不是强行截断到 327.67°，也不是 `resetJointState`。
+- C 返回的规范化控制目标须结合 **URDF `getJointInfo` 实际上下界**，通常相对**上一帧连续执行器目标**逐轴解绕，不能每帧重新贴合用户鼠标拖动后的物理角度，也不能由某一轴的 ±180° 越界触发全六轴解释方式切换。只有固件新运动请求被 ACK 接受时才从真实物理姿态重置一次解绕锚点。未复制 URDF 关节行程参数或 PID。关节跟踪 CSV 区分 `command_*`（C UART 规范角）、`servo_target_*`（连续执行器目标）、`actual_*`（真实 PyBullet 连续角），`error_*` 仅在连续物理坐标下相减。
+- **模型关节行程仍然有效**，并非任意连续无限圈。现有 URDF/C Model：J3 是 ±180°，其他为 ±360°；如果从 +30° 朝正方向拖完整 +360°，末端 +390° 已超出 J1 当前模型允许范围。GUI 现采用后述“交互硬限位”：采样前纠正同一 PyBullet 机器人真实越界关节、清除该轴速度并记录修正前位置；DIRECT 仍严禁静默越界。
+- 对 **单个反馈周期内 ≥180° 的不可辨识跳变**报告 `ambiguous_multi_turn_feedback` 并安全停机。原 C Motor Driver 采用最短角差解绕，不可能仅凭两次规范化反馈重建这种跨半圈跳变。
+- 对真正的错误格式保留 `JointFeedbackRangeError` 和详细 JSON / UART 审计，保留旧错误试验可核查；与支持合法多圈连续反馈不冲突。
+
+**本机复验**：在本分支、默认无 `-NoHold` 模式下，先尝试 +170° 到 +190°、
++310° 到 +350°（在 J1 当前 URDF 行程内的方向），观察
+`observer.jsonl` 中 ACK 是否持续增长、`joint_trace.csv` 的规范角与连续角是否同时合理。
+再分别试图越过模型行程，确认应报明示的安全故障而不是让固件在越界姿态下盲控。
+Windows 原生鼠标抓取仍必须由真人桌面验收；CI 的 DIRECT 自动外力不等于 GUI 拖拽。
+
+
+
+
+## 2026-10-28 PyBullet 原生鼠标拾取的物理关节挡块（PR #3，待 Windows GUI 人工验收）
+
+- 当前六轴 URDF 全部是 `revolute`，均有实际 `<limit lower/upper/effort>`，不允许为方便交互偷偷改成 `continuous` 或扩大范围。
+- Bullet 默认已能从 URDF 加载 `btMultiBodyJointLimitConstraint`，但约束由数值求解。用户再次在 Windows 原生鼠标拖拽中观察到实际关节超过 +360°，**证明单靠 `jointLimitForce` 和 solver iteration 并不足够**。GUI 模式仍采用 `changeDynamics(...jointLowerLimit=URDF值,jointUpperLimit=URDF值,jointLimitForce=...)` 作为首层物理限位，但不再把它宣称为绝对挡块；限位来源仍为 `getJointInfo`，无第二套数值、无鼠标事件邮箱和第二套机器人。
+- 约束强度系数和 solver 迭代属于**仿真数值夹具**，不对应实物机械强度或安全额定值。额外 0.10° 的 GUI 求解器穿透容差只决定是否触发重大越界故障，**不是允许的机械行程**；实际测量不裁剪，依然存 CSV 并按原 UART 协议规范化传输。
+- 新增 `test_stage5_native_joint_stops.py`：在真实 PyBullet DIRECT 中只于初始化时设置 J1 接近上限的姿态，连续施加真实关节力矩，测量最大位置，再反向施力验证没有被冻结。此测试**不能证明 GUI 原生鼠标抓取已成功阻挡**，后者需要 Windows 人工反复拖拽观察并记录位置峰值与 ACK。
+- 拖拽靠近上限应由 Bullet 物理约束阻挡，**不应仅靠 Python 检测越界后冻结进程**。若原生拾取仍能将关节推出 URDF 物理范围，收集 `result.json` 的 `fault_type` 和 `joint_trace.csv` 原始角度再修，绝不绕过固件安全门禁或伪造实际位置。
+
+
+
+### Windows 重复大幅拖拽仍越界：补充 GUI 交互硬限位（2026-10-28）
+
+真实用户再次观察到 J1 被原生 PyBullet mouse-picking 拖到 +360° 之外，
+证明之前只加大 Bullet 约束力的版本 **未通过原生鼠标验收**。
+CI 在 DIRECT 下施加固定电机力矩并未模拟桌面原生 mouse-picking 约束；
+该测试只能证明物理 joint stop 在该力矩夹具下工作，不能外推。
+
+现在仅在 **GUI 物理反馈路径** 每次 `stepSimulation()` 结束后调用
+`enforce_gui_joint_hard_stops()`：
+1. 读取 **同一个 PyBullet 物理机器人** 的六轴真实 `getJointStates()`；
+2. 对超过同一 URDF `getJointInfo` 上下界的关节，以 `resetJointState` 
+   把**真实物理状态本身**纠正到最近行程边缘，并将该轴速度置 0；
+   六轴其他正常状态不修改。**这是有意识的 kinematic hard-stop
+   workaround，不是 Bullet 物理碰撞反作用，也不是伪造额外 GUI 机器人**。
+3. 修正发生在本轮 UART 连续角采样与下一帧规范化反馈之前；
+   所以 C 反馈、GUI 视觉、CSV 轨迹取自纠正后的单一物理状态。
+4. `uart_live.jsonl` 增加 `gui_urdf_hard_stop`（按墙钟最多每秒一个含实际
+   越界角度的样本）；`result.json` 增加总修正次数、末次修正前角度与
+   限位值。用户看到“撞限位”不等于纯物理验证通过。
+5. 若发生非有限角度或单帧不可解绕的异常，仍按独立的严重故障处理，
+   不应伪造反馈、吞异常或把限制方案默认为硬件安全认证。
+
+局限：GUI 当前每条 UART 反馈执行一次带 10 个内部 1ms substeps
+的 Bullet API 步进。因此边界保护只保证**每条反馈采样后的 GUI
+物理状态**不越界，不能证明内部每一个 1ms substep 完全未穿透；
+原生 GUI 渲染由独立线程驱动，极端鼠标强拉仍可能看见短暂视觉抖动。
+若要求连单个内部 substep 都严格限位，需进一步改鼠标拾取交互机制
+或在每个子步执行约束；不能再谎称“完全物理、绝不越界”。
+
+手动验收：原生 GUI HOLD 拖拽 J1/J3 向上下限反复施力，
+观察 `[JOINT STOP]`、UART RX/ACK 是否持续增长，放手能否回位；
+停止运行后比较 `joint_trace.csv` 的最大实测角、
+`uart_live.jsonl` 的修正前角和 `result.json` 计数。
+此项尚未取得 Windows 桌面鼠标通过证据，PR 保持 draft。
+
+
+### 2026-10-28 松手回位“先猛甩，再慢慢转”：执行器角度及扭矩纠正
+
+用户原生 GUI 实测：拖拽到行程边界以后，松手时末端首先快速摆动，
+然后才按照固件轨迹慢速回位。此前实现存在两个独立且可复现的风险：
+
+- 旧 Python 代码根据 **全部关节是否处于 [-180°,180°)** 决定是否
+  解绕六个目标，任一关节跨 ±180° 会同时切换全部六轴电机目标的解释。
+  现删除该全局判断；每轴**逐帧相对上一条连续电机命令**解绕，
+  而不跟随鼠标拖动的实测角度临时切换等效圈数。
+- 固件在新请求 ACK 后会重置连续轨迹/限幅器，Python 只在这类
+  **新请求 ACK** 后使用实测角度重建电机目标的绝对圈数，
+  不在任意物理偏差期间擅自重基。
+- 旧 GUI 六轴电机统一使用 `150 N·m`。
+  现在从 PyBullet 已加载 URDF `getJointInfo()[10]` 获取六轴 effort
+  （模型前三轴 150 N·m，腕部三轴 28 N·m），保持原生
+  `POSITION_CONTROL`，不添加第二套 PID 或外部插值器。
+  GUI 的物理挡块约束力是另一回事，不能充当电机额定输出。
+- 单元测试覆盖独立轴跨 ±180°、其他轴被拖到 +350° 时目标不突然
+  改变圈数，和固件 ACK 后在 +350° 附近重基、持续解绕；
+  物理 GUI 原生拾取仍需 Windows 人工检验。
+- 本次不调整 C PID、速度/加速度限制以及真实 URDF 行程；
+  `joint_trace.csv` 的 `command_*`、`servo_target_*`、`actual_*`
+  用来排查剩余“甩头”是目标跳变还是物理/鼠标约束瞬态。
+
+
+### 2026-10-28 HOLD 366.76° 假误差、重复重规划及松手猛甩
+
+Windows 手动拖拽再次复现：松手后先快速甩动，后长时间回位，
+最后 `RuntimeError('Hold recovery did not converge: 366.76deg')`。
+异常是 Python HOLD 逻辑抛出的，不代表物理关节损坏，
+也**不是** PowerShell 启动器自身发生故障。
+
+- 此前 HOLD 始终把 `sequencer.goals[-1]` 的规范化角度（例如
+  +30°）当作**连续物理目标**；然而真正 C 规划器的
+  `motion_limits_unwrap_nearest` 可从实测 -336.76° 选择合法等效目标
+  -330°。两者在物理连续转数上差 360°；Python 计算的 366.76° 并非
+  C 实际规划的回位误差。HOLD 现在在重新发出原规范化目标时，
+  使用现有 `closest_physical_motor_targets` 与 URDF 上下界计算
+  此次计划的连续目标，**只在 replan ACK 后**将其作为判定目标；
+  原始规范化请求以及 C 规划器均不变。
+- 旧 HOLD 仅凭 0.5s 无明显位移，就在一次未完成的长距离
+  C 轨迹期间反复请求重规划，最多八次后主动崩溃。
+  现在同一次偏离事件最多发送一次自动 C 重新规划请求，
+  ACK 后持续观察同一 C 计划；若仍无法到位，则审计
+  `hold_recovery_waiting` 且保留 GUI/UART，不将其报成 PASS。
+  完成回位并再次受到新扰动，可开始新的回位事件。
+- 以前的 PyBullet `POSITION_CONTROL` 仅用力矩限制，不控制
+  可达到的执行器追赶速度。GUI 模式现在使用 PyBullet 已验证的单关节
+  `setJointMotorControl2(maxVelocity=...)` 分六轴下发速度上限；
+  原 `setJointMotorControlArray(maxVelocities=...)` 在 CI 使用的 PyBullet
+  wheel 中被明确拒绝（`TypeError`），因此不再调用。
+  取**C 固件默认配置 `stage4_motion.max_velocity_deg_s`**与
+  已加载 URDF `getJointInfo()[11]` 速度上限的较小值。
+  无第二套速度数值、无 Python PID/自主轨迹生成。
+  这是执行器速度约束，**不限制鼠标原生拾取约束施加的外力运动**。
+- 保留 DIRECT 原有物理验收路径；新增测试覆盖“+30° 与 -330°
+  等效导致 366.76° 假误差”、正向 +350° 需回到 +30° 而不是越过
+  +360°、速度限幅来源，以及真实 Bullet `maxVelocities` 接口。
+- 用户 Windows 原生鼠标释放的实测验证仍然缺失；若继续甩动，
+  应检查 `joint_trace.csv` 的连续 `servo_target_*`、
+  `actual_*` 以及 `uart_live.jsonl` 的 `hold_replan` /
+  `hold_replan_ack` / `hold_recovery_waiting`，不能把通过单元测试当成
+  桌面交互已解决。PR #3 保持 draft。
+
+
+### 2026-10-28 UART 继续收发但 HOLD 回位停在中途
+
+用户 Windows 原生 GUI 再现：`RX/ACK` 每秒继续增长且校验和正常，
+但六轴 `target/actual` 最后都停止在约
+`[-68.54,-29.01,25.73,-13.23,37,63.42]°`，
+远离原始最终请求 `[30,-45,60,20,5,-10]°`。
+从日志能确定的是：当前物理执行器已跟上**最后收到的电机命令**，
+不能据此说 C 轨迹已经回到最初目标；独立 UART 反馈能继续运行，
+也不能证明 C 规划/Control 任务仍在发布新的目标。
+
+C `protocol_commands.c` 的 MOVE ACK 只确认 `motion_pipeline_submit_joint`
+进入请求队列。C `trajectory_task.c` 之后可因 NOT_READY/其他故障停止并
+清空参考，或 `control_task.c` 停止下发电机命令。**需要
+`uart_live.jsonl` 里的 `planner_faults`、`controller_faults`、
+`last_fault`，才能确认具体停止原因。**
+
+此前 GUI 的修复把同一次 HOLD 的自动 C 重新请求限制成**一次**，
+避免了长距离合法回转被 0.5 s 的位置停顿反复重启，却也可能让
+真正取消掉的 C 计划永远没有第二次恢复机会。
+
+本次将自动恢复策略改成：
+- **同时**检测当前实测关节与**真实 C UART 执行器目标**
+  （经逐轴连续解绕后）是否至少 0.5 s 不变化。
+  真正 C 电机目标持续移动时，绝不因为某一关节当前不动就重规划。
+- 仅在电机目标和实测全部停滞、尚未到实际连续目标、
+  无待 ACK 请求时，使用同一 C `CMD_REQUEST_JOINT_MOVE`
+  重新发请求；相邻重试至少间隔 3 s **仿真物理时间**，
+  总尝试次数不超过 3。数值为 Stage5 GUI 测试策略，
+  不是 UR5 硬件参数或另一套轨迹规划。
+- 记录 `hold_replan` 的 attempt 及当时 C 诊断快照；
+  观察期固件 `controller_faults` / `planner_faults` 若增长，
+  会新增 `hold_firmware_fault_counter_increased` 审计事件和
+  `worker.log` 中的 `[C MOTION FAULT]` 提示；Stage5 worker stdout
+  重定向到 `build/stage5-live-windows/worker.log`，这条提示不会直接
+  显示在父进程 PowerShell 终端。这是固件实际故障计数，
+  不应被活跃的 UART ACK 所掩盖。若尚未轮询到 `last_fault`，
+  告警不臆测具体故障码。
+  超过预算则记录 `hold_recovery_stalled` 并在 `worker.log` 中显示，
+  **不将停在中途的状态报成 PASS，也不隐藏 C 故障**；
+  GUI/UART 保持运行，供人工采集证据。
+- 这些保护能允许一次 C 轨迹取消之后的安全重试，
+  **不能证明根源是 NOT_READY**，更不能把重复出现的 C 故障当作修好；
+  仍需观察具体的固件 `last_fault` 与 Windows 物理复测。
+
+
+本次恢复判据另加一条保护：如果 PyBullet GUI 仍在持续把关节推到
+URDF 硬限位，说明用户可能还保持鼠标抓取，此时暂不消耗新的
+C 重规划次数。必须至少经过一段无硬限位修正的 0.5 s 仿真间隔，
+且电机目标、实测姿态均不再变化，才会重试；
+这是**交互恢复门槛**，不是新的真实机器人安全限位。

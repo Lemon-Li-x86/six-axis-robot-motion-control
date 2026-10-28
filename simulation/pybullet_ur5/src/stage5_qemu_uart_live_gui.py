@@ -399,13 +399,29 @@ def run_live(
             code = worker.exitcode
             native_code = (f"0x{code & 0xffffffff:08X}"
                            if code is not None else "unknown")
+            # The worker may have saved a specific protocol/physics fault.
+            # Preserve the original exit code while surfacing the root cause
+            # instead of only repeating the generic 'worker exited 1'.
+            worker_failure = {}
+            failed_report = output_dir / "result.json"
+            if failed_report.is_file():
+                try:
+                    worker_failure = json.loads(failed_report.read_text(
+                        encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            failure_detail = worker_failure.get("error", "")
             (output_dir / "worker_exit.json").write_text(json.dumps({
                 "passed": False, "exit_code": code, "exit_hex": native_code,
                 "last_sample": measurements.latest,
+                "fault_type": worker_failure.get("fault_type"),
+                "fault_joint": worker_failure.get("fault_joint"),
+                "fault_angle_deg": worker_failure.get("fault_angle_deg"),
             }, indent=2), encoding="utf-8")
             raise RuntimeError(
-                f"Physics worker exited {code} ({native_code}); "
-                "see worker.log and joint_trace.csv"
+                f"Physics worker exited {code} ({native_code})"
+                + (f"; worker fault: {failure_detail}" if failure_detail else "")
+                + "; see worker.log, result.json and joint_trace.csv"
             )
 
         report_file = output_dir / "result.json"
