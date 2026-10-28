@@ -27,6 +27,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     TRACE_HEADER,
     configure_physics_stepping,
     configure_native_urdf_joint_stops,
+    enforce_gui_joint_hard_stops,
     GUI_JOINT_STOP_NUMERICAL_SLOP_DEG,
     GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
@@ -271,6 +272,56 @@ class MotionSequencerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "joint limits"):
             closest_physical_motor_targets(
                 (0,) * 6, (0,) * 6, ((float("nan"), 1),) + limits[1:])
+
+    def test_gui_stop_clamps_only_out_of_urdf_joint_with_velocity_zero(self):
+        import math
+        class Bullet:
+            def __init__(self):
+                self.positions = [
+                    math.radians(361), math.radians(-30),
+                    math.radians(181), 0, 0, math.radians(-361)]
+                self.velocities = [2.0] * 6
+                self.resets = []
+            def getJointStates(self, arm, joints):
+                self.assert_arm = arm
+                self.joints = joints
+                return [(q, v, (), 0) for q, v in
+                        zip(self.positions, self.velocities)]
+            def resetJointState(self, arm, idx, targetValue, targetVelocity):
+                self.resets.append((arm, idx, targetValue, targetVelocity))
+                self.positions[idx] = targetValue
+                self.velocities[idx] = targetVelocity
+        limits = tuple(
+            (math.radians(-180 if i == 2 else -360),
+             math.radians(180 if i == 2 else 360))
+            for i in range(6))
+        bullet = Bullet()
+        contacts = enforce_gui_joint_hard_stops(
+            bullet, 12, list(range(6)), limits)
+        self.assertEqual([c["joint_index"] for c in contacts], [0, 2, 5])
+        self.assertEqual(len(bullet.resets), 3)
+        self.assertEqual([x[3] for x in bullet.resets], [0.0] * 3)
+        self.assertAlmostEqual(math.degrees(bullet.positions[0]), 360)
+        self.assertAlmostEqual(math.degrees(bullet.positions[2]), 180)
+        self.assertAlmostEqual(math.degrees(bullet.positions[5]), -360)
+        self.assertEqual(bullet.velocities[1], 2.0)
+        self.assertEqual(enforce_gui_joint_hard_stops(
+            bullet, 12, list(range(6)), limits), [])
+
+    def test_gui_stop_guard_rejects_invalid_states_instead_of_encoding_them(self):
+        import math
+        class InvalidBullet:
+            def getJointStates(self, _arm, _joints):
+                return [(float("nan"), 0, (), 0)] + [(0, 0, (), 0)] * 5
+            def resetJointState(self, *_args, **_kwargs):
+                raise AssertionError("must not reset NaN to hide a fault")
+        with self.assertRaises(JointPhysicalSafetyError) as error:
+            enforce_gui_joint_hard_stops(
+                InvalidBullet(), 0, tuple(range(6)),
+                tuple((math.radians(-360), math.radians(360))
+                      for _ in range(6)))
+        self.assertEqual(error.exception.fault_type,
+                         "nonfinite_physical_joint_state")
 
     def test_bullet_native_limit_configuration_uses_only_urdf_joint_bounds(self):
         import math
