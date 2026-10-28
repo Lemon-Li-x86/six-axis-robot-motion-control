@@ -1257,11 +1257,42 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                       f"{len(sequencer.goals)}")
                             elif (command == wire.CMD_DIAGNOSTICS_RESPONSE and
                                   len(payload) == 4 and diagnostics_pending):
+                                previous_diagnostic = diagnostic_values.get(
+                                    diagnostics_pending)
                                 diagnostic_values[diagnostics_pending] = (
                                     struct.unpack("<I", payload)[0])
                                 audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
                                     value=diagnostic_values[diagnostics_pending],
                                     wall_s=time.monotonic()-start_wall)) + "\n")
+                                if (options.interactive_hold and recovering
+                                        and diagnostics_pending in (
+                                            "controller_faults", "planner_faults")
+                                        and previous_diagnostic is not None
+                                        and diagnostic_values[diagnostics_pending] > previous_diagnostic):
+                                    # UART frames still being ACKed does NOT
+                                    # imply C motion tasks remain active.
+                                    audit.write(json.dumps(dict(
+                                        event="hold_firmware_fault_counter_increased",
+                                        metric=diagnostics_pending,
+                                        previous=previous_diagnostic,
+                                        current=diagnostic_values[diagnostics_pending],
+                                        last_fault_raw_last_polled=diagnostic_values.get(
+                                            "last_fault"),
+                                        recovery_attempts=recovery_attempts,
+                                        motor_target_raw=[
+                                            round(math.degrees(v) *
+                                                  wire.JOINT_ANGLE_SCALE)
+                                            for v in physical_motor_targets_rad],
+                                        measured_raw=last_measured,
+                                    )) + "\n")
+                                    print(
+                                        f"[C MOTION FAULT] {diagnostics_pending}: "
+                                        f"{previous_diagnostic} -> "
+                                        f"{diagnostic_values[diagnostics_pending]}. "
+                                        "UART is alive; inspect uart_live.jsonl "
+                                        "last_fault and HOLD recovery.",
+                                        flush=True,
+                                    )
                                 diagnostics_pending = None
                     # A large GUI physics batch can delay the next socket
                     # read and feedback ACK processing. Measure it without
