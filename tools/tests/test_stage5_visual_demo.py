@@ -39,6 +39,10 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     joint_motor_efforts_from_urdf,
     joint_motor_velocity_caps,
     hold_continuous_goal_raw,
+    hold_replan_allowed,
+    HOLD_STAGNANT_PERIOD_S,
+    HOLD_RETRY_COOLDOWN_S,
+    HOLD_MAX_REPLAN_ATTEMPTS,
     JointFeedbackRangeError,
     preserve_gui_after_physics_fault,
     validate_physical_feedback_step,
@@ -342,6 +346,40 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(bullet.last_body, 7)
         with self.assertRaises(ValueError):
             joint_motor_efforts_from_urdf(bullet, 7, tuple(range(5)))
+
+    def test_hold_does_not_replan_while_C_motor_targets_are_still_moving(self):
+        import math
+        quiet = math.ceil(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+        cooldown = math.ceil(HOLD_RETRY_COOLDOWN_S / FEEDBACK_STEP_S)
+        # Physical arm stalled under native mouse picking while the C motor
+        # continues sending new targets: it is not evidence of planner stop.
+        self.assertFalse(hold_replan_allowed(
+            measured_quiet_frames=quiet + 200,
+            command_quiet_frames=0, attempts=1,
+            frames_since_last_request=cooldown + 100))
+        # A 15deg/s legal unwind can take tens of seconds; never interrupt it
+        # because a single joint is steady.
+        self.assertFalse(hold_replan_allowed(
+            measured_quiet_frames=quiet + 200,
+            command_quiet_frames=quiet - 1, attempts=0,
+            frames_since_last_request=cooldown + 100))
+
+    def test_hold_stopped_C_output_is_rearmed_with_cooldown_and_finite_budget(self):
+        import math
+        quiet = math.ceil(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+        cooldown = math.ceil(HOLD_RETRY_COOLDOWN_S / FEEDBACK_STEP_S)
+        self.assertTrue(hold_replan_allowed(quiet, quiet, 0, 0))
+        # ACK admitted the original recovery request but C may later cancel
+        # the trajectory; do not leave the arm stuck forever at that command.
+        self.assertFalse(hold_replan_allowed(quiet, quiet, 1, cooldown - 1))
+        self.assertTrue(hold_replan_allowed(quiet, quiet, 1, cooldown))
+        self.assertTrue(hold_replan_allowed(quiet, quiet, 2, cooldown))
+        # Persistent fault remains observable in the GUI, but no unbounded
+        # rapid replan loop and no false PASS.
+        self.assertFalse(hold_replan_allowed(
+            quiet * 20, quiet * 20, HOLD_MAX_REPLAN_ATTEMPTS,
+            cooldown * 20))
+        self.assertFalse(hold_replan_allowed(-1, quiet, 0, cooldown))
 
     def test_replan_hold_compares_to_continuous_c_goal_not_canonical_goal(self):
         import math
