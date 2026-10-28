@@ -22,6 +22,7 @@ except ImportError:
 from stage4_dynamic_closed_loop import URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
     configure_native_urdf_joint_stops,
+    enforce_gui_joint_hard_stops,
     GUI_JOINT_STOP_SOLVER_ITERATIONS,
     GUI_JOINT_STOP_NUMERICAL_SLOP_DEG,
 )
@@ -29,6 +30,40 @@ from stage5_qemu_uart_visual_demo import (
 
 @unittest.skipIf(p is None, "real pybullet wheel is required")
 class NativeBulletJointStopPhysicsTest(unittest.TestCase):
+    def test_real_pybullet_urdf_guard_clamps_mouse_like_overtravel_and_remains_live(self):
+        """Actual PyBullet client: repeated out-of-range position is not retained."""
+        cid = p.connect(p.DIRECT)
+        self.assertGreaterEqual(cid, 0)
+        try:
+            p.setGravity(0, 0, 0)
+            p.setTimeStep(0.001)
+            arm = p.loadURDF(str(URDF), useFixedBase=True)
+            joints = joint_indices(p, arm)
+            limits = configure_native_urdf_joint_stops(p, arm, joints)
+            joint = joints[0]
+            upper = limits[0][1]
+            # Mimic a mouse constraint driving the loaded body's actual
+            # state over travel. Fixture injection is *not* the runtime
+            # correction path; the guard itself must do the repair.
+            p.resetJointState(
+                arm, joint, upper + math.radians(14), targetVelocity=5.0)
+            contacts = enforce_gui_joint_hard_stops(p, arm, joints, limits)
+            self.assertEqual(len(contacts), 1)
+            self.assertAlmostEqual(contacts[0]["before_deg"], 374.0, places=2)
+            self.assertAlmostEqual(contacts[0]["stop_deg"], 360.0, places=2)
+            q, v = p.getJointState(arm, joint)[:2]
+            self.assertLessEqual(q, upper + 1e-9)
+            self.assertAlmostEqual(v, 0.0)
+            # Subsequent integration keeps running: stop ≠ frozen world.
+            for _ in range(100):
+                p.stepSimulation()
+                enforce_gui_joint_hard_stops(p, arm, joints, limits)
+                self.assertLessEqual(
+                    p.getJointState(arm, joint)[0], upper + 1e-8)
+            self.assertTrue(p.isConnected(cid))
+        finally:
+            p.disconnect(cid)
+
     def test_real_urdf_revolute_stop_resists_external_torque(self):
         connection = p.connect(p.DIRECT)
         self.assertGreaterEqual(connection, 0)
