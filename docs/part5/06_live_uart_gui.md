@@ -325,3 +325,41 @@ Windows 手动拖拽再次复现：松手后先快速甩动，后长时间回位
   `actual_*` 以及 `uart_live.jsonl` 的 `hold_replan` /
   `hold_replan_ack` / `hold_recovery_waiting`，不能把通过单元测试当成
   桌面交互已解决。PR #3 保持 draft。
+
+
+### 2026-10-28 UART 继续收发但 HOLD 回位停在中途
+
+用户 Windows 原生 GUI 再现：`RX/ACK` 每秒继续增长且校验和正常，
+但六轴 `target/actual` 最后都停止在约
+`[-68.54,-29.01,25.73,-13.23,37,63.42]°`，
+远离原始最终请求 `[30,-45,60,20,5,-10]°`。
+从日志能确定的是：当前物理执行器已跟上**最后收到的电机命令**，
+不能据此说 C 轨迹已经回到最初目标；独立 UART 反馈能继续运行，
+也不能证明 C 规划/Control 任务仍在发布新的目标。
+
+C `protocol_commands.c` 的 MOVE ACK 只确认 `motion_pipeline_submit_joint`
+进入请求队列。C `trajectory_task.c` 之后可因 NOT_READY/其他故障停止并
+清空参考，或 `control_task.c` 停止下发电机命令。**需要
+`uart_live.jsonl` 里的 `planner_faults`、`controller_faults`、
+`last_fault`，才能确认具体停止原因。**
+
+此前 GUI 的修复把同一次 HOLD 的自动 C 重新请求限制成**一次**，
+避免了长距离合法回转被 0.5 s 的位置停顿反复重启，却也可能让
+真正取消掉的 C 计划永远没有第二次恢复机会。
+
+本次将自动恢复策略改成：
+- **同时**检测当前实测关节与**真实 C UART 执行器目标**
+  （经逐轴连续解绕后）是否至少 0.5 s 不变化。
+  真正 C 电机目标持续移动时，绝不因为某一关节当前不动就重规划。
+- 仅在电机目标和实测全部停滞、尚未到实际连续目标、
+  无待 ACK 请求时，使用同一 C `CMD_REQUEST_JOINT_MOVE`
+  重新发请求；相邻重试至少间隔 3 s **仿真物理时间**，
+  总尝试次数不超过 3。数值为 Stage5 GUI 测试策略，
+  不是 UR5 硬件参数或另一套轨迹规划。
+- 记录 `hold_replan` 的 attempt 及当时 C 诊断快照；
+  超过预算则记录 `hold_recovery_stalled` 并在控制台显示，
+  **不将停在中途的状态报成 PASS，也不隐藏 C 故障**；
+  GUI/UART 保持运行，供人工采集证据。
+- 这些保护能允许一次 C 轨迹取消之后的安全重试，
+  **不能证明根源是 NOT_READY**，更不能把重复出现的 C 故障当作修好；
+  仍需观察具体的固件 `last_fault` 与 Windows 物理复测。
