@@ -106,3 +106,11 @@
 - **边界限制与逐轮验收**：`stage5_qemu_uart_live_gui.py` 仅在headless测试夹具中观察**被施力J2的真实关节状态**，实际偏离请求终点达到3°即停止当前轮外部力矩；同轮不会重复激励。保留至少2°真实偏移门槛；新增各轮外部转矩子步计数和J2峰值，全部轮次均须至少施力一次、超过偏移门槛，并确认C侧HOLD回位次数达到要求。这不是由Python直接复位关节的作弊。
 - **首轮实际通过（Linux）**：[Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) 的 `stage5-live-qemu-measured-state-evidence-Linux` 中：`disturbance_regression.passed=true`，J2三次峰值 **9.25° / 9.23° / 9.21°**，外力子步 **42 / 42 / 42**，`hold_recoveries=3`，`hold_rearms=3`、每次ACK成功，原三段及三次恢复共6次C运动请求，固件fault计数和UART RX dropped均为0。PyBullet 39.37s对固件规划名义39.12s，时钟比0.99365，HOLD最终误差0.02°。该实例的 `passed=true` 经工件JSON和轨迹核查。
 - **仍未覆盖**：上述为Linux **DIRECT+实际外部转矩** 回归，`hold_rearms=3` 明确包含固件侧重规划，不能冒充“PID不重规划被动HOLD也恢复”；Windows PyBullet原生 GUI 鼠标抓取与释放仍须单独验收，不能把DIRECT外力与GUI鼠标操作视为完全等价。Windows版本的相同CI按独立结果更新，不以 Linux 代替。
+
+
+### 2026-10-28 最终跨平台自动化复验（提交 7c28958）
+
+- [Stage5 全量 Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) **6/6 job success**：Linux+Windows 单元回归，C原生固件回归，Linux原生GUI无拖拽，Linux+Windows真QEMU/FreeRTOS/UART/PyBullet DIRECT基本闭环、18ms慢消费者与三次实际外力扰动回位。原版同一外力测试曾失败，本轮真实修复路径通过；未修改 PID、IK、URDF 和生产C运动调度。
+- **Windows工件实证** `stage5-live-qemu-measured-state-evidence-Windows/disturbance-recovery/result.json`：三轮施力42/42/42物理子步，J2实测峰值9.25°/9.21°/9.21°，三次回位3/3、重规划请求ACK 3/3；固件轨迹名义65.66s、PyBullet65.68s，比例**0.999695**；HOLD末误差0.02°，所有固件fault、UART RX dropped、checksum错误均为0；`passed=true`。同平台18ms慢消费者时间比**0.995334**，`passed=true`。
+- **Linux工件实证**：三轮J2峰值9.25°/9.23°/9.21°，恢复3/3，时钟比0.993650，HOLD末误差0.02°，所有固件fault和UART RX dropped均0；`passed=true`。
+- **边界/交付判定**：S5-013原本反复出现的 **自动化 DIRECT/慢消费者与Linux无拖拽GUI** 现已按当前门限验证通过；这不等于精确硬实时锁步。S5-012的 **原生Windows GUI鼠标大扰动**、不重规划的被动PID恢复、真实电机安全联锁、整臂障碍碰撞、长时WCET不在上述结果中，仍不得标记通过。继续保留PR草稿直到本机原生GUI的最终独立验收。
