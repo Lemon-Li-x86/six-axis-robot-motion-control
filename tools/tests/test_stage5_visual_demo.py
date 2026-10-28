@@ -26,6 +26,9 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     FEEDBACK_STEP_S,
     TRACE_HEADER,
     configure_physics_stepping,
+    configure_native_urdf_joint_stops,
+    GUI_JOINT_STOP_NUMERICAL_SLOP_DEG,
+    GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
     assess_clock_alignment,
     joint_feedback_frame,
@@ -268,6 +271,55 @@ class MotionSequencerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "joint limits"):
             closest_physical_motor_targets(
                 (0,) * 6, (0,) * 6, ((float("nan"), 1),) + limits[1:])
+
+    def test_bullet_native_limit_configuration_uses_only_urdf_joint_bounds(self):
+        import math
+        class NativeBullet:
+            JOINT_REVOLUTE = 0
+            def __init__(self):
+                self.configured = []
+            def getJointInfo(self, body, index):
+                assert body == 7
+                info = [None] * 11
+                info[2] = self.JOINT_REVOLUTE
+                info[8] = math.radians(-180 if index == 2 else -360)
+                info[9] = math.radians(180 if index == 2 else 360)
+                info[10] = 28.0 if index >= 3 else 150.0
+                return info
+            def changeDynamics(self, body, index, **kwargs):
+                self.configured.append((body, index, kwargs))
+            def resetJointState(self, *args, **kwargs):
+                raise AssertionError("No synthetic pose correction allowed")
+        physics = NativeBullet()
+        limits = configure_native_urdf_joint_stops(
+            physics, 7, tuple(range(6)))
+        self.assertEqual(len(limits), 6)
+        self.assertEqual(len(physics.configured), 6)
+        self.assertAlmostEqual(math.degrees(limits[2][1]), 180.0)
+        self.assertAlmostEqual(math.degrees(limits[0][1]), 360.0)
+        for _, i, values in physics.configured:
+            self.assertEqual(values["jointLowerLimit"], limits[i][0])
+            self.assertEqual(values["jointUpperLimit"], limits[i][1])
+            self.assertGreaterEqual(values["jointLimitForce"],
+                                    150.0 * GUI_JOINT_STOP_FORCE_MULTIPLIER)
+
+    def test_gui_solver_tolerance_only_allows_tiny_penetration_not_real_overtravel(self):
+        import math
+        model = ((math.radians(-360), math.radians(360)),) * 6
+        previous = (35995,) + (0,) * 5
+        actual = (36005,) + (0,) * 5  # 0.05deg numerical solver penetration
+        validate_physical_feedback_step(
+            actual, previous, model,
+            numerical_slop_deg=GUI_JOINT_STOP_NUMERICAL_SLOP_DEG)
+        with self.assertRaises(JointPhysicalSafetyError):
+            validate_physical_feedback_step(actual, previous, model)
+        with self.assertRaises(JointPhysicalSafetyError):
+            validate_physical_feedback_step(
+                (36100,) + (0,) * 5, previous, model,
+                numerical_slop_deg=GUI_JOINT_STOP_NUMERICAL_SLOP_DEG)
+        with self.assertRaises(ValueError):
+            validate_physical_feedback_step(
+                actual, previous, model, numerical_slop_deg=1.0)
 
     def test_physical_continuity_allows_crossing_180_and_327_degree_boundaries(self):
         import math
