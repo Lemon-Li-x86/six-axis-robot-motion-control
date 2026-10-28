@@ -78,8 +78,6 @@ DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 # Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
-MAX_PAYLOAD_RAW = 32767
-MIN_PAYLOAD_RAW = -MAX_PAYLOAD_RAW - 1  # signed int16; reuse existing protocol boundary.
 TRACE_HEADER = (
     "simulated_time_s", "segment", "tool_x_m", "tool_y_m", "tool_z_m",
     *(f"command_{name}_deg" for name in JOINT_NAMES),
@@ -237,16 +235,17 @@ class MotionSequencer:
 
 
 def validate_goals(goals: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...]:
-    """校验 UART int16 请求格式；真正的关节限位仍由 C 固件判定。"""
+    """Validate canonical UART request angles; C remains joint-limit authority."""
     if not goals:
         raise ValueError("Demonstration needs at least one motion segment")
     normalized = []
     for goal in goals:
         if len(goal) != wire.JOINT_COUNT:
             raise ValueError("Each target must contain exactly six angles")
-        if any(type(value) is not int or abs(value) > MAX_PAYLOAD_RAW
-               for value in goal):
-            raise ValueError("Each centidegree target must fit signed int16")
+        half_turn = round(math.degrees(math.pi) * wire.JOINT_ANGLE_SCALE)
+        if any(type(value) is not int or
+               not -half_turn <= value < half_turn for value in goal):
+            raise ValueError("Each requested UART angle must be canonical [-180,180)deg")
         normalized.append(tuple(goal))
     return tuple(normalized)
 
