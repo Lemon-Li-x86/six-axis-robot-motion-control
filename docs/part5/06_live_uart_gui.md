@@ -219,8 +219,44 @@ Windows 原生鼠标抓取仍必须由真人桌面验收；CI 的 DIRECT 自动�
 ## 2026-10-28 PyBullet 原生鼠标拾取的物理关节挡块（PR #3，待 Windows GUI 人工验收）
 
 - 当前六轴 URDF 全部是 `revolute`，均有实际 `<limit lower/upper/effort>`，不允许为方便交互偷偷改成 `continuous` 或扩大范围。
-- Bullet 默认已能从 URDF 加载 `btMultiBodyJointLimitConstraint`，但约束由数值求解，极强原生鼠标拾取力下可产生少量越界。GUI 模式现在 **只对当前已加载的真实 PyBullet 机器人** 使用 `changeDynamics(...jointLowerLimit=URDF值,jointUpperLimit=URDF值,jointLimitForce=...)` 强化原生物理挡块，适当提高约束求解迭代次数。限位来源仍为 `getJointInfo`，无第二套数值、无 `resetJointState` 动态瞬移、无鼠标事件邮箱和第二套机器人。
+- Bullet 默认已能从 URDF 加载 `btMultiBodyJointLimitConstraint`，但约束由数值求解。用户再次在 Windows 原生鼠标拖拽中观察到实际关节超过 +360°，**证明单靠 `jointLimitForce` 和 solver iteration 并不足够**。GUI 模式仍采用 `changeDynamics(...jointLowerLimit=URDF值,jointUpperLimit=URDF值,jointLimitForce=...)` 作为首层物理限位，但不再把它宣称为绝对挡块；限位来源仍为 `getJointInfo`，无第二套数值、无鼠标事件邮箱和第二套机器人。
 - 约束强度系数和 solver 迭代属于**仿真数值夹具**，不对应实物机械强度或安全额定值。额外 0.10° 的 GUI 求解器穿透容差只决定是否触发重大越界故障，**不是允许的机械行程**；实际测量不裁剪，依然存 CSV 并按原 UART 协议规范化传输。
 - 新增 `test_stage5_native_joint_stops.py`：在真实 PyBullet DIRECT 中只于初始化时设置 J1 接近上限的姿态，连续施加真实关节力矩，测量最大位置，再反向施力验证没有被冻结。此测试**不能证明 GUI 原生鼠标抓取已成功阻挡**，后者需要 Windows 人工反复拖拽观察并记录位置峰值与 ACK。
 - 拖拽靠近上限应由 Bullet 物理约束阻挡，**不应仅靠 Python 检测越界后冻结进程**。若原生拾取仍能将关节推出 URDF 物理范围，收集 `result.json` 的 `fault_type` 和 `joint_trace.csv` 原始角度再修，绝不绕过固件安全门禁或伪造实际位置。
 
+
+
+### Windows 重复大幅拖拽仍越界：补充 GUI 交互硬限位（2026-10-28）
+
+真实用户再次观察到 J1 被原生 PyBullet mouse-picking 拖到 +360° 之外，
+证明之前只加大 Bullet 约束力的版本 **未通过原生鼠标验收**。
+CI 在 DIRECT 下施加固定电机力矩并未模拟桌面原生 mouse-picking 约束；
+该测试只能证明物理 joint stop 在该力矩夹具下工作，不能外推。
+
+现在仅在 **GUI 物理反馈路径** 每次 `stepSimulation()` 结束后调用
+`enforce_gui_joint_hard_stops()`：
+1. 读取 **同一个 PyBullet 物理机器人** 的六轴真实 `getJointStates()`；
+2. 对超过同一 URDF `getJointInfo` 上下界的关节，以 `resetJointState` 
+   把**真实物理状态本身**纠正到最近行程边缘，并将该轴速度置 0；
+   六轴其他正常状态不修改。**这是有意识的 kinematic hard-stop
+   workaround，不是 Bullet 物理碰撞反作用，也不是伪造额外 GUI 机器人**。
+3. 修正发生在本轮 UART 连续角采样与下一帧规范化反馈之前；
+   所以 C 反馈、GUI 视觉、CSV 轨迹取自纠正后的单一物理状态。
+4. `uart_live.jsonl` 增加 `gui_urdf_hard_stop`（按墙钟最多每秒一个含实际
+   越界角度的样本）；`result.json` 增加总修正次数、末次修正前角度与
+   限位值。用户看到“撞限位”不等于纯物理验证通过。
+5. 若发生非有限角度或单帧不可解绕的异常，仍按独立的严重故障处理，
+   不应伪造反馈、吞异常或把限制方案默认为硬件安全认证。
+
+局限：GUI 当前每条 UART 反馈执行一次带 10 个内部 1ms substeps
+的 Bullet API 步进。因此边界保护只保证**每条反馈采样后的 GUI
+物理状态**不越界，不能证明内部每一个 1ms substep 完全未穿透；
+原生 GUI 渲染由独立线程驱动，极端鼠标强拉仍可能看见短暂视觉抖动。
+若要求连单个内部 substep 都严格限位，需进一步改鼠标拾取交互机制
+或在每个子步执行约束；不能再谎称“完全物理、绝不越界”。
+
+手动验收：原生 GUI HOLD 拖拽 J1/J3 向上下限反复施力，
+观察 `[JOINT STOP]`、UART RX/ACK 是否持续增长，放手能否回位；
+停止运行后比较 `joint_trace.csv` 的最大实测角、
+`uart_live.jsonl` 的修正前角和 `result.json` 计数。
+此项尚未取得 Windows 桌面鼠标通过证据，PR 保持 draft。
