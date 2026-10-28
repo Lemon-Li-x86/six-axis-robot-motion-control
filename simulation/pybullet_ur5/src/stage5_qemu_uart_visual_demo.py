@@ -720,9 +720,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 # 仅在运动请求已被接受后执行固件位置目标；启动
                                 # 时始终保持首次实测姿态，不能执行历史演示角度。
                                 if sequencer.accepted or (sequencer.done and options.interactive_hold):
-                                    physical_motor_targets_rad = closest_physical_motor_targets(
-                                        targets, last_measured, joint_limits_rad
-                                    )
+                                    # Preserve the original servo path for
+                                    # ordinary single-turn operation. Only
+                                    # when the *physical* state left canonical
+                                    # range do we need to lift equivalent turns.
+                                    canonical_half = round(
+                                        math.degrees(math.pi)
+                                        * wire.JOINT_ANGLE_SCALE)
+                                    if all(-canonical_half <= raw < canonical_half
+                                           for raw in last_measured):
+                                        physical_motor_targets_rad = tuple(
+                                            math.radians(v / wire.JOINT_ANGLE_SCALE)
+                                            for v in targets)
+                                    else:
+                                        physical_motor_targets_rad = closest_physical_motor_targets(
+                                            targets, last_measured, joint_limits_rad)
                                     p.setJointMotorControlArray(
                                         arm, joints, p.POSITION_CONTROL,
                                         targetPositions=physical_motor_targets_rad,
