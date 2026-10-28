@@ -79,6 +79,7 @@ DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
 SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 MAX_PAYLOAD_RAW = 32767
+MIN_PAYLOAD_RAW = -MAX_PAYLOAD_RAW - 1  # signed int16; reuse existing protocol boundary.
 TRACE_HEADER = (
     "simulated_time_s", "segment", "tool_x_m", "tool_y_m", "tool_z_m",
     *(f"command_{name}_deg" for name in JOINT_NAMES),
@@ -249,10 +250,68 @@ def validate_goals(goals: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...
     return tuple(normalized)
 
 
+class JointFeedbackRangeError(ValueError):
+    """Actual PyBullet measurement cannot fit the existing signed-int16 UART frame."""
+
+    def __init__(self, index: int, raw_centideg: int):
+        self.joint_index = index
+        self.joint_name = JOINT_NAMES[index]
+        self.raw_centideg = raw_centideg
+        self.angle_deg = raw_centideg / wire.JOINT_ANGLE_SCALE
+        super().__init__(
+            f"Real {self.joint_name} measurement {self.angle_deg:.2f}deg "
+            f"(raw={raw_centideg}) exceeds UART signed-int16 range "
+            f"[{MIN_PAYLOAD_RAW / wire.JOINT_ANGLE_SCALE:.2f}, "
+            f"{MAX_PAYLOAD_RAW / wire.JOINT_ANGLE_SCALE:.2f}]deg; "
+            "no clipping or modulo conversion performed"
+        )
+
+
 def joint_feedback_frame(raw: Sequence[int]) -> bytes:
-    """按现有协议编码模拟关节测量值；不复制校验和计算。"""
+    """Encode actual measured angles; reject unrepresentable poses without fabrication."""
+    if len(raw) != wire.JOINT_COUNT:
+        raise ValueError("Joint-state feedback requires exactly six angles")
+    for index, value in enumerate(raw):
+        if type(value) is not int:
+            raise TypeError(f"Joint {JOINT_NAMES[index]} feedback is not an integer")
+        if not MIN_PAYLOAD_RAW <= value <= MAX_PAYLOAD_RAW:
+            raise JointFeedbackRangeError(index, value)
     payload = struct.pack("<" + str(wire.JOINT_COUNT) + "h", *raw)
     return integration.frame(wire.CMD_JOINT_STATE, payload)
+
+
+def preserve_gui_after_feedback_range_fault(
+    bullet, qemu, stop_requested: Callable[[], bool] | None,
+    error: JointFeedbackRangeError,
+) -> None:
+    """Freeze the real GUI on an unsafe protocol state; let the user inspect and quit.
+
+    Do not advance physics, send false UART feedback, or restart firmware.
+    The original exception still propagates so the validation remains failed.
+    """
+    if qemu is not None and qemu.poll() is None:
+        qemu.terminate()
+    print(f"[SAFE STOP] {error}. Physics and QEMU stopped; press Q in the GUI to exit.",
+          flush=True)
+    try:
+        bullet.addUserDebugText(
+            "FEEDBACK RANGE FAULT / PHYSICS STOPPED / PRESS Q TO EXIT",
+            [-0.7, 0.0, 0.85], textColorRGB=[1.0, 0.1, 0.1],
+            textSize=1.35, lifeTime=0,
+        )
+    except bullet.error:
+        # Keep the failure report even if the native renderer is disconnected.
+        pass
+    while bullet.isConnected():
+        if stop_requested is not None and stop_requested():
+            break
+        try:
+            if (bullet.getKeyboardEvents().get(ord("q"), 0)
+                    & bullet.KEY_WAS_TRIGGERED):
+                break
+        except bullet.error:
+            break
+        time.sleep(0.05)
 
 
 def write_trace(output_dir: Path, rows: list[dict]) -> None:
@@ -850,9 +909,35 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             completed_successfully = bool(result["passed"])
             return result
     except BaseException as error:
-        (output_dir / "result.json").write_text(json.dumps(dict(passed=False,
-            error=repr(error), target_frames=target_frames, feedback_acks=feedback_acks,
-            segments_settled=sequencer.completed, diagnostics=diagnostic_values), indent=2), encoding="utf-8")
+        failure = dict(passed=False, error=repr(error),
+            target_frames=target_frames, feedback_acks=feedback_acks,
+            segments_settled=sequencer.completed, diagnostics=diagnostic_values)
+        if isinstance(error, JointFeedbackRangeError):
+            failure.update(
+                fault_type="joint_feedback_out_of_range",
+                fault_joint=error.joint_name,
+                fault_joint_index=error.joint_index,
+                fault_raw_centideg=error.raw_centideg,
+                fault_angle_deg=error.angle_deg,
+                last_measured_raw=last_measured,
+            )
+            audit.write(json.dumps(dict(event="joint_feedback_out_of_range",
+                joint=error.joint_name, raw_centideg=error.raw_centideg,
+                actual_angle_deg=error.angle_deg, target_frames=target_frames,
+                feedback_acks=feedback_acks)) + "\n")
+        live_trace.flush()
+        audit.flush()
+        (output_dir / "result.json").write_text(
+            json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
+        if (isinstance(error, JointFeedbackRangeError)
+                and not options.headless and options.interactive_hold and client >= 0):
+            try:
+                preserve_gui_after_feedback_range_fault(
+                    p, qemu, stop_requested, error)
+            except Exception as presentation_error:
+                # A renderer failure never replaces the original protocol fault.
+                print(f"[SAFE STOP] GUI preservation unavailable: "
+                      f"{presentation_error!r}", flush=True)
         raise
     finally:
         # QEMU 停止后才保持 GUI，避免固件在暂停反馈时误报失联。
