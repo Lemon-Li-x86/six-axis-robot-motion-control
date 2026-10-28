@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/stage5-system-integration-2026-10-27
+      - feat/stage5-apf-path-20261028
     paths:
       - 'firmware/freertos_demo/**'
       - 'tools/check_protocol_mirror.py'
