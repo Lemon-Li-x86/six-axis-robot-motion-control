@@ -68,7 +68,6 @@ SETTLE_FRAME_COUNT = 15
 # Interactive HOLD policies (not UR5 model parameters or PID gains).
 HOLD_DEVIATION_TRIGGER_DEG = 0.5
 HOLD_STAGNANT_PERIOD_S = 0.5
-HOLD_MAX_REPLAN_ATTEMPTS = 8
 HOLD_TRACE_LIFETIME_S = 10.0
 # Log costly UART batches at most once a second. Diagnostic-only, no pacing.
 UART_BATCH_WARNING_FRAMES = 24
@@ -195,6 +194,46 @@ def joint_motor_efforts_from_urdf(
             raise ValueError(f"{name} lacks a positive revolute URDF effort")
         efforts.append(effort)
     return tuple(efforts)
+
+
+def joint_motor_velocity_caps(
+    bullet, arm: int, joints: Sequence[int],
+    firmware_max_velocity_deg_s: Sequence[float],
+) -> tuple[float, ...]:
+    """Bound GUI actuator speed by both the firmware config and loaded URDF.
+
+    Bullet does not automatically enforce the URDF's velocity field in
+    POSITION_CONTROL. The physical mouse constraint can still exert external
+    forces; this limits the commanded actuator, not arbitrary picking forces.
+    """
+    if len(joints) != wire.JOINT_COUNT or len(firmware_max_velocity_deg_s) != wire.JOINT_COUNT:
+        raise ValueError("Motor velocity caps require six joints and six C limits")
+    caps = []
+    for name, joint, firmware_deg_s in zip(
+            JOINT_NAMES, joints, firmware_max_velocity_deg_s):
+        urdf_rad_s = float(bullet.getJointInfo(arm, joint)[11])
+        if not (math.isfinite(urdf_rad_s) and urdf_rad_s > 0
+                and math.isfinite(firmware_deg_s) and firmware_deg_s > 0):
+            raise ValueError(f"{name} has an invalid URDF/firmware motor velocity limit")
+        caps.append(min(urdf_rad_s, math.radians(firmware_deg_s)))
+    return tuple(caps)
+
+
+def hold_continuous_goal_raw(
+    canonical_goal: Sequence[int],
+    measured: Sequence[int],
+    joint_limits_rad: Sequence[tuple[float, float]],
+) -> tuple[int, ...]:
+    """Mirror the C motion_limits_unwrap_nearest choice for a HOLD replan.
+
+    The canonical +30deg goal may legitimately become continuous -330deg
+    when a joint was picked near -340deg. Comparing raw -330 against +30
+    would produce a false 360deg recovery error.
+    """
+    positions_rad = closest_physical_motor_targets(
+        canonical_goal, measured, joint_limits_rad)
+    return tuple(round(math.degrees(value) * wire.JOINT_ANGLE_SCALE)
+                 for value in positions_rad)
 
 
 def enforce_gui_joint_hard_stops(
@@ -636,8 +675,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
-    trajectory_period_s = (json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
-                           ["task_period_ms"]["trajectory"] / 1000.0)
+    firmware_defaults = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
+    trajectory_period_s = firmware_defaults["task_period_ms"]["trajectory"] / 1000.0
+    firmware_max_velocity_deg_s = tuple(
+        firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
     feedback_acks = 0
     target_frames = 0
@@ -662,6 +703,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     motor_target_rebase_pending = True
     hold_request_sequence = None
     hold_request_at = 0.0
+    hold_request_goal_raw = None
+    hold_goal_raw = tuple(sequencer.goals[-1])
     hold_rearms = 0
     hold_rearm_acks = 0
     hold_recoveries = 0
@@ -671,6 +714,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     hold_replan_needed = False
     recovering = False
     recovery_attempts = 0
+    recovery_replan_sent = False
     recovery_quiet = 0
     recovery_settled = 0
     recovery_previous = None
@@ -738,6 +782,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             arm = p.loadURDF(str(URDF), useFixedBase=True)
             joints = joint_indices(p, arm)
             motor_forces_nm = joint_motor_efforts_from_urdf(p, arm, joints)
+            motor_velocity_caps_rad_s = joint_motor_velocity_caps(
+                p, arm, joints, firmware_max_velocity_deg_s)
+            # Only GUI mouse-picking needs an additional motor-side speed
+            # safeguard. Keep the established DIRECT acceptance path intact.
+            motor_velocity_kwargs = (
+                {"maxVelocities": motor_velocity_caps_rad_s}
+                if not options.headless else {})
             if not options.headless:
                 joint_limits_rad = configure_native_urdf_joint_stops(
                     p, arm, joints)
@@ -754,7 +805,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             p.setJointMotorControlArray(
                 arm, joints, p.POSITION_CONTROL,
                 targetPositions=physical_motor_targets_rad,
-                forces=motor_forces_nm,
+                forces=motor_forces_nm, **motor_velocity_kwargs,
             )
             for _ in range(warmup_calls):
                 p.stepSimulation()
@@ -872,7 +923,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     p.setJointMotorControlArray(
                                         arm, joints, p.POSITION_CONTROL,
                                         targetPositions=physical_motor_targets_rad,
-                                        forces=motor_forces_nm,
+                                        forces=motor_forces_nm, **motor_velocity_kwargs,
                                     )
                                 # A DIRECT frame is ten 1ms physics steps.
                                 # Force/torque fixtures must act at EACH step,
@@ -925,24 +976,26 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 # the final requested joint goal.
                                 if sequencer.done and options.interactive_hold and not ending:
                                     deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
-                                                    for a,b in zip(measured, sequencer.goals[-1]))
+                                                    for a,b in zip(measured, hold_goal_raw))
                                     if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
                                         recovery_stalled_reported = False
                                         recovering = True
                                         recovery_attempts = 0
+                                        recovery_replan_sent = False
                                         recovery_quiet = 0
                                         recovery_settled = 0
                                         recovery_previous = None
                                         audit.write(json.dumps(dict(event="hold_deviation",
                                             error_deg=deviation)) + "\n")
                                 if recovering and not ending:
-                                    error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, sequencer.goals[-1]))
+                                    error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, hold_goal_raw))
                                     recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
                                     quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
                                     recovery_quiet = recovery_quiet+1 if quiet else 0
                                     recovery_previous = tuple(measured)
                                     if recovery_settled >= SETTLE_FRAME_COUNT:
                                         recovering = False
+                                        recovery_replan_sent = False
                                         hold_recoveries += 1
                                         audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
                                             attempts=recovery_attempts)) + "\n")
@@ -959,26 +1012,45 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                     error_deg=error,
                                                 )) + "\n")
                                                 recovery_stalled_reported = True
-                                        else:
-                                            # Normal mode: bounded replan from current
-                                            # feedback using the SAME firmware goal.
-                                            if recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS:
-                                                raise RuntimeError(
-                                                    f"Hold recovery did not converge: {error:.2f}deg")
+                                        elif not recovery_replan_sent:
+                                            # One request per deviation episode.
+                                            # Repeated replans while the C planner
+                                            # is executing a long, speed-limited
+                                            # unwind keep restarting its trajectory.
                                             hold_replan_needed = True
+                                        elif not recovery_stalled_reported:
+                                            # Keep the GUI/QEMU alive and the run
+                                            # unsatisfied; never call a stalled
+                                            # recovery a PASS or restart it 8 times.
+                                            audit.write(json.dumps(dict(
+                                                event="hold_recovery_waiting",
+                                                error_deg=error,
+                                                physical_goal_raw=hold_goal_raw,
+                                                attempts=recovery_attempts,
+                                            )) + "\n")
+                                            recovery_stalled_reported = True
                                         recovery_quiet = 0
                                 if hold_replan_needed and hold_request_sequence is None and not ending:
                                     # Replan from measured pose using the original
                                     # C controller and identical final goal.
                                     hold_rearms += 1
                                     recovery_attempts += 1
+                                    recovery_replan_sent = True
+                                    # The firmware chooses this nearest legal
+                                    # continuous goal from its real feedback.
+                                    # Keep the wire request canonical, but
+                                    # evaluate settling in the same turn domain.
+                                    hold_request_goal_raw = hold_continuous_goal_raw(
+                                        sequencer.goals[-1], measured, joint_limits_rad)
                                     hold_request_sequence = (sequencer.sequence + hold_rearms) & 0xff
                                     hold_request_at = time.monotonic()
                                     payload_request = bytes((hold_request_sequence,)) + struct.pack("<6h", *sequencer.goals[-1])
                                     sock.sendall(integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload_request))
                                     hold_replan_needed = False
                                     audit.write(json.dumps(dict(event="hold_replan", sequence=hold_request_sequence,
-                                        goal_raw=sequencer.goals[-1], measured_raw=measured)) + "\n")
+                                        goal_raw=sequencer.goals[-1],
+                                        continuous_goal_raw=hold_request_goal_raw,
+                                        measured_raw=measured)) + "\n")
                                 tool_xyz = p.getLinkState(
                                     arm, p.getNumJoints(arm) - 1,
                                     computeForwardKinematics=True,
@@ -1074,7 +1146,17 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     hold_request_sequence = None
                                     hold_rearm_acks += 1
                                     motor_target_rebase_pending = True
-                                    audit.write(json.dumps(dict(event="hold_replan_ack", sequence=seq)) + "\n")
+                                    if hold_request_goal_raw is None:
+                                        raise RuntimeError("HOLD replan ACK without a selected continuous goal")
+                                    hold_goal_raw = hold_request_goal_raw
+                                    hold_request_goal_raw = None
+                                    recovery_quiet = 0
+                                    recovery_previous = None
+                                    recovery_settled = 0
+                                    recovery_stalled_reported = False
+                                    audit.write(json.dumps(dict(
+                                        event="hold_replan_ack", sequence=seq,
+                                        continuous_goal_raw=hold_goal_raw)) + "\n")
                                     continue
                                 sequencer.acknowledge(payload)
                                 motor_target_rebase_pending = True
@@ -1142,7 +1224,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 and hold_rearms == hold_rearm_acks
                 and not recovering
                 and (not options.interactive_hold or max(abs(a-b)/wire.JOINT_ANGLE_SCALE
-                    for a,b in zip(last_measured, sequencer.goals[-1])) <= SETTLE_TOLERANCE_DEG)
+                    for a,b in zip(last_measured, hold_goal_raw)) <= SETTLE_TOLERANCE_DEG)
                 and parser.bad_checksum == 0
                 and diagnostic_values.get("requests_accepted", -1)
                     >= len(sequencer.goals)
@@ -1185,8 +1267,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "hold_observe_only": options.hold_observe_only,
                 "diagnostics_timeout_s": options.diagnostics_timeout_s,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
-                    for a,b in zip(last_measured, sequencer.goals[-1])),
+                    for a,b in zip(last_measured, hold_goal_raw)),
                 "hold_recoveries": hold_recoveries,
+                "hold_continuous_goal_raw": hold_goal_raw,
                 "gui_joint_stop_corrections": gui_joint_stop_corrections,
                 "gui_joint_stop_last": gui_joint_stop_last,
                 "gui_joint_stop_implementation": (
