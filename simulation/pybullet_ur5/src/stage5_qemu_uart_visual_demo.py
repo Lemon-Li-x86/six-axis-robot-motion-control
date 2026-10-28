@@ -310,6 +310,58 @@ def closest_physical_motor_targets(
     return tuple(lifted)
 
 
+class JointPhysicalSafetyError(ValueError):
+    """A real measured motion violates URDF travel or aliases UART turn tracking."""
+
+    def __init__(self, index: int, raw_centideg: int,
+                 fault_type: str, explanation: str):
+        self.joint_index = index
+        self.joint_name = JOINT_NAMES[index]
+        self.raw_centideg = raw_centideg
+        self.angle_deg = raw_centideg / wire.JOINT_ANGLE_SCALE
+        self.fault_type = fault_type
+        super().__init__(
+            f"{self.joint_name} at {self.angle_deg:.2f}deg: {explanation}"
+        )
+
+
+def validate_physical_feedback_step(
+    current: Sequence[int], previous: Sequence[int],
+    joint_limits_rad: Sequence[tuple[float, float]],
+) -> None:
+    """Guard C driver's shortest-delta reconstruction and URDF joint travel.
+
+    Canonical UART feedback is only unambiguous if no actual joint moves
+    180deg or more between samples. Joint travel is read from loaded URDF,
+    not a second independently maintained limit table.
+    """
+    if (len(current) != wire.JOINT_COUNT
+            or len(previous) != wire.JOINT_COUNT
+            or len(joint_limits_rad) != wire.JOINT_COUNT):
+        raise ValueError("Physical feedback validation requires six joints")
+    half_turn_raw = round(math.degrees(math.pi) * wire.JOINT_ANGLE_SCALE)
+    for index, (actual, last, (lower, upper)) in enumerate(
+            zip(current, previous, joint_limits_rad)):
+        if type(actual) is not int or type(last) is not int:
+            raise TypeError("Physical feedback raw values must be integers")
+        # One centidegree of tolerance covers quantization at exact limits.
+        low_raw = round(math.degrees(lower) * wire.JOINT_ANGLE_SCALE) - 1
+        high_raw = round(math.degrees(upper) * wire.JOINT_ANGLE_SCALE) + 1
+        if actual < low_raw or actual > high_raw:
+            raise JointPhysicalSafetyError(
+                index, actual, "urdf_joint_travel_exceeded",
+                f"outside URDF travel [{math.degrees(lower):.2f}, "
+                f"{math.degrees(upper):.2f}]deg. Physics stopped, not clamped",
+            )
+        if abs(actual - last) >= half_turn_raw:
+            raise JointPhysicalSafetyError(
+                index, actual, "ambiguous_multi_turn_feedback",
+                f"{(actual - last) / wire.JOINT_ANGLE_SCALE:.2f}deg "
+                "change in one UART physical sample cannot be unwrapped "
+                "unambiguously by the existing C motor driver",
+            )
+
+
 class JointFeedbackRangeError(ValueError):
     """A caller bypassed canonical conversion before encoding UART feedback."""
 
@@ -340,9 +392,9 @@ def joint_feedback_frame(raw: Sequence[int]) -> bytes:
     return integration.frame(wire.CMD_JOINT_STATE, payload)
 
 
-def preserve_gui_after_feedback_range_fault(
+def preserve_gui_after_physics_fault(
     bullet, qemu, stop_requested: Callable[[], bool] | None,
-    error: JointFeedbackRangeError,
+    error: ValueError,
 ) -> None:
     """Freeze the real GUI on an unsafe protocol state; let the user inspect and quit.
 
@@ -355,7 +407,7 @@ def preserve_gui_after_feedback_range_fault(
           flush=True)
     try:
         bullet.addUserDebugText(
-            "FEEDBACK RANGE FAULT / PHYSICS STOPPED / PRESS Q TO EXIT",
+            "PHYSICAL FEEDBACK FAULT / PHYSICS STOPPED / PRESS Q TO EXIT",
             [-0.7, 0.0, 0.85], textColorRGB=[1.0, 0.1, 0.1],
             textSize=1.35, lifeTime=0,
         )
@@ -591,12 +643,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 raise TimeoutError("FreeRTOS ProtocolRX did not become ready")
 
             # 首个反馈主动发送：ProtocolTX 在未收到反馈前不会发布目标。
-            sock.sendall(joint_feedback_frame(
-                canonical_physical_feedback(angles_raw(p, arm, joints))))
             joint_limits_rad = tuple(
                 (p.getJointInfo(arm, index)[8], p.getJointInfo(arm, index)[9])
                 for index in joints
             )
+            sock.sendall(joint_feedback_frame(
+                canonical_physical_feedback(angles_raw(p, arm, joints))))
             start_wall = time.monotonic()
             last_frame_wall = start_wall
             while True:
@@ -688,6 +740,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 )
                                 target_frames += 1
                                 measured = angles_raw(p, arm, joints)
+                                validate_physical_feedback_step(
+                                    measured, last_measured, joint_limits_rad)
                                 last_measured = tuple(measured)
                                 sock.sendall(joint_feedback_frame(
                                     canonical_physical_feedback(measured)))
@@ -987,16 +1041,18 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         failure = dict(passed=False, error=repr(error),
             target_frames=target_frames, feedback_acks=feedback_acks,
             segments_settled=sequencer.completed, diagnostics=diagnostic_values)
-        if isinstance(error, JointFeedbackRangeError):
+        if isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError)):
+            fault_type = getattr(
+                error, "fault_type", "joint_feedback_out_of_range")
             failure.update(
-                fault_type="joint_feedback_out_of_range",
+                fault_type=fault_type,
                 fault_joint=error.joint_name,
                 fault_joint_index=error.joint_index,
                 fault_raw_centideg=error.raw_centideg,
                 fault_angle_deg=error.angle_deg,
                 last_measured_raw=last_measured,
             )
-            audit.write(json.dumps(dict(event="joint_feedback_out_of_range",
+            audit.write(json.dumps(dict(event=fault_type,
                 joint=error.joint_name, raw_centideg=error.raw_centideg,
                 actual_angle_deg=error.angle_deg, target_frames=target_frames,
                 feedback_acks=feedback_acks)) + "\n")
@@ -1004,10 +1060,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         audit.flush()
         (output_dir / "result.json").write_text(
             json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
-        if (isinstance(error, JointFeedbackRangeError)
+        if (isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError))
                 and not options.headless and options.interactive_hold and client >= 0):
             try:
-                preserve_gui_after_feedback_range_fault(
+                preserve_gui_after_physics_fault(
                     p, qemu, stop_requested, error)
             except Exception as presentation_error:
                 # A renderer failure never replaces the original protocol fault.
