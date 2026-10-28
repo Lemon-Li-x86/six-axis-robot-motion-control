@@ -37,6 +37,8 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     closest_physical_motor_targets,
     continuous_firmware_servo_targets,
     joint_motor_efforts_from_urdf,
+    joint_motor_velocity_caps,
+    hold_continuous_goal_raw,
     JointFeedbackRangeError,
     preserve_gui_after_physics_fault,
     validate_physical_feedback_step,
@@ -340,6 +342,51 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(bullet.last_body, 7)
         with self.assertRaises(ValueError):
             joint_motor_efforts_from_urdf(bullet, 7, tuple(range(5)))
+
+    def test_replan_hold_compares_to_continuous_c_goal_not_canonical_goal(self):
+        import math
+        rad = math.radians
+        limits = ((rad(-360), rad(360)),) * 6
+        # The raw 366.76-degree "error" reported by the old HOLD code:
+        # +30deg request near -336.76deg physical is unwrapped to -330deg
+        # by firmware motion_limits_unwrap_nearest.
+        original = (3000,) + (0,) * 5
+        physical = (-33676,) + (0,) * 5
+        continuous = hold_continuous_goal_raw(original, physical, limits)
+        self.assertEqual(continuous[0], -33000)
+        self.assertAlmostEqual(abs(physical[0] - continuous[0]) / 100, 6.76)
+        self.assertAlmostEqual(abs(physical[0] - original[0]) / 100, 366.76)
+        # The opposite direction is not an arbitrary modulo-only equivalence:
+        # +390deg is illegal for a [+/-360deg] model. C must unwind to +30.
+        positive = hold_continuous_goal_raw(
+            original, (35000,) + (0,) * 5, limits)
+        self.assertEqual(positive[0], 3000)
+        # For joints without a full revolution of travel there is only
+        # the canonical pose, never an invented extra turn.
+        narrow = ((rad(-180), rad(180)),) + limits[1:]
+        self.assertEqual(
+            hold_continuous_goal_raw(
+                (-17000,) + (0,) * 5, (17000,) + (0,) * 5,
+                narrow)[0], -17000)
+
+    def test_motor_velocity_caps_use_firmware_settings_and_urdf_bounds(self):
+        import math
+        class Bullet:
+            def getJointInfo(self, body, index):
+                info = [None] * 12
+                info[11] = [3.15, 3.15, 3.15, 3.2, 3.2, 3.2][index]
+                return info
+        caps = joint_motor_velocity_caps(
+            Bullet(), 9, tuple(range(6)), [15] * 6)
+        for cap in caps:
+            self.assertAlmostEqual(cap, math.radians(15))
+        smaller = joint_motor_velocity_caps(
+            Bullet(), 9, tuple(range(6)), [15, 15, 15, 200, 200, 200])
+        self.assertAlmostEqual(smaller[0], math.radians(15))
+        self.assertAlmostEqual(smaller[-1], 3.2)
+        with self.assertRaises(ValueError):
+            joint_motor_velocity_caps(
+                Bullet(), 9, tuple(range(6)), [0] * 6)
 
     def test_gui_stop_clamps_only_out_of_urdf_joint_with_velocity_zero(self):
         import math
