@@ -68,6 +68,10 @@ SETTLE_FRAME_COUNT = 15
 # Interactive HOLD policies (not UR5 model parameters or PID gains).
 HOLD_DEVIATION_TRIGGER_DEG = 0.5
 HOLD_STAGNANT_PERIOD_S = 0.5
+# A failed/stopped C trajectory may need one bounded rearm. Never restart a
+# slowly moving C plan merely because measured joint movement is small.
+HOLD_RETRY_COOLDOWN_S = 3.0
+HOLD_MAX_REPLAN_ATTEMPTS = 3
 HOLD_TRACE_LIFETIME_S = 10.0
 # Log costly UART batches at most once a second. Diagnostic-only, no pacing.
 UART_BATCH_WARNING_FRAMES = 24
@@ -105,6 +109,28 @@ class DemoOptions:
     opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
     hold_observe_only: bool = False  # Passive PID observation, no replan requests.
+
+
+def hold_replan_allowed(
+    measured_quiet_frames: int,
+    command_quiet_frames: int,
+    attempts: int,
+    frames_since_last_request: int,
+) -> bool:
+    """A stalled HOLD needs BOTH motor command and physical position quiet.
+
+    C trajectories may legitimately take >20s to unwind a full rotation at
+    the configured max speed. Neither a 0.5s measured pause alone nor a
+    large remaining goal error means that the C planner has stopped.
+    """
+    quiet_frames = math.ceil(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+    cooldown_frames = math.ceil(HOLD_RETRY_COOLDOWN_S / FEEDBACK_STEP_S)
+    return (
+        0 <= attempts < HOLD_MAX_REPLAN_ATTEMPTS
+        and measured_quiet_frames >= quiet_frames
+        and command_quiet_frames >= quiet_frames
+        and (attempts == 0 or frames_since_last_request >= cooldown_frames)
+    )
 
 
 def assess_clock_alignment(trajectory_samples: int | None,
@@ -745,6 +771,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     recovery_quiet = 0
     recovery_settled = 0
     recovery_previous = None
+    recovery_previous_motor_targets = None
+    recovery_command_quiet = 0
+    last_hold_replan_frame = 0
     recovery_stalled_reported = False
     last_measured = tuple(START_RAW)
     live_trace = (output_dir / "joint_trace.csv").open("w", encoding="utf-8", newline="")
@@ -1005,8 +1034,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         recovery_attempts = 0
                                         recovery_replan_sent = False
                                         recovery_quiet = 0
+                                        recovery_command_quiet = 0
                                         recovery_settled = 0
                                         recovery_previous = None
+                                        recovery_previous_motor_targets = None
                                         audit.write(json.dumps(dict(event="hold_deviation",
                                             error_deg=deviation)) + "\n")
                                 if recovering and not ending:
@@ -1014,50 +1045,86 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
                                     quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
                                     recovery_quiet = recovery_quiet+1 if quiet else 0
+                                    # C motor targets are the authoritative
+                                    # signal for whether planning still progresses.
+                                    # A slow/temporarily stationary *arm* is not
+                                    # evidence that the C planner has stopped.
+                                    motor_quiet = (
+                                        recovery_previous_motor_targets is not None
+                                        and all(
+                                            abs(current - prior) <= 1e-10
+                                            for current, prior in zip(
+                                                physical_motor_targets_rad,
+                                                recovery_previous_motor_targets)
+                                        )
+                                    )
+                                    recovery_command_quiet = (
+                                        recovery_command_quiet + 1 if motor_quiet else 0)
                                     recovery_previous = tuple(measured)
+                                    recovery_previous_motor_targets = tuple(
+                                        physical_motor_targets_rad)
                                     if recovery_settled >= SETTLE_FRAME_COUNT:
                                         recovering = False
                                         recovery_replan_sent = False
                                         hold_recoveries += 1
                                         audit.write(json.dumps(dict(event="hold_recovered", error_deg=error,
                                             attempts=recovery_attempts)) + "\n")
-                                    elif (recovery_quiet >= round(
+                                    elif (recovery_quiet >= math.ceil(
+                                            HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
+                                          and recovery_command_quiet >= math.ceil(
                                             HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
                                           and hold_request_sequence is None):
+                                        # Both the real motor command and the
+                                        # measured arm have stopped away from
+                                        # the chosen C goal. This differs from
+                                        # legitimate slow unwinding or following.
                                         if options.hold_observe_only:
-                                            # Passive experiment: keep the C PID active,
-                                            # never add another motion request or stop
-                                            # solely because the joint error persists.
                                             if not recovery_stalled_reported:
                                                 audit.write(json.dumps(dict(
                                                     event="hold_observe_stalled",
                                                     error_deg=error,
+                                                    diagnostics=diagnostic_values.copy(),
                                                 )) + "\n")
                                                 recovery_stalled_reported = True
-                                        elif not recovery_replan_sent:
-                                            # One request per deviation episode.
-                                            # Repeated replans while the C planner
-                                            # is executing a long, speed-limited
-                                            # unwind keep restarting its trajectory.
+                                        elif hold_replan_allowed(
+                                                recovery_quiet, recovery_command_quiet,
+                                                recovery_attempts,
+                                                target_frames - last_hold_replan_frame):
+                                            # Re-submit to the existing C motion
+                                            # queue. ACK is queue admission, not
+                                            # trajectory success. Retry only on
+                                            # a confirmed stopped actuator target,
+                                            # with cooldown and bounded count.
                                             hold_replan_needed = True
-                                        elif not recovery_stalled_reported:
-                                            # Keep the GUI/QEMU alive and the run
-                                            # unsatisfied; never call a stalled
-                                            # recovery a PASS or restart it 8 times.
+                                        elif (recovery_attempts >= HOLD_MAX_REPLAN_ATTEMPTS
+                                              and not recovery_stalled_reported):
                                             audit.write(json.dumps(dict(
-                                                event="hold_recovery_waiting",
+                                                event="hold_recovery_stalled",
                                                 error_deg=error,
                                                 physical_goal_raw=hold_goal_raw,
                                                 attempts=recovery_attempts,
+                                                diagnostics=diagnostic_values.copy(),
                                             )) + "\n")
+                                            print(
+                                                f"[HOLD STALLED] C motor commands stopped"
+                                                f" {error:.2f}deg from the selected goal;"
+                                                f" attempts={recovery_attempts};"
+                                                f" diagnostics={diagnostic_values}. "
+                                                "GUI/UART remain running, result is NOT PASS.",
+                                                flush=True)
                                             recovery_stalled_reported = True
-                                        recovery_quiet = 0
                                 if hold_replan_needed and hold_request_sequence is None and not ending:
                                     # Replan from measured pose using the original
                                     # C controller and identical final goal.
                                     hold_rearms += 1
                                     recovery_attempts += 1
                                     recovery_replan_sent = True
+                                    last_hold_replan_frame = target_frames
+                                    recovery_stalled_reported = False
+                                    recovery_quiet = 0
+                                    recovery_command_quiet = 0
+                                    recovery_previous = None
+                                    recovery_previous_motor_targets = None
                                     # The firmware chooses this nearest legal
                                     # continuous goal from its real feedback.
                                     # Keep the wire request canonical, but
@@ -1072,7 +1139,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     audit.write(json.dumps(dict(event="hold_replan", sequence=hold_request_sequence,
                                         goal_raw=sequencer.goals[-1],
                                         continuous_goal_raw=hold_request_goal_raw,
-                                        measured_raw=measured)) + "\n")
+                                        measured_raw=measured,
+                                        attempt=recovery_attempts,
+                                        diagnostics=diagnostic_values.copy())) + "\n")
                                 tool_xyz = p.getLinkState(
                                     arm, p.getNumJoints(arm) - 1,
                                     computeForwardKinematics=True,
@@ -1173,7 +1242,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     hold_goal_raw = hold_request_goal_raw
                                     hold_request_goal_raw = None
                                     recovery_quiet = 0
+                                    recovery_command_quiet = 0
                                     recovery_previous = None
+                                    recovery_previous_motor_targets = None
                                     recovery_settled = 0
                                     recovery_stalled_reported = False
                                     audit.write(json.dumps(dict(
@@ -1291,6 +1362,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                     for a,b in zip(last_measured, hold_goal_raw)),
                 "hold_recoveries": hold_recoveries,
+                "hold_recovery_attempts": recovery_attempts,
+                "hold_recovery_command_quiet_frames": recovery_command_quiet,
                 "hold_continuous_goal_raw": hold_goal_raw,
                 "gui_joint_stop_corrections": gui_joint_stop_corrections,
                 "gui_joint_stop_last": gui_joint_stop_last,
