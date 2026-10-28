@@ -11,10 +11,10 @@ import json
 import re
 from pathlib import Path
 
-_REGION = re.compile(r"^([A-Za-z][\\w*.-]*)\\s+(0x[0-9A-Fa-f]+)\\s+(0x[0-9A-Fa-f]+)\\s+([rwx!]+)\\s*$")
+_REGION = re.compile(r"^([A-Za-z][\w*.-]*)\s+(0x[0-9A-Fa-f]+)\s+(0x[0-9A-Fa-f]+)\s+([rwx!]+)\s*$")
 _SECTION = re.compile(
-    r"^(\\.[\\w.]+)\\s+(0x[0-9A-Fa-f]+)\\s+(0x[0-9A-Fa-f]+)"
-    r"(?:\\s+load address\\s+(0x[0-9A-Fa-f]+))?(?:\\s|$)"
+    r"^(\.[\w.]+)\s+(0x[0-9A-Fa-f]+)\s+(0x[0-9A-Fa-f]+)"
+    r"(?:\s+load address\s+(0x[0-9A-Fa-f]+))?(?:\s|$)"
 )
 _NON_ALLOCATED = (".debug", ".zdebug", ".stab", ".gnu.lto_")
 _NON_ALLOCATED_EXACT = {
