@@ -369,6 +369,16 @@ class MotionSequencerTests(unittest.TestCase):
         quiet = math.ceil(HOLD_STAGNANT_PERIOD_S / FEEDBACK_STEP_S)
         cooldown = math.ceil(HOLD_RETRY_COOLDOWN_S / FEEDBACK_STEP_S)
         self.assertTrue(hold_replan_allowed(quiet, quiet, 0, 0))
+        # While the mouse is still pushing past the mechanical joint stop,
+        # prevent consuming every retry before the user releases the arm.
+        self.assertFalse(hold_replan_allowed(
+            quiet, quiet, 0, 0, frames_since_last_gui_stop=0))
+        self.assertFalse(hold_replan_allowed(
+            quiet, quiet, 1, cooldown,
+            frames_since_last_gui_stop=quiet - 1))
+        self.assertTrue(hold_replan_allowed(
+            quiet, quiet, 1, cooldown,
+            frames_since_last_gui_stop=quiet))
         # ACK admitted the original recovery request but C may later cancel
         # the trajectory; do not leave the arm stuck forever at that command.
         self.assertFalse(hold_replan_allowed(quiet, quiet, 1, cooldown - 1))
