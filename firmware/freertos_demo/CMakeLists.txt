@@ -635,3 +635,13 @@ if(ROBOT_ENABLE_STAGE5_LINK_MAP)
     target_link_options(freertos_demo PRIVATE
         "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/stage5_firmware.map")
 endif()
+
+# Pure Stage5 planning library; no task, implicit motion or default obstacle
+# configuration is activated by this compilation-only dependency.
+target_sources(freertos_demo PRIVATE
+    algorithms/avoidance/potential_field.c
+    algorithms/avoidance/potential_field_path.c
+)
+target_include_directories(freertos_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/avoidance
+)
