@@ -1,97 +1,91 @@
-# 六轴工业机器人运动控制项目：架构与扩展边界
+# 六轴机器人嵌入式控制系统架构（Stage4 仿真 RC）
 
-> 本文描述当前实现及后续设计约束，不将计划中的功能标为已实现。
-> 项目总体阶段目标以《六轴工业机器人嵌入式运动控制固件开发与仿真验证》为准。
+> 更新：2026-10-28。本文描述 `release/stage4-simulation-rc-20261028` 的**当前实现**，取代先前“只创建 ProtocolRX/ProtocolTX、Control Task 尚未实现”的历史状态描述。原始设计及演进过程仍保存在 `docs/part1/` 和 `docs/part4/`。
+>
+> 本工程无实体机器人；“已运行”限定为 Host / Cortex-M4 QEMU / PyBullet 试验场景，不意味着具备实物驱动、硬件急停或工业机器人安全认证。
 
-## 1. 运行链路与现状
-
-当前链路：
-
-```text
-Cortex-M4 / FreeRTOS (QEMU)
-    ProtocolTX ──UART/TCP──> Python bridge ──> PyBullet UR5
-    ProtocolRX <─UART/TCP─── Python bridge <── 关节状态
-```
-
-当前已实现的主要模块包括驱动、通信协议、运行参数、监测、UR5 模型、
-FK / 解析 IK、关节角连续展开与限位判定。存在 Motion Limits 算法和
-QEMU 测试目标，不等于已接入运动指令执行链。
-
-当前实际创建的 FreeRTOS 业务任务是 ProtocolRX 和 ProtocolTX；
-配置中预留 Control、Trajectory、Monitor 等参数不代表任务已实现。
-运动学启动自测和 Parser Benchmark 已通过 CMake 选项控制。
-
-## 2. 固件模块与所有权
-
-| 当前目录 | 职责 | 约束 |
-| --- | --- | --- |
-| `common/` | 公共类型、单位、错误码 | 不引入 FreeRTOS 或业务状态 |
-| `model/` | 机器人静态参数、关节约束 | 不保存实时目标和反馈 |
-| `drivers/` | UART/GPIO/Timer/Motor 硬件与仿真驱动边界 | 不调用轨迹或 IK 策略 |
-| `communications/` | 帧编解码、字节流解析、缓冲 | 不直接决定运动决策 |
-| `algorithms/math/` | 通用数学工具 | 不依赖应用、驱动和 RTOS |
-| `algorithms/kinematics/` | FK、IK 候选解 | 不负责轨迹时序和任务调度 |
-| `algorithms/motion/` | 限位、角度展开、未来的逆解选择 | 不直接驱动电机或发送协议 |
-| `application/protocol_tasks.c` | FreeRTOS RX/TX 任务、ISR 通知及解析循环 | 不新增命令业务分支 |
-| `application/services/protocol_commands.c` | 完整帧业务分发、反馈 ACK、参数与诊断请求 | 不创建任务或实现字节流解析 |
-| `application/runtime_config.c` | 运行时配置的校验与生效值 | 避免与 JSON 默认配置出现重复定义 |
-| `application/uart_tx_manager.c` | 完整帧发送串行化 | 不实现具体消息业务 |
-| `diagnostics/` | 运行性能度量 | 不控制机器人运动 |
-| `tests/` | 自测及 QEMU 测试入口 | 测试不得反向成为核心算法依赖 |
-
-当前 Motor Driver 仍持有目标与反馈（含连续位置、速度估计）。
-现已提供 `motor_driver_get_feedback_snapshot()`，一次返回六轴规范角、
-连续位置、速度和成功接收序号。序号只在反馈成功提交后递增，初始化时清零。
-驱动中的裸快照接口本身不提供同步；应用层现通过
-`application/motor_state.c` 的 FreeRTOS Mutex 串行化反馈写入、
-完整快照读取及目标读写。ProtocolRX 更新时同时记录接受 Tick，
-ProtocolTX 经该访问层读取目标。今后 Control Task 也必须只通过同一
-访问层读写 Motor Driver 状态，不允许绕过互斥锁直接调用底层驱动。
-`motor_state_feedback_is_fresh()` 根据 Tick 差判断反馈是否过期，
-但**尚未创建 Control Task，也未实现执行器超时停止/故障恢复**；
-控制任务接入前必须明确超时阈值、停止策略和恢复条件。
-这是**已知待设计边界**，不是立刻创建独立 Robot State 模块的理由。
-第四阶段加入多个任务共享状态时，应一次性定义所有权、采样时序、
-并发同步、反馈有效性与故障策略，再决定是否提取状态服务。
-
-## 3. 未来开发按项目阶段引入
-
-- **阶段 3 收尾**：IK 解的有效性、关节限位与就近连续解选择；算法接口采用明确的角度单位和约束，执行前另作集成验证。
-- **阶段 4**：真正开始轨迹算法时才创建 `algorithms/trajectory/`；
-  PID 实现时才创建 `algorithms/control/`；创建对应 FreeRTOS Task
-  之前先约定周期、超时、数据快照及线程同步。
-- **阶段 5**：实现规划/避障时再考虑 `algorithms/planning/`，
-  不提前生成空目录；继续保持 QEMU、Python Bridge 和机器人模型的边界。
-- **阶段 6**：把可复现的构建、回归测试、精度及实时性证据纳入交付。
-
-轨迹规划的输出与驱动输入之间必须定义**连续角/规范角、单位、限位、
-时间戳和异常处理**，不可直接把 IK 候选解视为可执行命令。
-
-## 4. 模块依赖约束
+## 1. 分层与数据流
 
 ```text
-application (FreeRTOS 任务/服务)
-   ├─> communications (协议)
-   ├─> algorithms (纯算法)
-   ├─> model (静态参数)
-   ├─> drivers (硬件接口)
-   └─> diagnostics (指标读取)
-
-algorithms ──> common / model / math
-drivers ─────> common / 平台相关实现
-communications ──> common
+┌─────────────── QEMU Cortex-M4 + FreeRTOS ────────────────┐
+│ ProtocolRX  ──> Protocol parser ──> Application commands │
+│                                        │                │
+│                                        ▼                │
+│                                  Motion Pipeline        │
+│                                        │                │
+│                           Request Queue / Generation   │
+│                                        ▼                │
+│ Trajectory Task (20 ms) <─ C 轨迹 / FK/IK / 约束         │
+│                                        │                │
+│                              Reference Queue            │
+│                                        ▼                │
+│ Control Task (10 ms) <──── Motor State + 新鲜反馈        │
+│          │   C 增量式 PID + 速度/加速度命令限幅           │
+│          ▼                                              │
+│ Motor Target State ──> ProtocolTX ──> UART               │
+│                                      ↑                   │
+│ Monitor Task (100 ms) ─── 任务/栈/故障诊断                │
+└──────────────────────────────────────┼───────────────────┘
+                                       ⇅
+                              QEMU UART TCP backend
+                                       ⇅
+                              Python 仿真通信桥
+                                       ⇅
+                                PyBullet UR5
+                             实际关节状态/动力学
 ```
 
-原则是核心算法不反向依赖 Application、FreeRTOS、UART 或 Python Bridge。
-当前 `protocol_commands.c` 属于**应用服务**，尽管它直接调用 Motor Driver、
-Runtime Config 和 Diagnostics，但不应被误判为纯协议解析模块。
+这是组件与 Stage5 完整联调所使用的逻辑结构。**Stage4 默认非驱动测试和 Stage5 集成是不同运行模式**：
 
-## 5. 不再为了行数拆文件
+- Stage4 `tools/test_stage4_once.ps1` 把物理电机命令输出编译门控保持 `OFF`，QEMU 测规划、PID计算及任务调度，真实 PyBullet DIRECT 则通过**生产同源 C 算法共享库**执行动力学实验，两者不能合并冒称同一次串口动态闭环。
+- Stage5 显式仿真编译开关打开时才运行 QEMU UART ↔ PyBullet 反馈闭环；本 RC 中的历史候选集成测试并未涵盖最新原生 Windows GUI 拖拽补丁，详见 [Stage5 范围](part5/00_stage5_scope_and_acceptance.md)。
+- TCP 是 QEMU 对主机暴露 UART 的承载方式，不是嵌入式自定义控制协议。
 
-创建新模块至少满足下列条件之一：不同变化原因、独立测试需求、
-独立生命周期/线程所有权、依赖方向明显需要隔离。
-否则优先在原文件内部使用清晰的 `static` 函数。
-不使用 `xxx_new.c`、`xxx_final.c` 等版本副本；历史版本交给 Git。
+## 2. 源码职责和所有权
 
-结构调整必须保留公共接口，或明确列出接口迁移和使用方；
-不得把文档规划当作已通过 QEMU 或物理硬件验证的证据。
+| 模块路径（相对 `firmware/freertos_demo/`） | 负责什么 | 不应负责什么 |
+|---|---|---|
+| `common/` | 角度/连续位置、统一错误码、单位与公共数学量 | 不拥有实时运动状态 |
+| `model/` | UR5 静态模型、坐标变换与关节行程 | 不保存运行时电机目标 |
+| `drivers/` | QEMU UART、Timer、GPIO Shadow、Motor Driver 抽象 | 不做 PID、逆解或路径规划 |
+| `communications/` | 二进制协议、帧校验、字节流解析及缓存 | 不为运动任务选轨迹 |
+| `algorithms/math/` | 坐标变换/通用数学 | 不依赖 FreeRTOS |
+| `algorithms/kinematics/` | FK、解析 IK、候选解可用性检查 | 不接管串口或电机 |
+| `algorithms/motion/` | IK 选解、连续角展开、关节限位 | 不规划障碍物整臂路径 |
+| `algorithms/trajectory/` | 多项式/梯形关节运动、Cartesian 直线/圆弧离散插补 | 不拥有 FreeRTOS 队列 |
+| `algorithms/control/` | 单关节增量 PID、六轴 Controller、命令速度/加速度限幅 | 不使用 Python 模拟另一套控制器 |
+| `application/services/` | 协议动作分发、Motion Pipeline、请求合法性/接纳 | 不复制轨迹或 PID 数学 |
+| `application/tasks/` | Trajectory/Control/Monitor 独立周期任务 | 不自行定义另一套静态机器人参数 |
+| `application/motor_state.c` | 互斥访问六轴反馈及目标、采样序号和反馈新鲜度 | 不对外暴露未同步的裸状态供业务任务操作 |
+| `diagnostics/` | 周期/负载样本、诊断数据读取 | 不改变运动规划 |
+
+任务周期/优先级/栈、初始状态、增益、速度/加速度/反馈超时的唯一**默认配置**是 `config/robot_defaults.json`，生成器为 `tools/generate_firmware_defaults.py`。UR5 DH 与关节范围仍以 Model 为唯一来源；QEMU 性能判据和物理仿真实验的测试常量属于独立测试策略，不作为生产参数。
+
+## 3. 运行路径与异常
+
+1. **接收**：UART RX 中断将字节送入 Ring Buffer，ProtocolRX 组帧与校验；Application Service 根据命令语义解析并给出明确错误状态。
+2. **请求**：`motion_pipeline_submit_joint/polynomial/cartesian` 预检请求，在请求队列中提交最新运动；UART `MOVE_ACK` 如存在仅证明请求被接受，不证明轨迹已走完。
+3. **轨迹**：Trajectory Task 以规定周期进行梯形/多项式采样，或笛卡尔 IK 航点转换；一旦出现非法参数、规划失败、失联或控制器要求中止，取消参考，不能沿用旧目标假装继续规划。
+4. **控制**：Control Task 读取反馈及创建时间，按有效参考运算同源 C PID 与输出限制，更新经 Motor State 保护的目标；反馈陈旧、参考过期及控制异常应停发新目标并记录故障。
+5. **仿真**：在显式开通的虚拟联调中，Python 将 QEMU UART 目标映射至 PyBullet 六轴，实际关节角经反馈帧返回。规范角与连续角域必须区分，避免 ±360° 的错误距离。
+6. **观察**：Monitor 与诊断指标输出任务计数、故障、栈水位及 QEMU 计时；计量只对指定运行条件有效。
+
+**实机安全边界**：当前故障停止新目标的策略**不是**独立硬件制动、急停或驱动级联锁。在没有实体驱动、看门狗/制动器和安全验证之前，不得将实验输出直接用来驱动实体机器人。
+
+## 4. 编译模式及验收含义
+
+| 运行方式 | 验证内容 | 不覆盖 |
+|---|---|---|
+| Host CTest | FK/IK、路径、多项式极值/限幅、PID 公式和异常输入 | ARM调度、真实UART吞吐 |
+| Stage4 ARM/QEMU 自检 | Cortex-M4 FreeRTOS 任务、静态反馈、失联拒绝、算法路径 | PyBullet运动动力学 |
+| Stage4 Native C + PyBullet DIRECT | **同源 C** 轨迹/PID驱动仿真关节与误差分析 | FreeRTOS/GDB/UART动态链 |
+| Stage5 双向 QEMU UART + PyBullet | 独立串口接收运动请求、虚拟反馈、系统级故障处理 | 实物 MCU、整臂碰撞安全与工业认证 |
+
+封版候选的测试数据和准确版本以 [Stage4 RC 验收单](part4/12_stage4_release_candidate_2026-10-28.md) 为准；**RC 不是已经打了正式 Release Tag**。当前完整 Stage5 GUI 交互的试验与问题追踪以独立 PR 和 [Stage5 Issue Log](part5/02_integration_issue_log.md) 为准。
+
+## 5. 维护约束
+
+- Core C 算法不可反向依赖 FreeRTOS、UART、Python 或 PyBullet。
+- 配置、常量、派生量、实时状态、测试输入严格分开；同一个参数只设一个权威来源。
+- 不为了缩短源文件复制模块或另写 Python 控制器；保持现有 API、任务和 Queue 所有权。
+- 任何“修复完成”的判断必须绑定提交 SHA、真实可复现的测试与覆盖边界。Stage4 已通过的证据不得直接覆盖 Stage5 仍失败的 UART/GUI 集成测试。
