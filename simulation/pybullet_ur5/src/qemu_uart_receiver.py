@@ -46,6 +46,9 @@ CMD_DIAGNOSTICS_RESPONSE = 0x84
 
 # QEMU Stage5 integration diagnostics; values originate in protocol.h.
 SIM_MOTION_DIAGNOSTIC_SELECTORS = {
+    # Existing firmware DIAGNOSTICS_METRIC_RX_DROP_COUNT, selector 0.
+    # This is an existing protocol metric, not a new wire command.
+    "uart_rx_dropped_bytes": 0,
     "requests_accepted": 10,
     "trajectory_samples": 11,
     "controller_steps": 12,
