@@ -12,6 +12,14 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
       - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
       - '.github/workflows/stage5-system-integration.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
+      - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
+      - '.github/workflows/stage5-system-integration.yml'
   workflow_dispatch:
 
 permissions:
