@@ -114,3 +114,13 @@
 - **Windows工件实证** `stage5-live-qemu-measured-state-evidence-Windows/disturbance-recovery/result.json`：三轮施力42/42/42物理子步，J2实测峰值9.25°/9.21°/9.21°，三次回位3/3、重规划请求ACK 3/3；固件轨迹名义65.66s、PyBullet65.68s，比例**0.999695**；HOLD末误差0.02°，所有固件fault、UART RX dropped、checksum错误均为0；`passed=true`。同平台18ms慢消费者时间比**0.995334**，`passed=true`。
 - **Linux工件实证**：三轮J2峰值9.25°/9.23°/9.21°，恢复3/3，时钟比0.993650，HOLD末误差0.02°，所有固件fault和UART RX dropped均0；`passed=true`。
 - **边界/交付判定**：S5-013原本反复出现的 **自动化 DIRECT/慢消费者与Linux无拖拽GUI** 现已按当前门限验证通过；这不等于精确硬实时锁步。S5-012的 **原生Windows GUI鼠标大扰动**、不重规划的被动PID恢复、真实电机安全联锁、整臂障碍碰撞、长时WCET不在上述结果中，仍不得标记通过。继续保留PR草稿直到本机原生GUI的最终独立验收。
+
+
+## 2026-10-29 S5-014：最新集成版外力回位出现 C 规划器 NOT_READY
+
+**级别：P1；状态：未修复，PR #11 保持不合并。**
+
+- 实际失败：[CI #40737897100](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40737897100)，Linux `genuine-qemu-uart-live-observer`，3段请求全部 SETTLED，DIRECT 三次真实 J2 外力偏移各 9.25°，施力 42/42/42 子步，末端 HOLD 最终角误差 0.02°。**总判定失败**；不能将物理回位看成固件可靠性通过。
+- 工件 `disturbance-recovery/result.json`：`planner_faults=1`、`controller_faults=0`、`feedback_stale_count=0`，`last_fault=4294967289`（按有符号 32 位解释为 **-7，NOT_READY**）；`requests_accepted=4`、`hold_rearms=1`、`hold_rearm_acks=1`，不是三个 C 重新规划全部成功。`uart_live.jsonl` 的第二轮出现 `hold_firmware_fault_counter_increased`，实际被测关节正在受扰动，worker 因固件故障门禁而退出。**根因需继续查**：有效反馈时序、请求受理时刻和 `start_request` 的状态门禁，不能未经日志证明就归因于 PID。
+- 本次原报告还有**独立的验收口径错误**：`trajectory_samples=951`×20ms=19.02s，PyBullet 38.62s，算得时间比 0.49249；但 HOLD 期间本来可能不再输出轨迹，因此 19.02s 不能代表整个运行时间。`monitoring_ticks=394`×配置唯一源的100ms=39.4s，与PyBullet 38.62s接近。修复候选现将 HOLD 的时钟比较改用 Monitor 实际 tick 计数，普通无 HOLD 三段运动仍用 Trajectory Task 样本数；保留两组原始数字及 `planner_faults` 硬门禁，不以换指标隐藏失败。
+- 修正提交 `c7ceca49`、`4d0d7477`；**尚未完成此版本的新 CI 复验**。即使时钟口径修正后，只有 `planner_faults=0`、完整三次 C 重规划 ACK、UART/物理同步和测试总 `passed=true` 同时成立，才能称该扰动回位通过。
