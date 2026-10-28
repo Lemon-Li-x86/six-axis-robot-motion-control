@@ -45,7 +45,7 @@
 
 `08_stage4_qemu_timing_and_stack_2026-10-27.md` 记录短时 QEMU 样本：Control 10ms、Trajectory 20ms、Monitor 100ms；对应 P99 绝对周期偏差分别为 **54.88 μs / 230.44 μs / 13.08 μs**，历史 Control 最长测得处理经过时间 **2081.32 μs**；Control / Trajectory / Monitor 观测最小剩余栈 **375 / 609 / 349 words**。这些是**被测样本的 QEMU 经过时间与栈统计**，不是 CPU 独占占比，更不是物理 MCU 的 WCET。60 秒虚拟时间基线是周期性静态反馈，不代表30分钟高负载稳定性。
 
-## 4. 本机最终签收门槛（尚未完成）
+## 4. 本机最终签收门槛（G2 核心回归已有用户实测证据）
 
 在 Windows 仓库根目录使用明确的 RC 版本，不强行切换存在未提交改动的工作树：
 
@@ -59,12 +59,29 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 ```
 
 - [ ] **G1：源码版本确认。** 保存本机 `git rev-parse HEAD`；确认没有未知未提交生产源码变更。RC 文档提交会使 HEAD 不等于候选祖先 SHA，须使用 `git merge-base --is-ancestor 9fb22d93685f464e455194ff66e816fc671296a8 HEAD` 验证候选基线包含关系。
-- [ ] **G2：Windows 本机 Stage4 回归。** `test_stage4_closure.ps1 -IncludeQemuBaseline` 无报错结束；保存 `build/stage4-closure-local/evidence/`、`build/stage4-final-validation.log`（若脚本生成）及实际终端日志。禁止仅凭 CI 绿灯填写本机 PASS。
+- [x] **G2：Windows 本机 Stage4 核心回归。** 2026-10-28 用户实际在 RC 工作树运行封版脚本，返回 PID 两份 JSON 摘要和 `build/stage4-final-validation.log` 末40行，确认 Host 6/6、Bridge Smoke 1/1、18组全部执行、60/20 扫参、FreeRTOS 29/29 和多项式 8/8、Stage4 DIRECT 双场景及 `[PASS] Automated Stage3/4 non-actuating regression complete`。**G1 尚需记录本地 HEAD/工作树状态**；报告引用的是用户本机复制的运行结果，尚未将完整本机 log 原件归档。
 - [ ] **G3：审阅性能异常。** 留存18组矩阵及校准/验证 CSV/JSON，特别解释 2 组跨工况未达原小幅试验门限；不擅自将其判为已合格，也不因此不经分析改 PID。
 - [ ] **G4：交付物核对。** 三项阶段产出有明确文件索引，单位、配置源和算法边界一致；报告引用原始运行证据，清理“当前默认仍为 Kp=0.2”等过时**状态声明**而不删除历史数据。
 - [ ] **G5：最终签收与封存。** G1–G4 完成后才将此单状态改为“正式封版”，保存签收日期、**最终源码 SHA**、验收记录位置及例外；再考虑创建不可移动 Tag。此 RC **没有打 Tag、没有合并 Stage5 PR**。
 
 可选额外集成观测：`-IncludeGuiReplay` 会重新构建 QEMU UART 固件并执行**独立轨迹录制和 GUI 回放**；它不是 PyBullet 原生鼠标拾取，不属于本次 Stage4 基础封版的硬性门槛。
+
+
+### 2026-10-28 Windows 本机 G2 签收证据（用户现场输出）
+
+- RC checkout 到 `release/stage4-simulation-rc-20261028`，本机 Visual Studio 18 2026 工具链。
+- Stage4 Host CTest：`6/6 Passed`；生产 C 桥接 Smoke：`1/1 Passed`；Python PID 矩阵/搜索定义各 `4/4 ok`。
+- 用户提供 `study_summary.json`：`completed_without_exception=18`、`nominal_reference_passed=true`、`exploratory_baseline_threshold_passes=16`、`failures=[]`。**2 个跨工况不达实验门限不可表述成程序执行失败。**
+- 用户提供 `sweep_summary.json`：`calibration_trials=60`、`held_out_validation_trials=20`、最佳 `kp_1_ki_0_kd_0.025`、`max_violation_ratio=0.7673293597209491`、`conditions_within_policy=6/6`、`all_six_conditions_within_test_policy=true`。
+- 用户本机 `build/stage4-final-validation.log` 尾部显示 `g_stage4_rtos_test_report.checks=29/failed=0`、`g_stage4_polynomial_rtos_report.checks=8/failed=0`、`rejected_before_publish=1`、`valid_execution_started=1`、`trajectory_stack_free_words=467`、`[9/9] PyBullet DIRECT closed-loop dynamic verification` 中 J2 与 six_axis 两场景，最终 `[PASS] Automated Stage3/4 non-actuating regression complete`，终止日期 2026-10-28。
+- GDB 同时打印 `could not convert ... CP1252` 与 `Source file is more recent than executable` 警告，未使此次测试失败；需继续遵循 G1 的版本 SHA 与实际构建关联检查，不据警告直接认定用错产物。
+- 当前证据源是用户在对话粘贴的文本摘要，而非已经入库的完整本机测试附件；本地完整 JSON/CSV/GDB 日志留在 `build/`，后续交付归档应保存这些原件。
+
+### RC 分支 CI 单独阻塞/例外跟踪
+
+[Actions #40633371737](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40633371737) 针对封版分支 HEAD `6cedeff`：Linux Stage4 Native PID/C Bridge Job **success**，Windows Host Job **success**；Linux QEMU UART Job **failure**。该 Job 中**单次 QEMU UART 运动通过**（最大末端误差0.02°），**额外的 Stage5 双向 UART 物理三段运动在首段超时 210s：0/3**。这是仍需追踪的具体集成回归，不得将整条 workflow 标为成功。
+
+三段实时 QEMU UART 物理闭环在项目原任务书中属于第五阶段系统集成，并非第四阶段的关节/笛卡尔规划、PID 与 FreeRTOS 非驱动验收本体。封版评审应明确决定**把这一集成失败作为 Stage5 独立阻塞项**，或修复其回归后再批准；不能通过修改 CI 测试超时或忽略失败制造绿色。**因此当前维持 RC / draft / 无 Tag**。
 
 ## 5. 已知限制与下一阶段分界
 
