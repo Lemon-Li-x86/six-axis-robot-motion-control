@@ -70,7 +70,7 @@
 
 测试记录使用 Windows、CMake / CTest、Visual Studio C++ 或其它本机 C 编译器、ARM GNU Toolchain、QEMU、GDB、Python 虚拟环境及 PyBullet；ARM 工程使用 Ninja，QEMU 目标为 `mps2-an386`。
 
-先安装本机的 C/C++ 编译器、`cmake`、`arm-none-eabi-gcc`、`qemu-system-arm`、`arm-none-eabi-gdb`（或脚本可用的 GDB），创建并安装 Python 依赖：
+先安装本机的 C/C++ 编译器、`cmake`、`arm-none-eabi-gcc`、`qemu-system-arm`、`arm-none-eabi-gdb`（当前 Windows 回归脚本按此确切命令名调用，不自动切换到其它 GDB），创建并安装 Python 依赖：
 
 ```powershell
 python -m venv .venv
