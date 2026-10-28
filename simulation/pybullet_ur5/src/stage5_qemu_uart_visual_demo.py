@@ -735,6 +735,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     parser = integration.FrameStream()
     firmware_defaults = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
     trajectory_period_s = firmware_defaults["task_period_ms"]["trajectory"] / 1000.0
+    monitor_period_s = firmware_defaults["task_period_ms"]["monitor"] / 1000.0
     firmware_max_velocity_deg_s = tuple(
         firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
@@ -1345,9 +1346,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "controller_faults", "planner_faults", "feedback_stale_count",
             )
             faults = {name: diagnostic_values.get(name) for name in fault_names}
-            clock_ratio, clock_aligned = assess_clock_alignment(
+            planning_ratio, _planning_clock_ok = assess_clock_alignment(
                 diagnostic_values.get("trajectory_samples"), target_frames,
                 trajectory_period_s)
+            # A long HOLD may legitimately contain no published trajectory
+            # samples. Use the always-running FreeRTOS Monitor Task to compare
+            # total simulated time during HOLD, not just active planning time.
+            # Keep planner fault counters as an independent hard failure.
+            if options.interactive_hold:
+                clock_reference = "monitoring_ticks"
+                clock_ratio, clock_aligned = assess_clock_alignment(
+                    diagnostic_values.get("monitoring_ticks"), target_frames,
+                    monitor_period_s)
+            else:
+                clock_reference = "trajectory_samples"
+                clock_ratio, clock_aligned = planning_ratio, _planning_clock_ok
             passed = (
                 clock_aligned
                 and sequencer.done
@@ -1378,11 +1391,18 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "simulated_physics_s": round(target_frames * FEEDBACK_STEP_S, 3),
                 "trajectory_task_nominal_elapsed_s": round(
                     diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
-                "rtos_trajectory_to_physics_time_ratio": clock_ratio,
+                "rtos_trajectory_to_physics_time_ratio": planning_ratio,
+                "rtos_monitor_to_physics_time_ratio": (
+                    clock_ratio if options.interactive_hold else None),
+                "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
-                "clock_alignment_note": "Planning task sample count times configured period; "
-                                        "not a hardware-tick precision measurement",
+                "clock_alignment_note": (
+                    "For active motion use trajectory_samples*trajectory_period; "
+                    "for HOLD use monitoring_ticks*monitor_period, because "
+                    "planning samples stop after settling/faults. "
+                    "Neither is hardware-tick precision."
+                ),
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
@@ -1427,7 +1447,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             result["plot_saved"] = write_plot(output_dir, trace)
             if not clock_aligned:
                 audit.write(json.dumps(dict(event="clock_alignment_failed",
-                    rtos_trajectory_to_physics_time_ratio=clock_ratio,
+                    rtos_trajectory_to_physics_time_ratio=planning_ratio,
+                    clock_alignment_ratio=clock_ratio,
+                    clock_alignment_reference=clock_reference,
                     nominal_trajectory_s=result["trajectory_task_nominal_elapsed_s"],
                     simulated_physics_s=result["simulated_physics_s"])) + "\n")
             (output_dir / "result.json").write_text(
