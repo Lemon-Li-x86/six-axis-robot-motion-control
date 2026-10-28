@@ -26,6 +26,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     FEEDBACK_STEP_S,
     TRACE_HEADER,
     configure_physics_stepping,
+    advance_physics_step_batch,
     assess_clock_alignment,
     joint_feedback_frame,
     validate_goals,
@@ -131,6 +132,37 @@ class MotionSequencerTests(unittest.TestCase):
         bullet.setPhysicsEngineParameter.assert_not_called()
         self.assertEqual(calls, SIMULATED_STEPS_PER_TARGET)
         self.assertEqual(warmup, 100)
+
+    def test_direct_physical_disturbance_is_applied_before_every_substep(self) -> None:
+        calls = []
+        class Bullet:
+            def stepSimulation(self):
+                calls.append(("step", None))
+        def callback(_bullet, _arm, _joints, physical_time, _done, _ending):
+            calls.append(("force", physical_time))
+        advance_physics_step_batch(
+            Bullet(), SIMULATED_STEPS_PER_TARGET, 5.0, callback,
+            object(), (0, 1, 2, 3, 4, 5), True, False,
+        )
+        self.assertEqual(len(calls), 2 * SIMULATED_STEPS_PER_TARGET)
+        self.assertEqual([what for what, _ in calls],
+                         ["force", "step"] * SIMULATED_STEPS_PER_TARGET)
+        times = [stamp for what, stamp in calls if what == "force"]
+        for index, stamp in enumerate(times):
+            self.assertAlmostEqual(stamp, 5.0 + index * PHYSICS_STEP_S)
+
+    def test_native_gui_keeps_one_callback_per_physics_feedback(self) -> None:
+        calls = []
+        class Bullet:
+            def stepSimulation(self):
+                calls.append("step")
+        def callback(*_):
+            calls.append("force")
+        advance_physics_step_batch(
+            Bullet(), 1, 2.0, callback, 0, (1,), True, False,
+        )
+        self.assertEqual(calls, ["force", "step"])
+
 
     def test_three_segments_advance_only_after_ack_and_feedback(self) -> None:
         goals = SCENARIOS["six_axis"]
