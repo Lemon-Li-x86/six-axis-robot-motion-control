@@ -20,6 +20,8 @@ on:
       - 'tools/run_stage5_live_windows.ps1'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -143,3 +145,28 @@ jobs:
           cmake -S firmware/freertos_demo/tests/host -B build/stage5-native-regression -DCMAKE_BUILD_TYPE=Debug
           cmake --build build/stage5-native-regression --parallel 2
           ctest --test-dir build/stage5-native-regression --output-on-failure
+
+  stage5-rtos-task-cpu-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM, QEMU, GDB and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm gdb-multiarch ninja-build
+      - name: Build RTOS with opt-in task switch CPU accounting
+        run: |
+          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON
+          cmake --build build/stage5-cpu-trace --target freertos_demo
+      - name: Read task CPU counters after real QEMU RTOS selftest
+        run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-trace/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-trace/observed
+      - name: Preserve task CPU percentages and raw GDB log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-freeRTOS-cpu-trace
+          path: |
+            build/stage5-cpu-trace/observed.log
+            build/stage5-cpu-trace/observed.json
+          if-no-files-found: ignore
