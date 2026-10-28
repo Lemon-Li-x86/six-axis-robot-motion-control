@@ -129,6 +129,19 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(assess_clock_alignment(None, 100, 0.020),
                          (None, False))
 
+    def test_hold_clock_uses_continuous_monitor_ticks_not_planner_samples(self) -> None:
+        # Actual failed QEMU log: HOLD includes physical time when no new
+        # trajectory reference is produced. The planning-only clock cannot
+        # serve as total elapsed time. Firmware NOT_READY remains a failure.
+        planning_ratio, planning_passed = assess_clock_alignment(951, 3862, 0.020)
+        self.assertFalse(planning_passed)
+        self.assertAlmostEqual(planning_ratio, 19.02 / 38.62)
+        monitor_ratio, monitor_passed = assess_clock_alignment(394, 3862, 0.100)
+        self.assertTrue(monitor_passed)
+        self.assertAlmostEqual(monitor_ratio, 39.4 / 38.62)
+        # Even monitor ticks must be rejected when physical clock diverges.
+        self.assertFalse(assess_clock_alignment(394, 1300, 0.100)[1])
+
     def test_gui_native_substeps_preserve_physics_interval_and_reduce_api_calls(self) -> None:
         """Native GUI gets one API call per UART frame, with 1ms internal steps."""
         from unittest.mock import Mock
