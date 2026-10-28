@@ -305,10 +305,17 @@ class MotionSequencerTests(unittest.TestCase):
                          "ambiguous_multi_turn_feedback")
         self.assertIn("one UART physical sample", str(aliased.exception))
 
-    def test_feedback_signed_int16_boundaries_are_not_changed(self) -> None:
-        raw = (-32768, 32767, 0, 0, 0, 0)
+    def test_feedback_follows_firmware_canonical_not_just_signed_int16(self) -> None:
+        raw = (-18000, 17999, 0, 0, 0, 0)
         packet = joint_feedback_frame(raw)
         self.assertEqual(struct.unpack("<6h", packet[4:-1]), raw)
+        # Signed-int16 alone would accept these, but C rejects them.
+        for invalid in (-32768, -18001, 18000, 32767):
+            with self.subTest(raw=invalid):
+                with self.assertRaises(JointFeedbackRangeError) as raised:
+                    joint_feedback_frame((invalid,) + (0,) * 5)
+                self.assertEqual(raised.exception.fault_type,
+                                 "noncanonical_uart_feedback")
 
     def test_overflow_feedback_identifies_real_joint_without_silent_clamping(self) -> None:
         for raw_value in (-32769, 32768, 41000):
