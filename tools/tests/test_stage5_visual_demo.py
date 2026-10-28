@@ -329,7 +329,8 @@ class MotionSequencerTests(unittest.TestCase):
                 encoding="utf-8", newline=""
             ) as file:
                 self.assertEqual(next(csv.reader(file)), list(TRACE_HEADER))
-            self.assertEqual(len(TRACE_HEADER), 5 + 3 * wire.JOINT_COUNT)
+            self.assertEqual(len(TRACE_HEADER), 5 + 4 * wire.JOINT_COUNT)
+            self.assertIn("servo_target_shoulder_pan_joint_deg", TRACE_HEADER)
 
 
 if __name__ == "__main__":
