@@ -621,3 +621,13 @@ target_compile_definitions(qemu_ik_near_singular_trace PRIVATE
     ROBOT_KINEMATICS_ELBOW_TRACE=1
 )
 configure_qemu_target(qemu_ik_near_singular_trace m)
+
+# Pure Stage5 planning library; no task, implicit motion or default obstacle
+# configuration is activated by this compilation-only dependency.
+target_sources(freertos_demo PRIVATE
+    algorithms/avoidance/potential_field.c
+    algorithms/avoidance/potential_field_path.c
+)
+target_include_directories(freertos_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/avoidance
+)
