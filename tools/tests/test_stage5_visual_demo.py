@@ -29,6 +29,8 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     advance_physics_step_batch,
     assess_clock_alignment,
     joint_feedback_frame,
+    JointFeedbackRangeError,
+    preserve_gui_after_feedback_range_fault,
     validate_goals,
     write_trace,
 )
@@ -223,6 +225,61 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(packet[3], wire.JOINT_PAYLOAD_LEN)
         self.assertEqual(struct.unpack("<6h", packet[4:-1]), raw)
         self.assertEqual(packet[-1], sum(packet[2:-1]) & 0xFF)
+
+    def test_feedback_signed_int16_boundaries_are_not_changed(self) -> None:
+        raw = (-32768, 32767, 0, 0, 0, 0)
+        packet = joint_feedback_frame(raw)
+        self.assertEqual(struct.unpack("<6h", packet[4:-1]), raw)
+
+    def test_overflow_feedback_identifies_real_joint_without_silent_clamping(self) -> None:
+        for raw_value in (-32769, 32768, 41000):
+            raw = (0, raw_value, 0, 0, 0, 0)
+            with self.subTest(raw_value=raw_value):
+                with self.assertRaises(JointFeedbackRangeError) as raised:
+                    joint_feedback_frame(raw)
+                fault = raised.exception
+                self.assertEqual(fault.joint_index, 1)
+                self.assertEqual(fault.joint_name, "shoulder_lift_joint")
+                self.assertEqual(fault.raw_centideg, raw_value)
+                self.assertIn(str(raw_value), str(fault))
+        with self.assertRaisesRegex(ValueError, "exactly six"):
+            joint_feedback_frame((100,))
+        with self.assertRaisesRegex(TypeError, "not an integer"):
+            joint_feedback_frame((True, 0, 0, 0, 0, 0))
+
+    def test_gui_fault_stop_terminates_qemu_preserves_physics_without_steps_until_q(self) -> None:
+        class FakeProcess:
+            def __init__(self):
+                self.killed = False
+            def poll(self):
+                return None if not self.killed else 1
+            def terminate(self):
+                self.killed = True
+
+        class FakeBullet:
+            KEY_WAS_TRIGGERED = 1
+            error = RuntimeError
+            def __init__(self):
+                self.labels = []
+                self.polled = 0
+            def addUserDebugText(self, text, *args, **kwargs):
+                self.labels.append(text)
+            def isConnected(self):
+                return True
+            def getKeyboardEvents(self):
+                self.polled += 1
+                return {ord("q"): self.KEY_WAS_TRIGGERED}
+            def stepSimulation(self):
+                raise AssertionError("Unsafe GUI fault state must not advance physics")
+
+        qemu = FakeProcess()
+        bullet = FakeBullet()
+        fault = JointFeedbackRangeError(0, 35000)
+        preserve_gui_after_feedback_range_fault(bullet, qemu, None, fault)
+        self.assertTrue(qemu.killed)
+        self.assertEqual(bullet.polled, 1)
+        self.assertIn("FEEDBACK RANGE FAULT", bullet.labels[0])
+
 
     def test_csv_has_explicit_units_and_all_six_axes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
