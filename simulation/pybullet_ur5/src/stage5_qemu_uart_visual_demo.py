@@ -153,8 +153,9 @@ def configure_native_urdf_joint_stops(
     A strong native mouse constraint can drive a reduced-coordinate multibody
     slightly beyond the limit at finite solver force. Configure the *existing*
     native joint-limit constraint with the URDF's authoritative bounds and a
-    larger simulated stop impulse. No extra ghost robot, mouse drag controller
-    or resetJointState correction is created.
+    larger simulated stop impulse. No extra ghost robot or mouse
+    controller is created; the separate GUI hard-stop guard is required
+    because native picking can still exceed finite impulse limits.
     """
     if len(joints) != wire.JOINT_COUNT:
         raise ValueError("URDF stop setup requires six actuated joints")
