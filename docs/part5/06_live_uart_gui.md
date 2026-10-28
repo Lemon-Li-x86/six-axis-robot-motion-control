@@ -285,3 +285,41 @@ CI 在 DIRECT 下施加固定电机力矩并未模拟桌面原生 mouse-picking 
 - 本次不调整 C PID、速度/加速度限制以及真实 URDF 行程；
   `joint_trace.csv` 的 `command_*`、`servo_target_*`、`actual_*`
   用来排查剩余“甩头”是目标跳变还是物理/鼠标约束瞬态。
+
+
+### 2026-10-28 HOLD 366.76° 假误差、重复重规划及松手猛甩
+
+Windows 手动拖拽再次复现：松手后先快速甩动，后长时间回位，
+最后 `RuntimeError('Hold recovery did not converge: 366.76deg')`。
+异常是 Python HOLD 逻辑抛出的，不代表物理关节损坏，
+也**不是** PowerShell 启动器自身发生故障。
+
+- 此前 HOLD 始终把 `sequencer.goals[-1]` 的规范化角度（例如
+  +30°）当作**连续物理目标**；然而真正 C 规划器的
+  `motion_limits_unwrap_nearest` 可从实测 -336.76° 选择合法等效目标
+  -330°。两者在物理连续转数上差 360°；Python 计算的 366.76° 并非
+  C 实际规划的回位误差。HOLD 现在在重新发出原规范化目标时，
+  使用现有 `closest_physical_motor_targets` 与 URDF 上下界计算
+  此次计划的连续目标，**只在 replan ACK 后**将其作为判定目标；
+  原始规范化请求以及 C 规划器均不变。
+- 旧 HOLD 仅凭 0.5s 无明显位移，就在一次未完成的长距离
+  C 轨迹期间反复请求重规划，最多八次后主动崩溃。
+  现在同一次偏离事件最多发送一次自动 C 重新规划请求，
+  ACK 后持续观察同一 C 计划；若仍无法到位，则审计
+  `hold_recovery_waiting` 且保留 GUI/UART，不将其报成 PASS。
+  完成回位并再次受到新扰动，可开始新的回位事件。
+- 以前的 PyBullet `POSITION_CONTROL` 仅用力矩限制，不控制
+  可达到的执行器追赶速度。GUI 模式现在向官方原生
+  `setJointMotorControlArray(maxVelocities=...)` 传每轴上限，
+  取**C 固件默认配置 `stage4_motion.max_velocity_deg_s`**与
+  已加载 URDF `getJointInfo()[11]` 速度上限的较小值。
+  无第二套速度数值、无 Python PID/自主轨迹生成。
+  这是执行器速度约束，**不限制鼠标原生拾取约束施加的外力运动**。
+- 保留 DIRECT 原有物理验收路径；新增测试覆盖“+30° 与 -330°
+  等效导致 366.76° 假误差”、正向 +350° 需回到 +30° 而不是越过
+  +360°、速度限幅来源，以及真实 Bullet `maxVelocities` 接口。
+- 用户 Windows 原生鼠标释放的实测验证仍然缺失；若继续甩动，
+  应检查 `joint_trace.csv` 的连续 `servo_target_*`、
+  `actual_*` 以及 `uart_live.jsonl` 的 `hold_replan` /
+  `hold_replan_ack` / `hold_recovery_waiting`，不能把通过单元测试当成
+  桌面交互已解决。PR #3 保持 draft。
