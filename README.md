@@ -107,7 +107,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 - [Stage 1：系统设计与通信环境](docs/part1/01_system_design.md)
 - [Stage 2：驱动与协议测试](docs/part2/03_unit_and_function_test_report.md)
 - [Stage 3：运动学验证](docs/part3/02_algorithm_validation_report.md)
-- [Stage 4：封版记录、性能数据与待办](docs/part4/12_stage4_release_candidate_2026-10-28.md)
+- [Stage 4：PID参数调优与轨迹性能分析](docs/part4/01_pid_tuning_and_trajectory_performance.md)
+- [Stage 4：多任务调度与实时性验证](docs/part4/02_multitask_scheduling_and_realtime_verification.md)
+- [Stage 4：历史封版记录](docs/part4_archive/12_stage4_release_candidate_2026-10-28.md)
 - [Stage 5：集成问题记录](docs/part5/02_integration_issue_log.md)
 
 Stage 4 当前为 [封版候选 PR #4](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/4)；Stage 5 的 GUI 与 UART 联调改动在独立的 [PR #3](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/3) 中。
