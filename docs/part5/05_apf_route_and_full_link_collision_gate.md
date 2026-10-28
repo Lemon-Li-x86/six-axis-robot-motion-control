@@ -38,3 +38,13 @@ python -m unittest discover -s simulation/pybullet_ur5/tests -p 'test_stage5_col
 1. 将 PyBullet 静态场景经过统一接口送入 C APF，生成**真正绕过障碍**的可行完整航点序列（存在局部极小必须明确失败）。
 2. 将 APF 每个末端航点接项目现有 C IK、解选优和 20 ms 轨迹任务，做全关节连续限位与速度/加速度检查；不可用 PyBullet IK 代替嵌入式端。
 3. 在真实 QEMU/UART ↔ PyBullet 闭环里验证整臂碰撞门禁、速度抖动和故障停止。该步尚未通过验收。
+
+## 自动回归实证（2026-10-28）
+
+[Actions #40700991839](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40700991839)，被测**代码提交** `777ceb31bb11111d98a716874ea9d35f05bd9d7d`：
+
+- `native-stage5-and-stage4-regression`：**success**。包括新 C 多航点规划测试、原 C APF 测试、协议字节流故障注入及 Stage3/4 原生回归。
+- `pybullet-static-cuboid-c-apf`：**success**。包括原 C APF 单步静态长方体探针，以及新增实 PyBullet UR5 整臂采样几何门禁（中间连杆阻挡拒绝、远离障碍通行、模型限位/样本预算拒绝和状态恢复）。
+- [ARM/native Actions #40700991670](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40700991670) 对相同代码提交的 `arm-firmware-build` 与 `native-regression` 均 **success**。说明新增 C APF 文件可以编入 ARM 工程。
+
+这些是**两类分别测试的组件**，不是 APF→C IK→全关节路径→UART→PyBullet 一体化避障通过。并且全部是仿真/Host 证据。
