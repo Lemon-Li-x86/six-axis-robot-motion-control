@@ -219,6 +219,33 @@ def joint_motor_velocity_caps(
     return tuple(caps)
 
 
+def set_joint_position_motors(
+    bullet, arm: int, joints: Sequence[int],
+    targets_rad: Sequence[float], forces_nm: Sequence[float],
+    gui_velocity_caps_rad_s: Sequence[float] | None,
+) -> None:
+    """DIRECT keeps the proven batch call; GUI enforces real motor velocity caps.
+
+    PyBullet setJointMotorControlArray does not accept maxVelocities on the
+    installed wheels. setJointMotorControl2 exposes maxVelocity per joint.
+    The six GUI calls preserve the original POSITION_CONTROL physics.
+    """
+    if not (len(joints) == len(targets_rad) == len(forces_nm) == wire.JOINT_COUNT):
+        raise ValueError("Motor control requires six joint targets and forces")
+    if gui_velocity_caps_rad_s is None:
+        bullet.setJointMotorControlArray(
+            arm, joints, bullet.POSITION_CONTROL,
+            targetPositions=targets_rad, forces=forces_nm)
+    else:
+        if len(gui_velocity_caps_rad_s) != wire.JOINT_COUNT:
+            raise ValueError("GUI motor control requires six velocity caps")
+        for joint, target, force, cap in zip(
+                joints, targets_rad, forces_nm, gui_velocity_caps_rad_s):
+            bullet.setJointMotorControl2(
+                arm, joint, bullet.POSITION_CONTROL,
+                targetPosition=target, force=force, maxVelocity=cap)
+
+
 def hold_continuous_goal_raw(
     canonical_goal: Sequence[int],
     measured: Sequence[int],
@@ -786,9 +813,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 p, arm, joints, firmware_max_velocity_deg_s)
             # Only GUI mouse-picking needs an additional motor-side speed
             # safeguard. Keep the established DIRECT acceptance path intact.
-            motor_velocity_kwargs = (
-                {"maxVelocities": motor_velocity_caps_rad_s}
-                if not options.headless else {})
+            gui_motor_velocity_caps = (
+                motor_velocity_caps_rad_s if not options.headless else None)
             if not options.headless:
                 joint_limits_rad = configure_native_urdf_joint_stops(
                     p, arm, joints)
@@ -802,11 +828,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             physical_motor_targets_rad = tuple(
                 math.radians(v / wire.JOINT_ANGLE_SCALE) for v in START_RAW
             )
-            p.setJointMotorControlArray(
-                arm, joints, p.POSITION_CONTROL,
-                targetPositions=physical_motor_targets_rad,
-                forces=motor_forces_nm, **motor_velocity_kwargs,
-            )
+            set_joint_position_motors(
+                p, arm, joints, physical_motor_targets_rad, motor_forces_nm,
+                gui_motor_velocity_caps)
             for _ in range(warmup_calls):
                 p.stepSimulation()
             if not options.headless:
@@ -920,11 +944,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         physical_motor_targets_rad, joint_limits_rad,
                                         rebase=motor_target_rebase_pending)
                                     motor_target_rebase_pending = False
-                                    p.setJointMotorControlArray(
-                                        arm, joints, p.POSITION_CONTROL,
-                                        targetPositions=physical_motor_targets_rad,
-                                        forces=motor_forces_nm, **motor_velocity_kwargs,
-                                    )
+                                    set_joint_position_motors(
+                                        p, arm, joints, physical_motor_targets_rad,
+                                        motor_forces_nm, gui_motor_velocity_caps)
                                 # A DIRECT frame is ten 1ms physics steps.
                                 # Force/torque fixtures must act at EACH step,
                                 # not only the first; otherwise motor servoing
