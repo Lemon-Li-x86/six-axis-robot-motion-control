@@ -2,7 +2,7 @@
 
 六轴工业机器人嵌入式运动控制固件开发与仿真验证。
 
-> **开发状态（2026-10-27）**：第1至第4阶段的基础工程、驱动/协议、UR5 FK/IK、轨迹/PID和FreeRTOS任务均已实现。Stage2 Unity 25/25、ARM/QEMU协议8/8、UART TX 7/7、Motor抽象11/11、GPIO Shadow 13/13通过；Stage3/4 Host与QEMU回归及PyBullet动态验证均有记录。当前分支 `feat/stage5-system-integration-2026-10-27` 的本机更改仍未提交；阶段状态与证据见[第1至4阶段验收状态](docs/phase1-4_acceptance_status_2026-10-27.md)。
+> **第四阶段仿真封版候选（2026-10-28）**：运动规划、六轴PID、FreeRTOS任务的核心 C 实现及指定 Host/QEMU/PyBullet 回归已有验证。当前 RC 基线来自 `candidate/stage4-pid-20261027` 的 `9fb22d9`，PID 参数由 `firmware/freertos_demo/config/robot_defaults.json` 唯一管理：每轴 Kp=0.25、Ki=0、Kd=0.025。**云端候选测试已成功，Windows 本机签收与最终 Tag 尚未完成**。请先阅读[第四阶段封版验收单](docs/part4/12_stage4_release_candidate_2026-10-28.md)；历史证据见[第1至4阶段验收状态](docs/phase1-4_acceptance_status_2026-10-27.md)。第五阶段 GUI/交互修复在独立分支，不属于本次 RC。
 
 目前的架构：
 - `common/` 定义公共类型、角度编码及统一数学常量。
