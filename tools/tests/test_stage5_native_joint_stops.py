@@ -25,6 +25,7 @@ from stage5_qemu_uart_visual_demo import (
     enforce_gui_joint_hard_stops,
     joint_motor_velocity_caps,
     joint_motor_efforts_from_urdf,
+    set_joint_position_motors,
     GUI_JOINT_STOP_SOLVER_ITERATIONS,
     GUI_JOINT_STOP_NUMERICAL_SLOP_DEG,
 )
@@ -46,10 +47,9 @@ class NativeBulletJointStopPhysicsTest(unittest.TestCase):
                 p, arm, joints, (15.0,) * 6)
             self.assertEqual(len(speed_caps), 6)
             self.assertAlmostEqual(speed_caps[0], math.radians(15))
-            p.setJointMotorControlArray(
-                arm, joints, p.POSITION_CONTROL,
-                targetPositions=[math.radians(40)] * 6,
-                forces=efforts, maxVelocities=speed_caps)
+            set_joint_position_motors(
+                p, arm, joints, [math.radians(40)] * 6,
+                efforts, speed_caps)
             for _ in range(200):
                 p.stepSimulation()
             actual = p.getJointState(arm, joints[0])[0]
