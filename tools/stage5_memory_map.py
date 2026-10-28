@@ -105,9 +105,21 @@ def parse_map(path: Path) -> dict:
 
     flash_vma = sum(s["size_bytes"] for s in sections if s["vma_region"] == "FLASH")
     ram_vma = sum(s["size_bytes"] for s in sections if s["vma_region"] == "RAM")
+    # GNU ld can print an LMA for .bss even though ELF NOBITS has no
+    # FLASH load image. Our linker.ld initializes RAM through .data only.
+    unexpected_ram = [s["name"] for s in sections if s["size_bytes"]
+                      and s["vma_region"] == "RAM"
+                      and s["name"] not in (".data", ".bss")]
+    if unexpected_ram:
+        raise ValueError(
+            f"Unrecognized RAM output section, review ELF flags: {unexpected_ram}"
+        )
+    if any(s["size_bytes"] and s["name"] == ".data"
+           and s["lma_region"] != "FLASH" for s in sections):
+        raise ValueError("Initialized RAM .data needs a FLASH load image")
     data_images = sum(
         s["size_bytes"] for s in sections
-        if s["vma_region"] == "RAM" and s["lma_region"] == "FLASH"
+        if s["name"] == ".data" and s["vma_region"] == "RAM"
     )
     flash_bytes = flash_vma + data_images
     if (flash_bytes > regions["FLASH"]["capacity_bytes"]
