@@ -31,6 +31,7 @@ static void task_control(void *arg)
     TickType_t previous_tick=last_wake;
     TickType_t period=pdMS_TO_TICKS(TASK_PERIOD_CONTROL_MS);
     uint8_t active=0U;
+    uint32_t request_generation=0U;
 
     if(joint_controller_init(&controller,r->config.pid)!=ROBOT_STATUS_OK) {
         motion_record_fault(ROBOT_STATUS_ERROR_INVALID_ARGUMENT,1U);
@@ -59,6 +60,11 @@ static void task_control(void *arg)
             dt=(double)(now-previous_tick)/(double)configTICK_RATE_HZ;
             previous_tick=now;
             if(xQueueReceive(r->reference_queue,&reference,0U)==pdTRUE) {
+                if(reference.request_generation!=request_generation) {
+                    request_generation=reference.request_generation;
+                    joint_command_limiter_reset(&limiter);
+                    joint_controller_reset(&controller);
+                }
                 if(reference.enabled==0U) {
                     active=0U;
                     joint_command_limiter_reset(&limiter);
