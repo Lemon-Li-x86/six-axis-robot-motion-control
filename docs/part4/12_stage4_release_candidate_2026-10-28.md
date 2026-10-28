@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 - [x] **G1：源码版本确认。** 用户本机在成功执行测试后报告 `git status --short` **无输出（工作树干净）**，`git rev-parse HEAD` = **`6cedeff99fac67b6aa4a25ccaa18909722164ccc`**；与对应首次 RC CI 源码 SHA 一致。GitHub compare 确认此 SHA 为候选基线 `9fb22d93685f464e455194ff66e816fc671296a8` 的后代（ahead 5、behind 0），两者差异只有 CI 工作流、README 和 Stage4 文档，没有生产代码修改。**本机测试归属 6cedeff，不得把后续仅文档修订的 HEAD 写成同一实际被测 SHA。**
 - [x] **G2：Windows 本机 Stage4 核心回归。** 2026-10-28 用户实际在 RC 工作树运行封版脚本，返回 PID 两份 JSON 摘要和 `build/stage4-final-validation.log` 末40行，确认 Host 6/6、Bridge Smoke 1/1、18组全部执行、60/20 扫参、FreeRTOS 29/29 和多项式 8/8、Stage4 DIRECT 双场景及 `[PASS] Automated Stage3/4 non-actuating regression complete`。**G1 已补全本地 HEAD 与工作树状态**；报告引用的是用户本机复制的运行结果，尚未将完整本机 log 原件归档。
 - [x] **G3：性能异常已审阅并记录为探索性边界。** 本机 18/18 执行成功、16/18 通过跨工况沿用的小幅测试门限；未达的是 six_axis_medium、60 N·m 条件下 *PI experimental*（J2 超调 0.55°）和 *PID experimental*（J2 超调 0.38°），均高于小幅测试的 0.15° 超调门限。二者不是生产默认 PID 候选的独立六工况验收失败。用户提供扫参摘要：最佳候选六项符合本次仿真试验门限，最坏比 0.7673293597209491。保留 CSV/JSON 为证据，本次不改生产控制增益。
-- [ ] **G4：交付物核对。** 三项阶段产出有明确文件索引，单位、配置源和算法边界一致；报告引用原始运行证据，清理“当前默认仍为 Kp=0.2”等过时**状态声明**而不删除历史数据。
+- [ ] **G4：交付物与原始证据归档。** 三项阶段产出已有明确文件索引；本 RC 已重写项目根 `README.md`（Stage1–Stage4 逐阶段进展、结构、运行、性能边界及 Stage5 当前范围），同步更新 `docs/architecture.md`，纠正旧版“只有通信任务、Control Task 尚未实现”的过时声明；旧 PID 测试数据仍可追溯。**尚未完成**：保存用户本机 `build/` 下完整 JSON/CSV/GDB 日志到正式交付介质，及最终文档审阅签收。不能因 README 更新而直接将 G4 标为完成。
 - [ ] **G5：最终签收与封存。** G1–G4 完成后才将此单状态改为“正式封版”，保存签收日期、**最终源码 SHA**、验收记录位置及例外；再考虑创建不可移动 Tag。此 RC **没有打 Tag、没有合并 Stage5 PR**。
 
 可选额外集成观测：`-IncludeGuiReplay` 会重新构建 QEMU UART 固件并执行**独立轨迹录制和 GUI 回放**；它不是 PyBullet 原生鼠标拾取，不属于本次 Stage4 基础封版的硬性门槛。
