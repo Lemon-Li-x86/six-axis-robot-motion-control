@@ -38,6 +38,9 @@
 #include "protocol_tasks.h"
 
 #include "performance_monitor.h"
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+#include "stage5_cpu_trace.h"
+#endif
 #if ROBOT_ENABLE_STAGE4_TASKS
 #include "motion_pipeline.h"
 #include "stage4_motion_config.h"
@@ -124,6 +127,9 @@ int main(void)
      * 初始化 Timer Driver。
      */
     timer_driver_init();
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+    stage5_cpu_trace_init();
+#endif
 
     /*
      * 初始化 GPIO Driver。
