@@ -4,10 +4,22 @@ on:
   push:
     branches:
       - feat/stage5-system-integration-2026-10-27
+      - feat/stage5-apf-path-20261028
+      - feat/stage5-main-integration-20261029
     paths:
       - 'firmware/freertos_demo/**'
       - 'tools/check_protocol_mirror.py'
       - 'simulation/pybullet_ur5/src/stage5_static_obstacle_probe.py'
+      - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
+      - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
+      - '.github/workflows/stage5-system-integration.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
+      - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
       - '.github/workflows/stage5-system-integration.yml'
   workflow_dispatch:
 
@@ -57,6 +69,8 @@ jobs:
           python simulation/pybullet_ur5/src/stage5_static_obstacle_probe.py \
             --library build/stage5-avoidance/libstage5_apf_bridge.so \
             --output-dir build/stage5-pybullet
+      - name: Verify every UR5 link against static obstacles using actual PyBullet
+        run: python -m unittest discover -s simulation/pybullet_ur5/tests -p 'test_stage5_collision_validation.py' -v
       - name: Preserve geometry and planner diagnostic
         if: always()
         uses: actions/upload-artifact@v4

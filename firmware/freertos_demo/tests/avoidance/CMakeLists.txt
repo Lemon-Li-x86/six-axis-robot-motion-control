@@ -45,3 +45,27 @@ endif()
 if(NOT MSVC)
     target_link_libraries(stage5_apf_bridge PRIVATE m)
 endif()
+
+# Stage5 bounded multi-step path uses the same C APF primitive as PyBullet.
+add_executable(stage5_potential_field_path_host
+    potential_field_path_test_main.c
+    ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field.c
+    ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field_path.c
+)
+target_include_directories(stage5_potential_field_path_host PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/algorithms/avoidance
+)
+set_target_properties(stage5_potential_field_path_host PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(stage5_potential_field_path_host PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(stage5_potential_field_path_host PRIVATE m)
+endif()
+add_test(NAME stage5_potential_field_path_host
+    COMMAND stage5_potential_field_path_host)
