@@ -23,6 +23,8 @@ from stage4_dynamic_closed_loop import URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
     configure_native_urdf_joint_stops,
     enforce_gui_joint_hard_stops,
+    joint_motor_velocity_caps,
+    joint_motor_efforts_from_urdf,
     GUI_JOINT_STOP_SOLVER_ITERATIONS,
     GUI_JOINT_STOP_NUMERICAL_SLOP_DEG,
 )
@@ -30,6 +32,34 @@ from stage5_qemu_uart_visual_demo import (
 
 @unittest.skipIf(p is None, "real pybullet wheel is required")
 class NativeBulletJointStopPhysicsTest(unittest.TestCase):
+    def test_actual_pybullet_position_motor_accepts_firmware_velocity_caps(self):
+        """Exercise the real keyword accepted by the Windows/Linux Bullet wheel."""
+        cid = p.connect(p.DIRECT)
+        self.assertGreaterEqual(cid, 0)
+        try:
+            p.setGravity(0, 0, 0)
+            p.setTimeStep(0.001)
+            arm = p.loadURDF(str(URDF), useFixedBase=True)
+            joints = joint_indices(p, arm)
+            efforts = joint_motor_efforts_from_urdf(p, arm, joints)
+            speed_caps = joint_motor_velocity_caps(
+                p, arm, joints, (15.0,) * 6)
+            self.assertEqual(len(speed_caps), 6)
+            self.assertAlmostEqual(speed_caps[0], math.radians(15))
+            p.setJointMotorControlArray(
+                arm, joints, p.POSITION_CONTROL,
+                targetPositions=[math.radians(40)] * 6,
+                forces=efforts, maxVelocities=speed_caps)
+            for _ in range(200):
+                p.stepSimulation()
+            actual = p.getJointState(arm, joints[0])[0]
+            self.assertGreater(actual, 0.0)
+            # Under no external pick forces the 15deg/s cap should not
+            # produce a 40deg snap in 0.2 seconds.
+            self.assertLess(actual, math.radians(8.0))
+        finally:
+            p.disconnect(cid)
+
     def test_real_pybullet_urdf_guard_clamps_mouse_like_overtravel_and_remains_live(self):
         """Actual PyBullet client: repeated out-of-range position is not retained."""
         cid = p.connect(p.DIRECT)
