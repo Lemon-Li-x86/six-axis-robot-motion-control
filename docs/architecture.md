@@ -81,7 +81,7 @@
 | Stage4 Native C + PyBullet DIRECT | **同源 C** 轨迹/PID驱动仿真关节与误差分析 | FreeRTOS/GDB/UART动态链 |
 | Stage5 双向 QEMU UART + PyBullet | 独立串口接收运动请求、虚拟反馈、系统级故障处理 | 实物 MCU、整臂碰撞安全与工业认证 |
 
-封版候选的测试数据和准确版本以 [Stage4 RC 验收单](part4/12_stage4_release_candidate_2026-10-28.md) 为准；**RC 不是已经打了正式 Release Tag**。当前完整 Stage5 GUI 交互的试验与问题追踪以独立 PR 和 [Stage5 Issue Log](part5/02_integration_issue_log.md) 为准。
+Stage4 正式交付文档为 [PID参数与轨迹性能](part4/01_pid_tuning_and_trajectory_performance.md)、[多任务调度与实时性](part4/02_multitask_scheduling_and_realtime_verification.md)；历史封版候选的数据和准确版本参见 [Stage4 RC 验收单](part4_archive/12_stage4_release_candidate_2026-10-28.md)；**RC 不是已经打了正式 Release Tag**。当前完整 Stage5 GUI 交互的试验与问题追踪以独立 PR 和 [Stage5 Issue Log](part5/02_integration_issue_log.md) 为准。
 
 ## 5. 维护约束
 

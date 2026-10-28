@@ -1,6 +1,6 @@
 # 第五阶段参数登记簿（初始版，2026-10-27）
 
-该文档继承 `docs/part4/00_parameter_register.md` 的单一来源规则。第五阶段**不得**为UR5 DH、角度编码、PID、关节安全限位再复制一份参数。
+该文档继承 `docs/part4_archive/00_parameter_register.md` 的单一来源规则。第五阶段**不得**为UR5 DH、角度编码、PID、关节安全限位再复制一份参数。
 
 ## 当前已实现的C人工势场 API
 

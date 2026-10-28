@@ -57,4 +57,4 @@
 
 ## 本轮程序补强
 
-增加多项式轨迹执行前的整段位置、速度与加速度极值验证，不再仅依赖任务采样时的检查。生产规划任务先核对观察到的起点，再验证系数/起终点元数据和全程限位；失败时不发布首个参考。Host覆盖32组不同边界条件、每组1001点的独立密采样对照；ARM算法20项及FreeRTOS新增8项路径检查均通过。实现、配置和证据入口见 [`09_polynomial_preflight_and_json_config_2026-10-27.md`](part4/09_polynomial_preflight_and_json_config_2026-10-27.md)。
+增加多项式轨迹执行前的整段位置、速度与加速度极值验证，不再仅依赖任务采样时的检查。生产规划任务先核对观察到的起点，再验证系数/起终点元数据和全程限位；失败时不发布首个参考。Host覆盖32组不同边界条件、每组1001点的独立密采样对照；ARM算法20项及FreeRTOS新增8项路径检查均通过。实现、配置和证据入口见 [`09_polynomial_preflight_and_json_config_2026-10-27.md`](part4_archive/09_polynomial_preflight_and_json_config_2026-10-27.md)。
