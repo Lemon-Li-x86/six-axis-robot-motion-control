@@ -77,7 +77,6 @@ DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
 # Acceptance criterion for physically meaningful temporal correspondence.
 # Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
-SERVO_MAX_TORQUE_NM = 150.0  # PyBullet revolute joint test fixture.
 # GUI-only physics solver settings; never robot model/firmware joint limits.
 GUI_JOINT_STOP_SOLVER_ITERATIONS = 80
 GUI_JOINT_STOP_FORCE_MULTIPLIER = 20.0
@@ -171,11 +170,31 @@ def configure_native_urdf_joint_stops(
             raise ValueError(f"{name} lacks positive URDF joint effort")
         bullet.changeDynamics(
             arm, index, jointLowerLimit=low, jointUpperLimit=high,
-            jointLimitForce=max(effort, SERVO_MAX_TORQUE_NM)
-            * GUI_JOINT_STOP_FORCE_MULTIPLIER,
+            jointLimitForce=effort * GUI_JOINT_STOP_FORCE_MULTIPLIER,
         )
         limits.append((low, high))
     return tuple(limits)
+
+
+def joint_motor_efforts_from_urdf(
+    bullet, arm: int, joints: Sequence[int],
+) -> tuple[float, ...]:
+    """Read the loaded URDF per-axis torque ratings for Bullet actuators.
+
+    Joint stop constraint strength and joint motor effort are separate: a
+    strong GUI picking hard stop must never inflate wrist actuator torque.
+    """
+    if len(joints) != wire.JOINT_COUNT:
+        raise ValueError("URDF actuator lookup requires six joints")
+    efforts = []
+    for name, index in zip(JOINT_NAMES, joints):
+        info = bullet.getJointInfo(arm, index)
+        effort = float(info[10])
+        if info[2] != bullet.JOINT_REVOLUTE or not (
+                math.isfinite(effort) and effort > 0.0):
+            raise ValueError(f"{name} lacks a positive revolute URDF effort")
+        efforts.append(effort)
+    return tuple(efforts)
 
 
 def enforce_gui_joint_hard_stops(
@@ -392,6 +411,30 @@ def closest_physical_motor_targets(
         lifted.append(math.radians((cmd + turn * full_turn) /
                                    wire.JOINT_ANGLE_SCALE))
     return tuple(lifted)
+
+
+def continuous_firmware_servo_targets(
+    canonical: Sequence[int],
+    physical_feedback: Sequence[int],
+    previous_targets_rad: Sequence[float],
+    joint_limits_rad: Sequence[tuple[float, float]],
+    rebase: bool,
+) -> tuple[float, ...]:
+    """Decode the C actuator's canonical UART target without turn-jumping.
+
+    Normal frames unwrap against the previous continuous servo command, NOT
+    the dragged physical pose. A newly accepted C motion generation is the
+    only place the controller can reset its limiter from measured feedback:
+    it must rebase the first following servo target to that measured pose.
+    """
+    if len(previous_targets_rad) != wire.JOINT_COUNT:
+        raise ValueError("Continuous servo decode requires six previous targets")
+    previous_raw = tuple(
+        round(math.degrees(value) * wire.JOINT_ANGLE_SCALE)
+        for value in previous_targets_rad)
+    return closest_physical_motor_targets(
+        canonical, physical_feedback if rebase else previous_raw,
+        joint_limits_rad)
 
 
 class JointPhysicalSafetyError(ValueError):
@@ -616,6 +659,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     final_diagnostics = False
     hold_started = None
     ending = False
+    motor_target_rebase_pending = True
     hold_request_sequence = None
     hold_request_at = 0.0
     hold_rearms = 0
@@ -693,6 +737,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     numSolverIterations=GUI_JOINT_STOP_SOLVER_ITERATIONS)
             arm = p.loadURDF(str(URDF), useFixedBase=True)
             joints = joint_indices(p, arm)
+            motor_forces_nm = joint_motor_efforts_from_urdf(p, arm, joints)
             if not options.headless:
                 joint_limits_rad = configure_native_urdf_joint_stops(
                     p, arm, joints)
@@ -709,7 +754,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             p.setJointMotorControlArray(
                 arm, joints, p.POSITION_CONTROL,
                 targetPositions=physical_motor_targets_rad,
-                forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
+                forces=motor_forces_nm,
             )
             for _ in range(warmup_calls):
                 p.stepSimulation()
@@ -819,25 +864,15 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 # 仅在运动请求已被接受后执行固件位置目标；启动
                                 # 时始终保持首次实测姿态，不能执行历史演示角度。
                                 if sequencer.accepted or (sequencer.done and options.interactive_hold):
-                                    # Preserve the original servo path for
-                                    # ordinary single-turn operation. Only
-                                    # when the *physical* state left canonical
-                                    # range do we need to lift equivalent turns.
-                                    canonical_half = round(
-                                        math.degrees(math.pi)
-                                        * wire.JOINT_ANGLE_SCALE)
-                                    if all(-canonical_half <= raw < canonical_half
-                                           for raw in last_measured):
-                                        physical_motor_targets_rad = tuple(
-                                            math.radians(v / wire.JOINT_ANGLE_SCALE)
-                                            for v in targets)
-                                    else:
-                                        physical_motor_targets_rad = closest_physical_motor_targets(
-                                            targets, last_measured, joint_limits_rad)
+                                    physical_motor_targets_rad = continuous_firmware_servo_targets(
+                                        targets, last_measured,
+                                        physical_motor_targets_rad, joint_limits_rad,
+                                        rebase=motor_target_rebase_pending)
+                                    motor_target_rebase_pending = False
                                     p.setJointMotorControlArray(
                                         arm, joints, p.POSITION_CONTROL,
                                         targetPositions=physical_motor_targets_rad,
-                                        forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
+                                        forces=motor_forces_nm,
                                     )
                                 # A DIRECT frame is ten 1ms physics steps.
                                 # Force/torque fixtures must act at EACH step,
@@ -1038,9 +1073,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         raise RuntimeError(f"Hold recovery rejected: seq={seq}, status={status}")
                                     hold_request_sequence = None
                                     hold_rearm_acks += 1
+                                    motor_target_rebase_pending = True
                                     audit.write(json.dumps(dict(event="hold_replan_ack", sequence=seq)) + "\n")
                                     continue
                                 sequencer.acknowledge(payload)
+                                motor_target_rebase_pending = True
                                 print(f"[ACCEPTED] Segment {sequencer.index + 1}/"
                                       f"{len(sequencer.goals)}")
                             elif (command == wire.CMD_DIAGNOSTICS_RESPONSE and
