@@ -357,6 +357,11 @@ C `protocol_commands.c` 的 MOVE ACK 只确认 `motion_pipeline_submit_joint`
   总尝试次数不超过 3。数值为 Stage5 GUI 测试策略，
   不是 UR5 硬件参数或另一套轨迹规划。
 - 记录 `hold_replan` 的 attempt 及当时 C 诊断快照；
+  观察期固件 `controller_faults` / `planner_faults` 若增长，
+  会新增 `hold_firmware_fault_counter_increased` 审计事件和
+  `[C MOTION FAULT]` 控制台告警；这是固件实际故障计数，
+  不应被活跃的 UART ACK 所掩盖。若尚未轮询到 `last_fault`，
+  告警不臆测具体故障码。
   超过预算则记录 `hold_recovery_stalled` 并在控制台显示，
   **不将停在中途的状态报成 PASS，也不隐藏 C 故障**；
   GUI/UART 保持运行，供人工采集证据。
