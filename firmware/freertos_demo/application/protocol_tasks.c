@@ -36,6 +36,9 @@
 #include "error_code.h"
 
 #include "performance_monitor.h"
+#if ROBOT_ENABLE_STAGE4_TASKS && ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
+#include "motion_pipeline.h"
+#endif
 
 
 /* =========================================================
@@ -79,52 +82,47 @@ static void uart_rx_event_from_isr(void)
 static void task_protocol_tx(void *parameters)
 {
     robot_joint_angles_t joint_targets;
-
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN];
-
     (void)parameters;
 
     for (;;)
     {
-        /*
-         * Read the current canonical joint targets.
-         */
-        if (
-            motor_state_get_targets(
-                &joint_targets
-            ) == ROBOT_STATUS_OK
-        )
+        robot_status_t status;
+#if ROBOT_ENABLE_STAGE4_TASKS && ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
+        motion_stage4_diagnostics_t motion;
+        status = motion_pipeline_get_diagnostics(&motion);
+        if (status == ROBOT_STATUS_OK && motion.controller_steps == 0U)
         {
-            if (
-                protocol_build_joint_target_frame(
-                    &joint_targets,
-                    frame
-                ) == ROBOT_STATUS_OK
-            )
-            {
-                (void)uart_tx_manager_send_frame(
-                    frame,
-                    PROTOCOL_JOINT_FRAME_LEN
-                );
-            }
+            /* Before the first validated Control output, hold the measured
+             * pose. JSON startup targets belong to the legacy demo, not an
+             * accepted motion request. No feedback means no target frame. */
+            motor_state_observation_t feedback;
+            status = motor_state_get_feedback(&feedback);
+            if (status == ROBOT_STATUS_OK)
+                joint_targets = feedback.feedback.canonical_positions;
+        }
+        else if (status == ROBOT_STATUS_OK)
+        {
+            /* Read AFTER the publication count: otherwise Control could
+             * publish between a stale target read and this diagnostic read. */
+            status = motor_state_get_targets(&joint_targets);
+        }
+#else
+        status = motor_state_get_targets(&joint_targets);
+#endif
+        if (status == ROBOT_STATUS_OK &&
+            protocol_build_joint_target_frame(&joint_targets, frame)
+                == ROBOT_STATUS_OK)
+        {
+            (void)uart_tx_manager_send_frame(frame, PROTOCOL_JOINT_FRAME_LEN);
         }
 
-        /*
-         * TX period can be changed at runtime
-         * through the SET_PARAMETER command.
-         */
+        /* Runtime configuration owns the TX period; never busy-loop if
+         * millisecond conversion rounds below one scheduler tick. */
         {
             TickType_t delay_ticks = pdMS_TO_TICKS(
-                runtime_config_get_protocol_tx_period_ms()
-            );
-
-            /* Avoid a zero-tick busy loop after ms-to-tick rounding. */
-            if (delay_ticks == 0U)
-            {
-                delay_ticks = 1U;
-            }
-
-            vTaskDelay(delay_ticks);
+                runtime_config_get_protocol_tx_period_ms());
+            vTaskDelay(delay_ticks == 0U ? 1U : delay_ticks);
         }
     }
 }
@@ -138,6 +136,9 @@ static void task_protocol_rx(void *parameters)
 {
     protocol_parser_t parser;
     protocol_frame_t received_frame;
+    TickType_t last_byte_tick = 0U;
+    TickType_t frame_timeout_ticks = pdMS_TO_TICKS(
+        PROTOCOL_FRAME_TIMEOUT_MS);
 
     /*
      * Persistent feedback timing state.
@@ -151,6 +152,10 @@ static void task_protocol_rx(void *parameters)
     (void)parameters;
 
     protocol_parser_init(&parser);
+    if (frame_timeout_ticks == 0U)
+    {
+        frame_timeout_ticks = 1U;
+    }
 
     protocol_commands_init(&command_context);
 
@@ -170,12 +175,24 @@ static void task_protocol_rx(void *parameters)
          * Sleep until the UART RX interrupt
          * notifies this task.
          */
-        (void)ulTaskNotifyTake(
+        uint32_t notifications = ulTaskNotifyTake(
             pdTRUE,
-            portMAX_DELAY
+            parser.state == PROTOCOL_STATE_WAIT_HEADER_0
+                ? portMAX_DELAY
+                : frame_timeout_ticks
         );
 
         performance_monitor_record_task_wakeup();
+
+        /* A partial frame also expires when no subsequent byte arrives. */
+        if (notifications == 0U)
+        {
+            TickType_t now = xTaskGetTickCount();
+            (void)protocol_parser_expire_partial_frame(
+                &parser,
+                (uint32_t)(TickType_t)(now - last_byte_tick),
+                (uint32_t)frame_timeout_ticks);
+        }
 
         /*
          * Consume all bytes currently stored
@@ -183,6 +200,19 @@ static void task_protocol_rx(void *parameters)
          */
         while (uart_driver_read_byte(&byte))
         {
+            TickType_t byte_tick = xTaskGetTickCount();
+
+            /*
+             * A truncated frame must not consume a later command. UART
+             * notifications wake this task as bytes arrive; comparing the
+             * last consumed byte tick here also handles tick counter wrap.
+             */
+            (void)protocol_parser_expire_partial_frame(
+                &parser,
+                (uint32_t)(TickType_t)(byte_tick - last_byte_tick),
+                (uint32_t)frame_timeout_ticks);
+
+            last_byte_tick = byte_tick;
             if (
                 protocol_parser_process_byte(
                     &parser,

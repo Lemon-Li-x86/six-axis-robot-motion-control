@@ -26,6 +26,11 @@
 #include "protocol.h"
 #include "robot_types.h"
 #include "error_code.h"
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+#include "motion_pipeline.h"
+#include "motion_limits.h"
+#include "stage4_motion_config.h"
+#endif
 
 
 /* =========================================================
@@ -278,6 +283,39 @@ static robot_status_t get_diagnostics_value(
             break;
     }
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    /* Existing UART diagnostic frame; QEMU test only extends selectors,
+     * with all values read from the authoritative motion pipeline. */
+    if(selector>=DIAGNOSTICS_METRIC_MOTION_ACCEPTED &&
+       selector<=DIAGNOSTICS_METRIC_MONITORING_TICKS)
+    {
+        motion_stage4_diagnostics_t motion={0};
+        status=motion_pipeline_get_diagnostics(&motion);
+        if(status!=ROBOT_STATUS_OK) return status;
+        switch(selector) {
+            case DIAGNOSTICS_METRIC_MOTION_ACCEPTED:
+                *value=motion.requests_accepted; break;
+            case DIAGNOSTICS_METRIC_TRAJECTORY_SAMPLES:
+                *value=motion.trajectory_samples; break;
+            case DIAGNOSTICS_METRIC_CONTROLLER_STEPS:
+                *value=motion.controller_steps; break;
+            case DIAGNOSTICS_METRIC_CONTROLLER_FAULTS:
+                *value=motion.controller_faults; break;
+            case DIAGNOSTICS_METRIC_PLANNER_FAULTS:
+                *value=motion.planner_faults; break;
+            case DIAGNOSTICS_METRIC_FEEDBACK_STALE:
+                *value=motion.feedback_stale_count; break;
+            case DIAGNOSTICS_METRIC_MOTION_LAST_FAULT:
+                *value=(uint32_t)(int32_t)motion.last_fault; break;
+            case DIAGNOSTICS_METRIC_MONITORING_TICKS:
+                *value=motion.monitoring_ticks; break;
+            default:
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        }
+        return ROBOT_STATUS_OK;
+    }
+#endif
+
     /* Unknown selectors must not trigger an unnecessary metrics snapshot. */
     switch (selector)
     {
@@ -408,6 +446,54 @@ static void handle_diagnostics(
 }
 
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+/* QEMU simulation ONLY. The existing target frame is firmware->PyBullet;
+ * this separate command is PyBullet->firmware and its ACK only confirms
+ * queue admission, never physical path completion. No actuation on startup. */
+static void handle_simulated_joint_move(
+    const protocol_frame_t *frame,
+    uint32_t now_tick,
+    uint32_t tick_rate_hz)
+{
+    robot_joint_angles_t requested={{0}};
+    robot_joint_positions_t continuous={{0}};
+    motor_state_observation_t feedback={0};
+    robot_status_t status;
+    uint8_t sequence;
+    uint8_t ack[PROTOCOL_MOVE_ACK_FRAME_LEN];
+    const motion_stage4_config_t *config=stage4_motion_default_config();
+    uint64_t max_age;
+    if(frame==NULL || frame->length<1U)
+        return; /* no sequence byte to acknowledge */
+    sequence=frame->payload[0];
+    status=protocol_parse_joint_move_request(frame,&sequence,&requested);
+    if(status==ROBOT_STATUS_OK) {
+        if(tick_rate_hz==0U) status=ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        else {
+            max_age=((uint64_t)config->feedback_timeout_ms*
+                     (uint64_t)tick_rate_hz)/1000U;
+            if(max_age==0U || max_age>0x7FFFFFFFU)
+                status=ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            else {
+                status=motor_state_get_feedback(&feedback);
+                if(status==ROBOT_STATUS_OK &&
+                   !motor_state_feedback_is_fresh(
+                      &feedback,now_tick,(uint32_t)max_age))
+                    status=ROBOT_STATUS_ERROR_NOT_READY;
+            }
+        }
+    }
+    if(status==ROBOT_STATUS_OK)
+        status=motion_limits_unwrap_nearest(
+            &requested,&feedback.feedback.unwrapped_positions,&continuous);
+    if(status==ROBOT_STATUS_OK)
+        status=motion_pipeline_submit_joint(&continuous);
+    if(protocol_build_joint_move_ack_frame(sequence,status,ack)
+       ==ROBOT_STATUS_OK)
+        (void)uart_tx_manager_send_frame(ack,PROTOCOL_MOVE_ACK_FRAME_LEN);
+}
+#endif
+
 /* =========================================================
  * Public Command Dispatcher
  * ========================================================= */
@@ -442,6 +528,12 @@ void protocol_commands_dispatch_frame(
             handle_set_parameter(frame);
 
             break;
+
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+        case CMD_REQUEST_JOINT_MOVE:
+            handle_simulated_joint_move(frame,current_tick,tick_rate_hz);
+            break;
+#endif
 
         case CMD_GET_DIAGNOSTICS:
 

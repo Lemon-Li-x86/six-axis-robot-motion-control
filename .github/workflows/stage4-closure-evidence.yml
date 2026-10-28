@@ -1,0 +1,170 @@
+name: Stage4 closure PID sensitivity evidence
+
+on:
+  push:
+    branches:
+      - review/stage4-closure-evidence-20261027
+      - candidate/stage4-pid-20261027
+      - release/stage4-simulation-rc-20261028
+    paths:
+      - '.github/workflows/stage4-closure-evidence.yml'
+      - 'firmware/freertos_demo/tests/simulation/**'
+      - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
+      - 'tools/stage4_pid_study.py'
+      - 'tools/stage4_pid_gain_sweep.py'
+      - 'tools/test_stage4_closure.ps1'
+      - 'tools/tests/test_stage4_pid_gain_sweep.py'
+      - 'tools/tests/test_stage4_pid_study.py'
+      - 'firmware/freertos_demo/config/**'
+      - 'docs/part4/**'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage4-native-pid-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native compiler and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          python -m pip install pybullet
+
+      - name: Recheck unchanged Stage4 host algorithm suites
+        run: |
+          cmake -S firmware/freertos_demo/tests/trajectory \
+            -B build/stage4-closure-trajectory -G Ninja
+          cmake --build build/stage4-closure-trajectory
+          ctest --test-dir build/stage4-closure-trajectory --output-on-failure
+
+      - name: Build the real C PID and trajectory shared library
+        run: |
+          cmake -S firmware/freertos_demo/tests/simulation \
+            -B build/stage4-closure-simulation -G Ninja
+          cmake --build build/stage4-closure-simulation
+          ctest --test-dir build/stage4-closure-simulation --output-on-failure
+
+      - name: Check Windows closure script syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+              'tools/test_stage4_closure.ps1',
+              [ref]$tokens,
+              [ref]$parseErrors
+          )
+          if ($parseErrors.Count -ne 0) {
+              $parseErrors | ForEach-Object { Write-Error $_ }
+              exit 1
+          }
+
+      - name: Validate test matrix semantics without a graphical window
+        run: |
+          python -m unittest discover -s tools/tests \
+            -p test_stage4_pid_study.py -v
+
+      - name: Compare native C control under varied movement and motor loads
+        run: |
+          python tools/stage4_pid_study.py \
+            --library build/stage4-closure-simulation/libstage4_sim_bridge.so \
+            --output-dir build/stage4-closure-pid-matrix
+
+      - name: Validate split-sweep trial definitions
+        run: |
+          python -m unittest discover -s tools/tests \
+            -p test_stage4_pid_gain_sweep.py -v
+
+      - name: Explore candidate gains with held-out simulation cases
+        run: |
+          python tools/stage4_pid_gain_sweep.py \
+            --library build/stage4-closure-simulation/libstage4_sim_bridge.so \
+            --output-dir build/stage4-pid-sweep
+
+      - name: Archive real simulation traces even when a trial fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-native-pid-sensitivity-traces
+          path: |
+            build/stage4-closure-pid-matrix/**
+            build/stage4-pid-sweep/**
+          if-no-files-found: ignore
+
+
+  windows-native-host-regression:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare Windows Python environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          # No PyBullet required to prove MSVC/GCC detection and C builds.
+
+      - name: Verify native compiler discovery, Windows build and C smoke tests
+        shell: pwsh
+        run: |
+          .\tools\test_stage4_closure.ps1 -HostBuildOnly
+
+      - name: Archive Windows host build and measured trials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-windows-native-host-evidence
+          path: build/stage4-closure-local/evidence/**
+          if-no-files-found: ignore
+
+  qemu-freertos-pybullet-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM compiler and QEMU for actual firmware integration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build
+          python -m pip install pybullet
+
+      - name: Build the exact ARM firmware with the staged JSON gains
+        run: |
+          cmake -S . -B build/stage4-candidate-uart -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON \
+            -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+          cmake --build build/stage4-candidate-uart --target freertos_demo
+
+      - name: Verify genuine UART joint feedback and firmware diagnostics
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py \
+            --elf build/stage4-candidate-uart/firmware/freertos_demo/freertos_demo.elf \
+            --output-dir build/stage4-candidate-uart/single-move
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --elf build/stage4-candidate-uart/firmware/freertos_demo/freertos_demo.elf \
+            --headless --scenario six_axis --timeout-s 210 \
+            --output-dir build/stage4-candidate-uart/multi-segment
+
+      - name: Preserve candidate UART end-to-end traces even if a test fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-candidate-qemu-uart-physics-evidence
+          path: |
+            build/stage4-candidate-uart/single-move/**
+            build/stage4-candidate-uart/multi-segment/**
+          if-no-files-found: ignore

@@ -8,7 +8,7 @@
  * Internal Helpers
  * ========================================================= */
 
-static void protocol_parser_reset(
+void protocol_parser_reset(
     protocol_parser_t *parser
 )
 {
@@ -18,6 +18,24 @@ static void protocol_parser_reset(
 
     parser->frame.command = 0U;
     parser->frame.length = 0U;
+}
+
+
+uint8_t protocol_parser_expire_partial_frame(
+    protocol_parser_t *parser,
+    uint32_t idle_ticks,
+    uint32_t timeout_ticks
+)
+{
+    if (parser == NULL || timeout_ticks == 0U ||
+        parser->state == PROTOCOL_STATE_WAIT_HEADER_0 ||
+        idle_ticks < timeout_ticks)
+    {
+        return 0U;
+    }
+
+    protocol_parser_reset(parser);
+    return 1U;
 }
 
 
@@ -208,7 +226,16 @@ uint8_t protocol_parser_process_byte(
                 return 1U;
             }
 
+            /*
+             * If a prior payload byte was lost, this byte may be the
+             * next frame's 0xAA header rather than the old checksum.
+             * Re-use it as a candidate header on CHECKSUM FAILURE.
+             */
             protocol_parser_reset(parser);
+            if (byte == PROTOCOL_HEADER_0)
+            {
+                parser->state = PROTOCOL_STATE_WAIT_HEADER_1;
+            }
 
             break;
 
@@ -288,48 +315,80 @@ robot_status_t protocol_build_joint_state_ack_frame(
 }
 
 
-robot_status_t protocol_parse_joint_state(
-    const protocol_frame_t *frame,
-    robot_joint_angles_t *joints
-)
+/* One raw six-axis payload decoder for UART feedback and Stage5 request.
+ * Out-of-range canonical angles are rejected before modifying outputs.
+ * Payload bytes and signed interpretation are identical for both commands. */
+static robot_status_t decode_joint_payload(
+    const uint8_t *bytes,
+    robot_joint_angles_t *out)
 {
+    robot_joint_angles_t decoded={{0}};
     uint32_t i;
-
-    if (frame == NULL || joints == NULL)
-    {
+    if(bytes==NULL || out==NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
+    for(i=0U;i<ROBOT_JOINT_COUNT;i++) {
+        uint16_t raw=(uint16_t)bytes[2U*i] |
+            ((uint16_t)bytes[2U*i+1U]<<8U);
+        decoded.value[i]=(robot_joint_angle_t)raw;
+        if(decoded.value[i] < -ROBOT_JOINT_HALF_TURN_RAW ||
+           decoded.value[i] >= ROBOT_JOINT_HALF_TURN_RAW)
+            return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
-
-    if (frame->command != CMD_JOINT_STATE)
-    {
-        return ROBOT_STATUS_ERROR_INVALID_COMMAND;
-    }
-
-    if (frame->length != PROTOCOL_JOINT_PAYLOAD_LEN)
-    {
-        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
-    }
-
-    for (i = 0U; i < ROBOT_JOINT_COUNT; i++)
-    {
-        uint16_t value;
-
-        value =
-            (uint16_t)frame->payload[i * 2U]
-            |
-            (
-                (uint16_t)frame->payload[
-                    i * 2U + 1U
-                ] << 8U
-            );
-
-        joints->value[i] =
-            (robot_joint_angle_t)value;
-    }
-
+    *out=decoded;
     return ROBOT_STATUS_OK;
 }
 
+robot_status_t protocol_parse_joint_state(
+    const protocol_frame_t *frame,
+    robot_joint_angles_t *joints)
+{
+    if(frame==NULL || joints==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(frame->command!=CMD_JOINT_STATE)
+        return ROBOT_STATUS_ERROR_INVALID_COMMAND;
+    if(frame->length!=PROTOCOL_JOINT_PAYLOAD_LEN)
+        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
+    return decode_joint_payload(frame->payload,joints);
+}
+
+
+/* Stage5 simulation move requests are never decoded as feedback. Only
+ * canonical signed six-axis values use the existing 0.01-degree encoding.
+ * Payload shares the authoritative constants, not a second angle scale. */
+robot_status_t protocol_parse_joint_move_request(
+    const protocol_frame_t *frame,
+    uint8_t *sequence,
+    robot_joint_angles_t *canonical_goal)
+{
+    robot_joint_angles_t decoded={{0}};
+    robot_status_t status;
+    if(frame==NULL || sequence==NULL || canonical_goal==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(frame->command!=CMD_REQUEST_JOINT_MOVE)
+        return ROBOT_STATUS_ERROR_INVALID_COMMAND;
+    if(frame->length!=PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN)
+        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
+    status=decode_joint_payload(&frame->payload[1U],&decoded);
+    if(status!=ROBOT_STATUS_OK) return status;
+    *sequence=frame->payload[0];
+    *canonical_goal=decoded;
+    return ROBOT_STATUS_OK;
+}
+
+robot_status_t protocol_build_joint_move_ack_frame(
+    uint8_t sequence,
+    robot_status_t status,
+    uint8_t frame[PROTOCOL_MOVE_ACK_FRAME_LEN])
+{
+    uint8_t payload[PROTOCOL_MOVE_ACK_PAYLOAD_LEN];
+    if(frame==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(status<INT8_MIN || status>INT8_MAX)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    payload[0]=sequence;
+    payload[1]=(uint8_t)((int8_t)status);
+    return protocol_build_frame(CMD_JOINT_MOVE_ACK,payload,
+        PROTOCOL_MOVE_ACK_PAYLOAD_LEN,frame);
+}
 
 /* =========================================================
  * Parameter Protocol

@@ -159,6 +159,8 @@
  * ========================================================= */
 
 #define INCLUDE_vTaskDelay 1
+#define INCLUDE_xTaskDelayUntil 1
+#define INCLUDE_uxTaskGetStackHighWaterMark 1
 
 /* Required to roll back partial ProtocolTX/ProtocolRX task creation. */
 #define INCLUDE_vTaskDelete 1

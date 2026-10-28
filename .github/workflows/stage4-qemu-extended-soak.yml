@@ -1,0 +1,57 @@
+name: Stage4 60-second QEMU stability soak
+
+on:
+  push:
+    branches:
+      - feat/stage5-system-integration-2026-10-27
+    paths:
+      - 'firmware/freertos_demo/tests/qemu_target/stage4_rtos_selftest.c'
+      - 'firmware/freertos_demo/application/tasks/stage4_timing_probe.c'
+      - 'firmware/freertos_demo/CMakeLists.txt'
+      - 'tools/ci_stage4_rtos_qemu.sh'
+      - 'tools/analyze_stage4_timing.py'
+      - '.github/workflows/stage4-qemu-extended-soak.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  non_actuating_60s_freertos_qemu_soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GCC, QEMU, GDB
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm gdb-multiarch ninja-build
+      - name: Build isolated 60-second FreeRTOS synthetic-feedback workload
+        run: |
+          cmake -S . -B build/stage4-soak -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON \
+            -DROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=60000
+          cmake --build build/stage4-soak --target freertos_demo
+      - name: Run 60 seconds of virtual-time task activity and stale-feedback stop
+        env:
+          STAGE4_QEMU_GDB_TIMEOUT_SEC: "240"
+          STAGE4_QEMU_EXPECT_HEALTHY_MS: "60000"
+        run: |
+          bash tools/ci_stage4_rtos_qemu.sh \
+            build/stage4-soak/firmware/freertos_demo/freertos_demo.elf \
+            build/stage4-soak/soak-gdb.log
+      - name: Preserve evidence, including failure transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-60s-qemu-stability-evidence
+          path: |
+            build/stage4-soak/soak-gdb.log
+            build/stage4-soak/soak-gdb.timing.json
+            build/stage4-soak/firmware/freertos_demo/stage4_rtos_selftest.map
+          if-no-files-found: ignore

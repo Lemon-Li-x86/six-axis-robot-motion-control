@@ -1,0 +1,113 @@
+name: Stage 3-4 integration host regression
+
+on:
+  push:
+    branches:
+      - feat/stage4-trajectory-2026-10-26
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
+      - 'tools/test_stage4_once.ps1'
+      - 'tools/ci_stage4_rtos_qemu.sh'
+      - 'tools/check_protocol_mirror.py'
+      - '.github/workflows/stage4-trajectory-host.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage3-stage4-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify firmware/Python UART constant consistency
+        run: python tools/check_protocol_mirror.py
+      - name: Configure all isolated native motion tests
+        run: cmake -S firmware/freertos_demo/tests/trajectory -B build/stage4-trajectory -G Ninja
+      - name: Compile with strict warnings
+        run: cmake --build build/stage4-trajectory
+      - name: Run Stage3 + Stage4 CTest regression
+        run: ctest --test-dir build/stage4-trajectory --output-on-failure
+
+  stage4-native-pybullet:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [joint2, six_axis]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install physics-only simulation dependency
+        run: python -m pip install pybullet
+      - name: Build production C motion algorithms as native shared library
+        run: cmake -S firmware/freertos_demo/tests/simulation -B build/stage4-simulation -G Ninja
+      - name: Compile bridge with strict warnings
+        run: cmake --build build/stage4-simulation
+      - name: Smoke-test native C API
+        run: ctest --test-dir build/stage4-simulation --output-on-failure
+      - name: Run PyBullet headless closed-loop dynamics
+        run: |
+          python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py \
+            --library build/stage4-simulation/libstage4_sim_bridge.so \
+            --scenario ${{ matrix.scenario }} \
+            --output-dir build/stage4-closed-loop
+      - name: Keep diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-pybullet-default-kp-${{ matrix.scenario }}
+          path: build/stage4-closed-loop/*
+          if-no-files-found: ignore
+
+  stage4-windows-script-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse one-command Windows acceptance script with PowerShell AST
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/test_stage4_once.ps1').Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PowerShell acceptance script syntax OK'
+
+  stage4-arm-qemu-rtos-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native ARM/QEMU debugger toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm gdb-multiarch ninja-build
+      - name: Configure non-actuating Cortex-M4 RTOS integration test
+        run: |
+          cmake -S . -B build/ci-stage4-arm -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON
+      - name: Compile firmware test ELF with DWARF types
+        run: cmake --build build/ci-stage4-arm --target freertos_demo
+      - name: Actually run QEMU/FreeRTOS trajectory + control + monitor test
+        run: |
+          bash tools/ci_stage4_rtos_qemu.sh \
+            build/ci-stage4-arm/firmware/freertos_demo/freertos_demo.elf \
+            build/stage4-rtos-ci-gdb.log
+      - name: Keep ARM QEMU GDB evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-rtos-qemu-gdb
+          path: build/stage4-rtos-ci-gdb.log
+          if-no-files-found: ignore

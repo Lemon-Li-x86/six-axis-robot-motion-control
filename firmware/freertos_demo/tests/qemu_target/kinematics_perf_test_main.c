@@ -13,6 +13,7 @@
  */
 #include <stdint.h>
 #include <limits.h>
+#include <math.h>
 
 #include "timer_driver.h"
 #include "kinematics.h"
@@ -40,6 +41,9 @@ typedef struct
     int32_t ik_status;
     int32_t selection_status;
     uint32_t ik_solution_count;
+    int32_t roundtrip_status;
+    float roundtrip_position_error_mm;
+    float roundtrip_rotation_max_element_error;
 } kin_perf_sample_t;
 
 typedef struct
@@ -52,6 +56,11 @@ typedef struct
     uint32_t fk_success;
     uint32_t ik_success;
     uint32_t selection_success;
+    uint32_t roundtrip_passed;
+    uint32_t roundtrip_failed;
+    uint32_t roundtrip_skipped;
+    float worst_position_error_mm;
+    float worst_rotation_max_element_error;
     kin_perf_statistics_t fk;
     kin_perf_statistics_t ik;
     kin_perf_statistics_t selection;
@@ -369,6 +378,57 @@ int main(void)
 
             g_kin_perf_sink ^=
                 (uint32_t)selected.candidate_index;
+            /* End-to-end verification, outside the benchmark time window. */
+            {
+                robot_joint_angles_t chosen = {{0}};
+                robot_transform_t reconstructed = {{{0}}};
+                robot_status_t rt_status;
+                float dist2 = 0.0F;
+                float max_r = 0.0F;
+                uint32_t row, col;
+                for (j = 0U; j < ROBOT_JOINT_COUNT; ++j)
+                {
+                    int32_t raw = selected.target_positions.value[j];
+                    raw %= ROBOT_JOINT_FULL_TURN_RAW;
+                    if (raw >= ROBOT_JOINT_HALF_TURN_RAW)
+                        raw -= ROBOT_JOINT_FULL_TURN_RAW;
+                    if (raw < -ROBOT_JOINT_HALF_TURN_RAW)
+                        raw += ROBOT_JOINT_FULL_TURN_RAW;
+                    chosen.value[j] = (robot_joint_angle_t)raw;
+                }
+                rt_status = kinematics_forward(&chosen, &reconstructed);
+                g_kin_perf_samples[index].roundtrip_status = (int32_t)rt_status;
+                if (rt_status == ROBOT_STATUS_OK)
+                {
+                    for (row = 0U; row < 3U; ++row)
+                    {
+                        float delta = reconstructed.matrix[row][3] - target.matrix[row][3];
+                        dist2 += delta * delta;
+                        for (col = 0U; col < 3U; ++col)
+                        {
+                            float delta_r = fabsf(reconstructed.matrix[row][col]
+                                                  - target.matrix[row][col]);
+                            if (delta_r > max_r) max_r = delta_r;
+                        }
+                    }
+                    g_kin_perf_samples[index].roundtrip_position_error_mm = sqrtf(dist2);
+                    g_kin_perf_samples[index].roundtrip_rotation_max_element_error = max_r;
+                    if (sqrtf(dist2) > report.worst_position_error_mm)
+                        report.worst_position_error_mm = sqrtf(dist2);
+                    if (max_r > report.worst_rotation_max_element_error)
+                        report.worst_rotation_max_element_error = max_r;
+                }
+                /* Matrix-entry bound is not an angle bound. */
+                if (rt_status == ROBOT_STATUS_OK
+                    && dist2 <= 0.25F && max_r <= 0.003F)
+                    report.roundtrip_passed++;
+                else
+                    report.roundtrip_failed++;
+            }
+        }
+        else
+        {
+            report.roundtrip_skipped++;
         }
     }
 
@@ -398,6 +458,12 @@ int main(void)
 
     g_kin_perf_report.selection_success =
         report.selection_success;
+    g_kin_perf_report.roundtrip_passed = report.roundtrip_passed;
+    g_kin_perf_report.roundtrip_failed = report.roundtrip_failed;
+    g_kin_perf_report.roundtrip_skipped = report.roundtrip_skipped;
+    g_kin_perf_report.worst_position_error_mm = report.worst_position_error_mm;
+    g_kin_perf_report.worst_rotation_max_element_error =
+        report.worst_rotation_max_element_error;
 
     g_kin_perf_report.fk = report.fk;
     g_kin_perf_report.ik = report.ik;

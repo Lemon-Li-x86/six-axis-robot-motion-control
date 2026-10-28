@@ -133,3 +133,6 @@ add_test(
     NAME stage2_unity_tests
     COMMAND stage2_unity_tests
 )
+# Share canonical-angle utility after Stage4 deduplication.
+target_sources(stage2_unity_tests PRIVATE
+    ${FIRMWARE_DIR}/common/angle_utils.c)

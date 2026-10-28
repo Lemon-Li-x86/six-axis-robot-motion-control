@@ -42,168 +42,92 @@
  * Shared UR5 IK Geometry
  * ========================================================= */
 
+/*
+ * Calculate p13 with double intermediates.  The public pose still uses
+ * float; squaring ~800 mm distances directly in float loses significant
+ * bits just where the elbow cosine approaches +/-1.
+ *
+ * This does NOT increase the admissible cosine-domain tolerance.
+ */
 static robot_status_t
 ur5_analytic_ik_compute_p13(
     const robot_model_t *model,
     const robot_transform_t *dh_transform,
     robot_real_t q1_rad,
     robot_real_t q6_rad,
-    robot_real_t *p13_x,
-    robot_real_t *p13_y
+    double *p13_x,
+    double *p13_y
 )
 {
-    robot_real_t
-        sin_q1;
+    double s1, c1, s6, c6;
+    const robot_real_t (*r)[4];
+    double d1, d5, d6;
 
-    robot_real_t
-        cos_q1;
-
-    robot_real_t
-        sin_q6;
-
-    robot_real_t
-        cos_q6;
-
-    robot_real_t
-        d1;
-
-    robot_real_t
-        d5;
-
-    robot_real_t
-        d6;
-
-
-    if (
-        model
-        ==
-        NULL
-        ||
-        dh_transform
-        ==
-        NULL
-        ||
-        p13_x
-        ==
-        NULL
-        ||
-        p13_y
-        ==
-        NULL
-    )
+    if (model == NULL || dh_transform == NULL
+        || p13_x == NULL || p13_y == NULL)
     {
-        return
-            ROBOT_STATUS_ERROR_NULL_POINTER;
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
-    sin_q1 =
-        sinf(
-            q1_rad
-        );
-
-    cos_q1 =
-        cosf(
-            q1_rad
-        );
-
-    sin_q6 =
-        sinf(
-            q6_rad
-        );
-
-    cos_q6 =
-        cosf(
-            q6_rad
-        );
-
-
-    d1 =
-        model->dh_d_mm[0];
-
-    d5 =
-        model->dh_d_mm[4];
-
-    d6 =
-        model->dh_d_mm[5];
-
+    r = dh_transform->matrix;
+    s1 = sin((double)q1_rad);
+    c1 = cos((double)q1_rad);
+    s6 = sin((double)q6_rad);
+    c6 = cos((double)q6_rad);
+    d1 = (double)model->dh_d_mm[0];
+    d5 = (double)model->dh_d_mm[4];
+    d6 = (double)model->dh_d_mm[5];
 
     *p13_x =
-        d5
-        *
-        (
-            sin_q6
-            *
-            (
-                dh_transform->matrix[0][0]
-                *
-                cos_q1
-                +
-                dh_transform->matrix[1][0]
-                *
-                sin_q1
-            )
-            +
-            cos_q6
-            *
-            (
-                dh_transform->matrix[0][1]
-                *
-                cos_q1
-                +
-                dh_transform->matrix[1][1]
-                *
-                sin_q1
-            )
-        )
-        -
-        d6
-        *
-        (
-            dh_transform->matrix[0][2]
-            *
-            cos_q1
-            +
-            dh_transform->matrix[1][2]
-            *
-            sin_q1
-        )
-        +
-        dh_transform->matrix[0][3]
-        *
-        cos_q1
-        +
-        dh_transform->matrix[1][3]
-        *
-        sin_q1;
-
+        d5 * (s6 * ((double)r[0][0] * c1 + (double)r[1][0] * s1)
+              + c6 * ((double)r[0][1] * c1 + (double)r[1][1] * s1))
+        - d6 * ((double)r[0][2] * c1 + (double)r[1][2] * s1)
+        + (double)r[0][3] * c1 + (double)r[1][3] * s1;
 
     *p13_y =
-        dh_transform->matrix[2][3]
-        -
-        d1
-        -
-        d6
-        *
-        dh_transform->matrix[2][2]
-        +
-        d5
-        *
-        (
-            dh_transform->matrix[2][1]
-            *
-            cos_q6
-            +
-            dh_transform->matrix[2][0]
-            *
-            sin_q6
-        );
+        (double)r[2][3] - d1 - d6 * (double)r[2][2]
+        + d5 * ((double)r[2][1] * c6 + (double)r[2][0] * s6);
 
-
-    return
-        ROBOT_STATUS_OK;
+    return ROBOT_STATUS_OK;
 }
 
+/*
+ * TEST-ONLY precision inspection hook.
+ *
+ * This call reuses the EXACT production p13 implementation above.
+ * It reports the un-clamped elbow cosine so a rejected branch can be
+ * classified as geometric domain failure vs. quantized deduplication.
+ *
+ * Only the independent QEMU trace executable enables this macro.
+ * No production-IK return value, tolerance or solver branch is changed.
+ */
+#if defined(ROBOT_KINEMATICS_ELBOW_TRACE)
+robot_status_t ur5_analytic_ik_trace_elbow_cosine(
+    const robot_model_t *model,
+    const robot_transform_t *dh_transform,
+    robot_real_t q1_rad,
+    robot_real_t q6_rad,
+    double *p13_x,
+    double *p13_y,
+    double *raw_cos_q3)
+{
+    robot_status_t status;
+    double a2, a3;
+    if (model == NULL || dh_transform == NULL || p13_x == NULL ||
+        p13_y == NULL || raw_cos_q3 == NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    status = ur5_analytic_ik_compute_p13(
+        model, dh_transform, q1_rad, q6_rad, p13_x, p13_y);
+    if (status != ROBOT_STATUS_OK)
+        return status;
+    a2 = (double)model->dh_a_mm[1];
+    a3 = (double)model->dh_a_mm[2];
+    *raw_cos_q3 =
+        (*p13_x * *p13_x + *p13_y * *p13_y - a2*a2 - a3*a3) /
+        (2.0 * a2 * a3);
+    return ROBOT_STATUS_OK;
+}
+#endif
 
 /* =========================================================
  * q1 Shoulder
@@ -553,126 +477,42 @@ ur5_analytic_ik_solve_q6(
     robot_real_t *q6_rad
 )
 {
-    robot_real_t
-        sin_q1;
-
-    robot_real_t
-        cos_q1;
-
-    robot_real_t
-        sin_q5;
-
-    robot_real_t
-        sin_q5_sign;
-
-    robot_real_t
-        atan_y;
-
-    robot_real_t
-        atan_x;
-
+    double s1, c1, sign5, x, y;
+    double sin5;
 
     (void)model;
 
-
-    if (
-        dh_transform
-        ==
-        NULL
-        ||
-        q6_rad
-        ==
-        NULL
-    )
+    if (dh_transform == NULL || q6_rad == NULL)
     {
-        return
-            ROBOT_STATUS_ERROR_NULL_POINTER;
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
-    sin_q5 =
-        sinf(
-            q5_rad
-        );
-
-
-    if (
-        kinematics_abs_real(
-            sin_q5
-        )
-        <
-        KINEMATICS_SINGULARITY_EPSILON
-    )
+    sin5 = sin((double)q5_rad);
+    if (fabs(sin5) < (double)KINEMATICS_SINGULARITY_EPSILON)
     {
-        return
-            ROBOT_STATUS_ERROR_SINGULAR;
+        return ROBOT_STATUS_ERROR_SINGULAR;
     }
 
+    s1 = sin((double)q1_rad);
+    c1 = cos((double)q1_rad);
+    sign5 = (sin5 > 0.0) ? 1.0 : -1.0;
 
-    sin_q1 =
-        sinf(
-            q1_rad
-        );
+    /*
+     * Orientation projections are tiny near q5=0.
+     * Use double for the cancellation before atan2; float rounding
+     * in these two projections propagates directly into p13.
+     */
+    x = sign5 * (
+        (double)dh_transform->matrix[0][0] * s1
+        - (double)dh_transform->matrix[1][0] * c1);
+    y = sign5 * (
+        -(double)dh_transform->matrix[0][1] * s1
+        + (double)dh_transform->matrix[1][1] * c1);
 
-    cos_q1 =
-        cosf(
-            q1_rad
-        );
-
-
-    sin_q5_sign =
-        (
-            sin_q5
-            >
-            0.0F
-        )
-        ?
-        1.0F
-        :
-        -1.0F;
-
-
-    atan_y =
-        sin_q5_sign
-        *
-        (
-            -dh_transform->matrix[0][1]
-            *
-            sin_q1
-            +
-            dh_transform->matrix[1][1]
-            *
-            cos_q1
-        );
-
-
-    atan_x =
-        sin_q5_sign
-        *
-        (
-            dh_transform->matrix[0][0]
-            *
-            sin_q1
-            -
-            dh_transform->matrix[1][0]
-            *
-            cos_q1
-        );
-
-
-    *q6_rad =
-        kinematics_normalize_angle_rad(
-            atan2f(
-                atan_y,
-                atan_x
-            )
-        );
-
-
-    return
-        ROBOT_STATUS_OK;
+    *q6_rad = kinematics_normalize_angle_rad(
+        (robot_real_t)atan2(y, x));
+    return ROBOT_STATUS_OK;
 }
-
 
 /* =========================================================
  * q3 Elbow
@@ -688,199 +528,48 @@ ur5_analytic_ik_solve_q3_candidates(
     robot_real_t q3_candidates_rad[2]
 )
 {
-    robot_real_t
-        p13_x;
-
-    robot_real_t
-        p13_y;
-
-    robot_real_t
-        a2;
-
-    robot_real_t
-        a3;
-
-    robot_real_t
-        cos_q3;
-
-    robot_real_t
-        sin_q3_squared;
-
-    robot_real_t
-        sin_q3_absolute;
-
-
-    robot_status_t
-        status;
-
+    double px, py, a2, a3, cos3, sin3_squared, sin3;
+    robot_status_t status;
 
     (void)q5_rad;
 
-
-    if (
-        model
-        ==
-        NULL
-        ||
-        dh_transform
-        ==
-        NULL
-        ||
-        q3_candidates_rad
-        ==
-        NULL
-    )
+    if (model == NULL || dh_transform == NULL
+        || q3_candidates_rad == NULL)
     {
-        return
-            ROBOT_STATUS_ERROR_NULL_POINTER;
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
-    status =
-        ur5_analytic_ik_compute_p13(
-            model,
-            dh_transform,
-            q1_rad,
-            q6_rad,
-            &p13_x,
-            &p13_y
-        );
-
-
-    if (
-        status
-        !=
-        ROBOT_STATUS_OK
-    )
+    status = ur5_analytic_ik_compute_p13(
+        model, dh_transform, q1_rad, q6_rad, &px, &py);
+    if (status != ROBOT_STATUS_OK)
     {
-        return
-            status;
+        return status;
     }
 
+    a2 = (double)model->dh_a_mm[1];
+    a3 = (double)model->dh_a_mm[2];
 
-    a2 =
-        model->dh_a_mm[1];
+    /* Keep the existing strict domain test, not a widened epsilon. */
+    cos3 = (px * px + py * py - a2 * a2 - a3 * a3)
+        / (2.0 * a2 * a3);
 
-    a3 =
-        model->dh_a_mm[2];
-
-
-    cos_q3 =
-        (
-            p13_x
-            *
-            p13_x
-            +
-            p13_y
-            *
-            p13_y
-            -
-            a2
-            *
-            a2
-            -
-            a3
-            *
-            a3
-        )
-        /
-        (
-            2.0F
-            *
-            a2
-            *
-            a3
-        );
-
-
-    if (
-        cos_q3
-        >
-        1.0F
-        +
-        KINEMATICS_TRIG_DOMAIN_EPSILON
-        ||
-        cos_q3
-        <
-        -1.0F
-        -
-        KINEMATICS_TRIG_DOMAIN_EPSILON
-    )
+    if (cos3 > 1.0 + (double)KINEMATICS_TRIG_DOMAIN_EPSILON
+        || cos3 < -1.0 - (double)KINEMATICS_TRIG_DOMAIN_EPSILON)
     {
-        return
-            ROBOT_STATUS_ERROR_NO_SOLUTION;
+        return ROBOT_STATUS_ERROR_NO_SOLUTION;
     }
 
+    if (cos3 > 1.0) cos3 = 1.0;
+    if (cos3 < -1.0) cos3 = -1.0;
+    sin3_squared = 1.0 - cos3 * cos3;
+    sin3 = sqrt(fmax(0.0, sin3_squared));
 
-    if (
-        cos_q3
-        >
-        1.0F
-    )
-    {
-        cos_q3 =
-            1.0F;
-    }
-
-
-    if (
-        cos_q3
-        <
-        -1.0F
-    )
-    {
-        cos_q3 =
-            -1.0F;
-    }
-
-
-    sin_q3_squared =
-        1.0F
-        -
-        cos_q3
-        *
-        cos_q3;
-
-
-    if (
-        sin_q3_squared
-        <
-        0.0F
-    )
-    {
-        sin_q3_squared =
-            0.0F;
-    }
-
-
-    sin_q3_absolute =
-        kinematics_sqrt_nonnegative(
-            sin_q3_squared
-        );
-
-
-    q3_candidates_rad[0] =
-        kinematics_normalize_angle_rad(
-            atan2f(
-                sin_q3_absolute,
-                cos_q3
-            )
-        );
-
-
-    q3_candidates_rad[1] =
-        kinematics_normalize_angle_rad(
-            atan2f(
-                -sin_q3_absolute,
-                cos_q3
-            )
-        );
-
-
-    return
-        ROBOT_STATUS_OK;
+    q3_candidates_rad[0] = kinematics_normalize_angle_rad(
+        (robot_real_t)atan2(sin3, cos3));
+    q3_candidates_rad[1] = kinematics_normalize_angle_rad(
+        (robot_real_t)atan2(-sin3, cos3));
+    return ROBOT_STATUS_OK;
 }
-
 
 /* =========================================================
  * q2 Shoulder Lift
@@ -897,11 +586,8 @@ ur5_analytic_ik_solve_q2(
     robot_real_t *q2_rad
 )
 {
-    robot_real_t
-        p13_x;
-
-    robot_real_t
-        p13_y;
+    double p13_x;
+    double p13_y;
 
     robot_real_t
         a2;

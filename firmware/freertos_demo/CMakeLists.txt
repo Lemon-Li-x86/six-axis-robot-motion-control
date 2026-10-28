@@ -204,6 +204,13 @@ target_link_options(freertos_demo PRIVATE
     "-T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld"
 )
 
+# GNU Arm newlib libm's sqrt/acos wrappers may call __errno().
+# Bare-metal -nostdlib does not pull it from libc. The shim is a single
+# platform ABI provider, not an algorithm parameter or a full libc port.
+target_sources(freertos_demo PRIVATE
+    platform/freestanding_errno.c
+)
+
 target_link_libraries(freertos_demo PRIVATE m gcc)
 
 set_target_properties(
@@ -217,6 +224,12 @@ set_target_properties(
 # ----------------------------------------------------------
 
 function(configure_qemu_target target_name)
+
+    # Reuse the same freestanding libm ABI shim for every independent
+    # QEMU executable. No per-test copies or scattered __errno definitions.
+    target_sources(${target_name} PRIVATE
+        platform/freestanding_errno.c
+    )
 
     target_compile_options(${target_name} PRIVATE
         -mcpu=cortex-m4
@@ -458,3 +471,153 @@ configure_qemu_target(qemu_kinematics_perf m)
 target_compile_options(qemu_kinematics_perf PRIVATE
     -O2
 )
+
+# Stage 4 algorithms are compiled in the ARM target even when the live
+# RTOS motion tasks are disabled. Pure planners never send actuator commands.
+target_sources(freertos_demo PRIVATE
+    common/angle_utils.c
+    algorithms/trajectory/polynomial_trajectory.c
+    algorithms/trajectory/trapezoidal_profile.c
+    algorithms/trajectory/cartesian_common.c
+    algorithms/trajectory/cartesian_line.c
+    algorithms/trajectory/cartesian_arc.c
+    algorithms/trajectory/cartesian_waypoint.c
+    algorithms/control/pid.c
+    algorithms/control/joint_controller.c
+    algorithms/control/joint_command_limiter.c
+    application/services/trajectory_request_adapter.c
+)
+target_include_directories(freertos_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/config
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/trajectory
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/control
+    ${CMAKE_CURRENT_SOURCE_DIR}/application/tasks
+)
+option(ROBOT_ENABLE_STAGE4_TASKS
+    "Create Stage 4 trajectory, control and monitor FreeRTOS tasks" OFF)
+option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
+    "Enable experimental Stage 4 PID targets to motor_state (sim only)" OFF)
+# This switch is only for the QEMU↔PyBullet UART integration acceptance.
+# Unlike the Stage4 synthetic smoke, target output must reach the virtual
+# UART, so BOTH flags must be deliberately enabled. Never use on hardware.
+option(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    "Test-only inbound motion requests and virtual UART command output" OFF)
+if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
+    if(NOT ROBOT_ENABLE_STAGE4_TASKS OR
+       NOT ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT OR
+       ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+        message(FATAL_ERROR
+            "Stage5 QEMU UART test requires TASKS=ON, virtual OUTPUT=ON, STAGE4_SELFTEST=OFF")
+    endif()
+endif()
+option(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+    "QEMU-only synthetic feedback/planner/PID smoke, command output forced OFF" OFF)
+set(ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS "1200" CACHE STRING
+    "QEMU-only simulated-feedback duration (ms); release builds ignore it")
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+    if(NOT ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS MATCHES "^[1-9][0-9]*$"
+       OR ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS LESS 1200
+       OR ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS GREATER 1800000)
+        message(FATAL_ERROR
+            "QEMU healthy test duration must be an integer from 1200 to 1800000 ms")
+    endif()
+    target_compile_definitions(freertos_demo PRIVATE
+        ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=${ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS}U
+    )
+endif()
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST AND
+   (NOT ROBOT_ENABLE_STAGE4_TASKS OR ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT))
+    message(FATAL_ERROR
+        "QEMU RTOS smoke requires TASKS=ON and COMMAND_OUTPUT=OFF")
+endif()
+if(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT AND NOT ROBOT_ENABLE_STAGE4_TASKS)
+    message(FATAL_ERROR
+        "Stage4 actuator output requires ROBOT_ENABLE_STAGE4_TASKS=ON")
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE4_TASKS=$<BOOL:${ROBOT_ENABLE_STAGE4_TASKS}>
+    ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=$<BOOL:${ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT}>
+    ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=$<BOOL:${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION}>
+)
+if(ROBOT_ENABLE_STAGE4_TASKS)
+    target_sources(freertos_demo PRIVATE
+        config/stage4_motion_config.c
+        application/services/motion_pipeline.c
+        application/tasks/trajectory_task.c
+        application/tasks/control_task.c
+        application/tasks/monitor_task.c
+    )
+endif()
+if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+    target_sources(freertos_demo PRIVATE
+        tests/qemu_target/stage4_rtos_selftest.c
+        application/tasks/stage4_timing_probe.c
+    )
+
+    target_include_directories(freertos_demo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/application/tasks
+    )
+
+    # The normal freertos_demo firmware target does not request DWARF
+    # symbols. The QEMU-only RTOS test MUST expose full C type metadata
+    # for GDB field access (g_stage4_rtos_test_report.checks/failed).
+    # Match the standalone QEMU test targets without modifying release
+    # or ordinary non-test firmware build flags.
+    target_compile_options(freertos_demo PRIVATE -O0 -g3)
+    # Test-only linker memory map. Normal firmware build is untouched.
+    target_link_options(freertos_demo PRIVATE
+        "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/stage4_rtos_selftest.map"
+    )
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=$<BOOL:${ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST}>
+)
+
+# QEMU standalone Stage4 smoke tests, with GDB inspectable report.
+# Intentionally independent of the FreeRTOS task option.
+add_executable(qemu_stage4_trajectory_tests
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/stage4_trajectory_test_main.c
+    memory.c
+    algorithms/trajectory/polynomial_trajectory.c
+    algorithms/trajectory/trapezoidal_profile.c
+    algorithms/trajectory/cartesian_common.c
+    algorithms/trajectory/cartesian_line.c
+    algorithms/trajectory/cartesian_arc.c
+    algorithms/control/pid.c
+)
+target_include_directories(qemu_stage4_trajectory_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/trajectory
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/control
+)
+configure_qemu_target(qemu_stage4_trajectory_tests m)
+
+# Stage2 QEMU motor boundary test now uses the shared canonical angle helper.
+target_sources(qemu_motor_tests PRIVATE common/angle_utils.c)
+
+# Stage 3 teacher review: isolated, test-only near-singular branch trace.
+# The production IK solver is NOT compiled with this macro in freertos_demo.
+# No additional runtime parameters, drivers, or FreeRTOS dependencies.
+add_executable(qemu_ik_near_singular_trace
+    tests/qemu_target/test_startup.s
+    tests/qemu_target/ik_near_singular_trace_main.c
+    model/ur5_model.c
+    algorithms/math/matrix4.c
+    algorithms/kinematics/kinematics_common.c
+    algorithms/kinematics/kinematics_forward.c
+    algorithms/kinematics/kinematics_inverse.c
+    algorithms/kinematics/ur5_analytic_ik.c
+    memory.c
+)
+target_include_directories(qemu_ik_near_singular_trace PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/kinematics
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/math
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/kinematics
+)
+target_compile_definitions(qemu_ik_near_singular_trace PRIVATE
+    ROBOT_KINEMATICS_ELBOW_TRACE=1
+)
+configure_qemu_target(qemu_ik_near_singular_trace m)

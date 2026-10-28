@@ -38,12 +38,16 @@
 
 #define CMD_SET_JOINT_TARGETS        0x01U
 #define CMD_SET_PARAMETER            0x02U
+/* PyBullet -> firmware: command admission, NOT an actuator target. */
+#define CMD_REQUEST_JOINT_MOVE       0x03U
 
 #define CMD_JOINT_STATE              0x81U
 #define CMD_JOINT_STATE_ACK          0x82U
 #define CMD_GET_DIAGNOSTICS          0x83U
 #define CMD_DIAGNOSTICS_RESPONSE     0x84U
 #define CMD_PARAMETER_ACK            0x85U
+/* Firmware -> PyBullet: sequenced request admission status. */
+#define CMD_JOINT_MOVE_ACK           0x86U
 
 
 /* =========================================================
@@ -55,6 +59,12 @@
 
 #define PROTOCOL_JOINT_FRAME_LEN \
     (2U + 1U + 1U + PROTOCOL_JOINT_PAYLOAD_LEN + 1U)
+
+/* Stage5 QEMU simulation request: one sequence byte + existing canonical
+ * six-axis payload. Distinct direction from CMD_SET_JOINT_TARGETS. */
+#define PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN (1U + PROTOCOL_JOINT_PAYLOAD_LEN)
+#define PROTOCOL_MOVE_ACK_PAYLOAD_LEN 2U
+#define PROTOCOL_MOVE_ACK_FRAME_LEN (2U + 1U + 1U + PROTOCOL_MOVE_ACK_PAYLOAD_LEN + 1U)
 
 
 /* =========================================================
@@ -94,8 +104,22 @@
 #define DIAGNOSTICS_METRIC_TASK_WAKEUP_AVERAGE_TICKS    8U
 #define DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS        9U
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+/* Test-only extension of the existing diagnostics selector/response.
+ * Production firmware retains its original range 0..9. */
+#define DIAGNOSTICS_METRIC_MOTION_ACCEPTED     10U
+#define DIAGNOSTICS_METRIC_TRAJECTORY_SAMPLES  11U
+#define DIAGNOSTICS_METRIC_CONTROLLER_STEPS    12U
+#define DIAGNOSTICS_METRIC_CONTROLLER_FAULTS   13U
+#define DIAGNOSTICS_METRIC_PLANNER_FAULTS      14U
+#define DIAGNOSTICS_METRIC_FEEDBACK_STALE      15U
+#define DIAGNOSTICS_METRIC_MOTION_LAST_FAULT   16U
+#define DIAGNOSTICS_METRIC_MONITORING_TICKS    17U
+#define DIAGNOSTICS_METRIC_MAX DIAGNOSTICS_METRIC_MONITORING_TICKS
+#else
 #define DIAGNOSTICS_METRIC_MAX \
     DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS
+#endif
 
 
 /* =========================================================
@@ -163,6 +187,29 @@ typedef struct
  */
 void protocol_parser_init(
     protocol_parser_t *parser
+);
+
+/**
+ * @brief Discard any partial frame and return the parser to header search.
+ *
+ * @param[in,out] parser Parser state to reset; NULL is ignored.
+ */
+void protocol_parser_reset(
+    protocol_parser_t *parser
+);
+
+/**
+ * @brief Discard a partial frame after the configured byte idle timeout.
+ *
+ * @param[in,out] parser Parser state; NULL returns 0.
+ * @param[in] idle_ticks Ticks elapsed since the last consumed frame byte.
+ * @param[in] timeout_ticks Non-zero timeout in the same tick unit.
+ * @return 1 if a partial frame was reset; otherwise 0.
+ */
+uint8_t protocol_parser_expire_partial_frame(
+    protocol_parser_t *parser,
+    uint32_t idle_ticks,
+    uint32_t timeout_ticks
 );
 
 
@@ -422,6 +469,21 @@ robot_status_t protocol_build_diagnostics_response_frame(
     uint32_t value,
     uint8_t frame[PROTOCOL_DIAGNOSTICS_FRAME_LEN]
 );
+
+/* Parse Stage5 move request using the same 6x signed little-endian raw
+ * centidegree codec as JOINT_STATE. No actuator effects here.
+ * On error, neither output is modified. */
+robot_status_t protocol_parse_joint_move_request(
+    const protocol_frame_t *frame,
+    uint8_t *sequence,
+    robot_joint_angles_t *canonical_goal);
+
+/* Acknowledge explicit request admission/rejection; status is signed
+ * int8 ROBOT_STATUS_*, not a motion-completed message. */
+robot_status_t protocol_build_joint_move_ack_frame(
+    uint8_t sequence,
+    robot_status_t status,
+    uint8_t frame[PROTOCOL_MOVE_ACK_FRAME_LEN]);
 
 
 #endif

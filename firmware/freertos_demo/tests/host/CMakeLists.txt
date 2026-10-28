@@ -158,3 +158,28 @@ add_test(
     NAME ik_selector_host
     COMMAND ik_selector_host_test
 )
+
+# Stage2 motor implementation now references the Common normalizer.
+target_sources(motor_driver_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common/angle_utils.c)
+target_sources(motor_feedback_safety_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common/angle_utils.c)
+
+# Stage5: production C wire parser resilience under partial/corrupt input.
+add_executable(protocol_stream_fault_host_test
+    protocol_stream_fault_test.c
+    ${FIRMWARE_ROOT}/communications/protocol.c
+)
+target_include_directories(protocol_stream_fault_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/communications
+)
+set_target_properties(protocol_stream_fault_host_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(protocol_stream_fault_host_test PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+add_test(NAME protocol_stream_fault_host COMMAND protocol_stream_fault_host_test)

@@ -16,14 +16,14 @@
 #include "ik_solution_selector.h"
 #include "motion_limits.h"
 #include "robot_model.h"
+#include "math_constants.h"
 
 
 /* =========================================================
  * Configuration
  * ========================================================= */
 
-#define IK_SELECTOR_DEG_TO_RAD \
-    (0.01745329251994329577F)
+#define IK_SELECTOR_DEG_TO_RAD ROBOT_DEG_TO_RAD_F
 
 /*
  * Hard singularity threshold:

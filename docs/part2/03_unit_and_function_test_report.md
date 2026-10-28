@@ -1,3 +1,16 @@
+# 第2阶段单元与功能测试报告
+
+记录基线：2026-10-27，分支 `feat/stage5-system-integration-2026-10-27`。本报告按本地可复现日志区分 Host Unity、纯 C Host 回归与 Cortex-M4/QEMU 测试，不将它们合并为同一种验证。
+
+
+## 本轮补充：Stage2 Cortex-M4 驱动与协议回归
+
+本机统一验收于2026-10-27完成。协议与环形缓存 QEMU 用例为8/8；生产 UART TX 边界测试7/7；Motor Driver 状态抽象测试11/11；GPIO Shadow backend 测试13/13。三套驱动测试分别使用 ARM Cortex-M4 ELF，在 QEMU MPS2-AN386 中运行并由 GDB 读取报告。GPIO 用例只验证软件 shadow backend，不代表实体引脚测试；Motor 用例不代表真实伺服器测试。CI 已加入这些 QEMU 目标。
+
+原有详细测试记录保留如下。
+
+---
+
 # 第2阶段：驱动接口规范与模块说明文档
 
 ## 1. 文档目的

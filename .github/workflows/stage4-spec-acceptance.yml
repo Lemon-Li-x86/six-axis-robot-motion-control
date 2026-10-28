@@ -1,0 +1,164 @@
+name: Stage 4 PDF requirements re-verification
+
+on:
+  push:
+    branches:
+      - feat/stage5-system-integration-2026-10-27
+    paths:
+      - 'tools/ci_stage4_algorithm_qemu.sh'
+      - 'tools/ci_stage4_rtos_qemu.sh'
+      - 'tools/analyze_stage4_timing.py'
+      - 'tools/tests/test_stage4_timing.py'
+      - 'tools/tests/test_firmware_defaults.py'
+      - 'tools/generate_firmware_defaults.py'
+      - 'tools/check_protocol_mirror.py'
+      - 'tools/ci_stage2_protocol_qemu.sh'
+      - 'tools/ci_stage2_driver_qemu.sh'
+      - 'tools/test_stage4_once.ps1'
+      - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py'
+      - '.github/workflows/stage4-spec-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage4-and-stage2-native-ctests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test Stage4 timing P99 and stack report parser
+        run: python -m unittest discover -s tools/tests -p test_stage4_timing.py
+      - name: Reject invalid JSON firmware defaults before compiling
+        run: python -m unittest discover -s tools/tests -p test_firmware_defaults.py
+      - name: Verify C-to-Python UART wire constants agree
+        run: python tools/check_protocol_mirror.py
+      - name: Build Stage 2 Host motor/selector safety tests
+        run: |
+          cmake -S firmware/freertos_demo/tests/host \
+            -B build/stage2-host -G Ninja
+          cmake --build build/stage2-host
+      - name: Execute Stage2 safety and Stage5 protocol byte-stream tests
+        run: ctest --test-dir build/stage2-host --output-on-failure
+      - name: Build and run Stage2 Unity Host tests
+        run: |
+          cmake -S firmware/freertos_demo/tests/unity \
+            -B build/stage2-unity -G Ninja
+          cmake --build build/stage2-unity
+          ctest --test-dir build/stage2-unity --output-on-failure
+      - name: Build Stage 3-4 trajectory, IK, Cartesian and PID tests
+        run: |
+          cmake -S firmware/freertos_demo/tests/trajectory \
+            -B build/stage4-host -G Ninja
+          cmake --build build/stage4-host
+      - name: Execute all six Stage 3-4 Host tests
+        run: ctest --test-dir build/stage4-host --output-on-failure
+
+  stage4-arm-qemu-algorithm-and-rtos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM GCC, QEMU and GDB (software-only)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm gdb-multiarch ninja-build
+      - name: Configure ARM Cortex-M4 task smoke in non-actuating mode
+        run: |
+          cmake -S . -B build/ci-stage4-spec-arm -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake \
+            -DROBOT_ENABLE_STAGE4_TASKS=ON \
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF \
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON
+      - name: Build and run Stage2 Cortex-M4 protocol and driver tests
+        run: |
+          cmake --build build/ci-stage4-spec-arm --target \
+            qemu_protocol_tests qemu_uart_tx_tests qemu_motor_tests qemu_gpio_tests
+          bash tools/ci_stage2_protocol_qemu.sh \
+            build/ci-stage4-spec-arm/firmware/freertos_demo/qemu_protocol_tests.elf \
+            build/stage4-spec-qemu/stage2-protocol
+          bash tools/ci_stage2_driver_qemu.sh \
+            build/ci-stage4-spec-arm/firmware/freertos_demo \
+            build/stage4-spec-qemu/stage2-drivers
+      - name: Cross-compile firmware and 3 standalone ARM algorithm suites
+        run: |
+          cmake --build build/ci-stage4-spec-arm --target \
+            freertos_demo \
+            qemu_stage4_trajectory_tests \
+            qemu_kinematics_perf \
+            qemu_ik_near_singular_trace
+      - name: Run real QEMU Stage4 trajectory 20 + FK-IK 128 + near-singular 2
+        run: |
+          bash tools/ci_stage4_algorithm_qemu.sh \
+            build/ci-stage4-spec-arm/firmware/freertos_demo \
+            build/stage4-spec-qemu
+      - name: Run FreeRTOS timing, stale-feedback 29 and polynomial 8 checks
+        run: |
+          bash tools/ci_stage4_rtos_qemu.sh \
+            build/ci-stage4-spec-arm/firmware/freertos_demo/freertos_demo.elf \
+            build/stage4-spec-qemu/rtos.log
+      - name: Record test-only ARM ELF section sizes
+        run: |
+          arm-none-eabi-size -A             build/ci-stage4-spec-arm/firmware/freertos_demo/freertos_demo.elf             | tee build/stage4-spec-qemu/elf-sections.txt
+      - name: Preserve each GDB transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-spec-qemu-gdb-evidence
+          path: |
+            build/stage4-spec-qemu/*
+            build/ci-stage4-spec-arm/firmware/freertos_demo/stage4_rtos_selftest.map
+          if-no-files-found: ignore
+
+  stage4-physical-simulation-with-real-c-code:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [joint2, six_axis]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PyBullet
+        run: python -m pip install pybullet
+      - name: Build native shared library from real firmware C algorithms
+        run: |
+          cmake -S firmware/freertos_demo/tests/simulation \
+            -B build/stage4-simulation -G Ninja
+          cmake --build build/stage4-simulation
+          ctest --test-dir build/stage4-simulation --output-on-failure
+      - name: Run 10ms closed-loop dynamic validation on PyBullet UR5
+        run: |
+          python simulation/pybullet_ur5/src/stage4_dynamic_closed_loop.py \
+            --library build/stage4-simulation/libstage4_sim_bridge.so \
+            --scenario "$SCENARIO" \
+            --output-dir build/stage4-spec-pybullet
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+      - name: Preserve joint traces and tracking error metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-spec-pybullet-${{ matrix.scenario }}
+          path: build/stage4-spec-pybullet/*
+          if-no-files-found: ignore
+
+  stage4-windows-acceptance-script-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the one-shot Windows acceptance script, reject any AST errors
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/test_stage4_once.ps1').Path,
+            [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'Stage4 PowerShell script syntax: PASS'

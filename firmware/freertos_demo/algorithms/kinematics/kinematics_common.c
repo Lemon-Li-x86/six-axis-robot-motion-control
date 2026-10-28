@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 
 #include "kinematics_private.h"
 #include "matrix4.h"
@@ -460,4 +461,57 @@ kinematics_public_to_dh_transform(
             &model->tool_frame_conversion_inverse,
             dh_transform
         );
+}
+
+/* One numerical definition of the public FK pose residual shared by the
+ * seeded analytic IK, Cartesian start guard and waypoint validation.
+ * All thresholds are passed in, so Algorithm owns the math while the
+ * caller owns the safety policy.
+ */
+robot_status_t kinematics_pose_within_tolerance(
+    const robot_transform_t *actual,
+    const robot_transform_t *requested,
+    robot_real_t maximum_position_error_mm,
+    robot_real_t maximum_rotation_element_error)
+{
+    double distance_squared=0.0;
+    double max_rotation=0.0;
+    uint32_t row,col;
+    double max_distance;
+    double max_element;
+
+    if(actual==NULL || requested==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+
+    max_distance=(double)maximum_position_error_mm;
+    max_element=(double)maximum_rotation_element_error;
+    if(!(max_distance>0.0) || !(max_element>0.0) ||
+       !isfinite(max_distance) || !isfinite(max_element))
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+
+    for(row=0U;row<3U;row++) {
+        double requested_position=(double)requested->matrix[row][3];
+        double actual_position=(double)actual->matrix[row][3];
+        double displacement;
+        if(!isfinite(requested_position) || !isfinite(actual_position))
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        displacement=actual_position-requested_position;
+        distance_squared+=displacement*displacement;
+        for(col=0U;col<3U;col++) {
+            double a=(double)actual->matrix[row][col];
+            double b=(double)requested->matrix[row][col];
+            double residual;
+            if(!isfinite(a) || !isfinite(b))
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            residual=fabs(a-b);
+            if(residual>max_rotation) max_rotation=residual;
+        }
+    }
+
+    if(!isfinite(distance_squared))
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    if(distance_squared>max_distance*max_distance ||
+       max_rotation>max_element)
+        return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    return ROBOT_STATUS_OK;
 }

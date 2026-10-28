@@ -20,7 +20,7 @@
 #include "ring_buffer.h"
 
 
-#define TARGET_TEST_COUNT 7U
+#define TARGET_TEST_COUNT 8U
 #define TARGET_TEST_MAGIC 0x51454D55UL
 
 /*
@@ -451,6 +451,38 @@ static uint32_t test_protocol_length_boundary(void)
     );
 }
 
+/* Test 8: Partial frame timeout reset and valid-frame recovery. */
+static uint32_t test_protocol_partial_frame_timeout(void)
+{
+    const robot_joint_angles_t joints =
+    {
+        .value = {11, 22, 33, 44, 55, 66}
+    };
+    uint8_t bytes[PROTOCOL_JOINT_FRAME_LEN];
+    protocol_parser_t parser;
+    protocol_frame_t output;
+
+    protocol_parser_init(&parser);
+    if (protocol_build_joint_target_frame(&joints, bytes)
+        != ROBOT_STATUS_OK)
+    {
+        return 0U;
+    }
+    if (feed_bytes(&parser, bytes, 7U, &output) != 0U ||
+        parser.state == PROTOCOL_STATE_WAIT_HEADER_0)
+    {
+        return 0U;
+    }
+    if (protocol_parser_expire_partial_frame(&parser, 4U, 5U) != 0U ||
+        protocol_parser_expire_partial_frame(&parser, 5U, 5U) != 1U ||
+        parser.state != PROTOCOL_STATE_WAIT_HEADER_0)
+    {
+        return 0U;
+    }
+    return feed_bytes(&parser, bytes, PROTOCOL_JOINT_FRAME_LEN, &output)
+        == 1U;
+}
+
 
 /* =========================================================
  * Test 7: Parameter Little Endian
@@ -556,6 +588,9 @@ int main(void)
 
     g_qemu_target_test_report.results[6] =
         test_parameter_little_endian();
+
+    g_qemu_target_test_report.results[7] =
+        test_protocol_partial_frame_timeout();
 
     /*
      * 统计全部测试，不提前退出。

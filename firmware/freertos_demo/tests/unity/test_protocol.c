@@ -114,6 +114,32 @@ static uint8_t feed_frame(
     return complete;
 }
 
+/**
+ * @brief Verify an incomplete frame expires at, but not before, its deadline.
+ */
+void test_protocol_parser_expires_partial_frame(void)
+{
+    const robot_joint_angles_t joints = {{1, 2, 3, 4, 5, 6}};
+    uint8_t bytes[PROTOCOL_JOINT_FRAME_LEN];
+    protocol_parser_t parser;
+    protocol_frame_t output = {0};
+
+    TEST_ASSERT_EQUAL(ROBOT_STATUS_OK,
+        protocol_build_joint_target_frame(&joints, bytes));
+    protocol_parser_init(&parser);
+
+    TEST_ASSERT_EQUAL(0U, feed_frame(&parser, bytes, 7U, &output));
+    TEST_ASSERT_EQUAL(0U,
+        protocol_parser_expire_partial_frame(&parser, 4U, 5U));
+    TEST_ASSERT_NOT_EQUAL(PROTOCOL_STATE_WAIT_HEADER_0, parser.state);
+    TEST_ASSERT_EQUAL(1U,
+        protocol_parser_expire_partial_frame(&parser, 5U, 5U));
+    TEST_ASSERT_EQUAL(PROTOCOL_STATE_WAIT_HEADER_0, parser.state);
+    TEST_ASSERT_EQUAL(1U,
+        feed_frame(&parser, bytes, PROTOCOL_JOINT_FRAME_LEN, &output));
+    TEST_ASSERT_EQUAL(CMD_SET_JOINT_TARGETS, output.command);
+}
+
 
 /* =========================================================
  * Parser Tests

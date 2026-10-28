@@ -1,5 +1,7 @@
 # 第3阶段：算法精度与性能对比测试报告
 
+> **当前复核（2026-10-27）**：原始128组 FK/IK Robotics Toolbox对照结果仍是Stage3基线；已另加生产 FK→IK→Selector→FK 的ARM/QEMU回归，最新本机128/128通过、失败0、跳过0。参考条件化近奇异IK的本机/QEMU边界测试2/2通过。新增数据不是对全部可达边界、所有真实奇异分支或完整工作空间的穷尽证明。见 [`03_ik_review_remediation_2026-10-26.md`](03_ik_review_remediation_2026-10-26.md) 和 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md)。
+
 ## 1. 验证目的
 
 本报告用于验证六轴工业机器人嵌入式运动控制项目第3阶段实现的 UR5 正运动学、解析逆运动学及 IK 候选解筛选策略。
