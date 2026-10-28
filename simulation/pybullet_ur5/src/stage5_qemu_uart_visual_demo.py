@@ -250,6 +250,65 @@ def validate_goals(goals: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...
     return tuple(normalized)
 
 
+def canonical_physical_feedback(raw: Sequence[int]) -> tuple[int, ...]:
+    """Encode unbounded physical angles using the existing C canonical contract.
+
+    Firmware robot_types.h defines the UART angle as [-180, 180) degrees;
+    motor_driver.c reconstructs continuous turns from successive samples.
+    The continuous PyBullet measurement remains untouched in traces/physics.
+    """
+    if len(raw) != wire.JOINT_COUNT:
+        raise ValueError("Physical feedback requires exactly six angles")
+    full_turn = round(math.degrees(math.tau) * wire.JOINT_ANGLE_SCALE)
+    half_turn = full_turn // 2
+    canonical = []
+    for index, value in enumerate(raw):
+        if type(value) is not int:
+            raise TypeError(f"Physical joint {JOINT_NAMES[index]} must be an integer")
+        canonical.append((value + half_turn) % full_turn - half_turn)
+    return tuple(canonical)
+
+
+def closest_physical_motor_targets(
+    canonical: Sequence[int], physical: Sequence[int],
+    joint_limits_rad: Sequence[tuple[float, float]],
+) -> tuple[float, ...]:
+    """Lift canonical firmware servo commands onto nearby URDF-legal turns.
+
+    The firmware's UART motor target encodes only orientation, not its winding.
+    The URDF limits determine allowable equivalent physical rotations; use
+    measured continuous PyBullet angles for the closest equivalent turn.
+    Never alter the physical measurement or silently clamp an illegal target.
+    """
+    if (len(canonical) != wire.JOINT_COUNT
+            or len(physical) != wire.JOINT_COUNT
+            or len(joint_limits_rad) != wire.JOINT_COUNT):
+        raise ValueError("Target lifting requires six axes and six joint limits")
+    full_turn = round(math.degrees(math.tau) * wire.JOINT_ANGLE_SCALE)
+    lifted = []
+    for i, (cmd, actual, (lower_rad, upper_rad)) in enumerate(
+            zip(canonical, physical, joint_limits_rad)):
+        if type(cmd) is not int or type(actual) is not int:
+            raise TypeError(f"Joint {JOINT_NAMES[i]} angles must be integers")
+        if not math.isfinite(lower_rad) or not math.isfinite(upper_rad):
+            raise ValueError(f"Joint {JOINT_NAMES[i]} limits must be finite")
+        if lower_rad > upper_rad:
+            raise ValueError(f"Joint {JOINT_NAMES[i]} has invalid limits")
+        lower = math.degrees(lower_rad) * wire.JOINT_ANGLE_SCALE
+        upper = math.degrees(upper_rad) * wire.JOINT_ANGLE_SCALE
+        minimum_turn = math.ceil((lower - cmd) / full_turn)
+        maximum_turn = math.floor((upper - cmd) / full_turn)
+        if minimum_turn > maximum_turn:
+            raise ValueError(
+                f"Canonical motor command {cmd} for {JOINT_NAMES[i]} "
+                "has no equivalent pose within URDF limits")
+        nearest_turn = math.floor((actual - cmd) / full_turn + 0.5)
+        turn = min(max(nearest_turn, minimum_turn), maximum_turn)
+        lifted.append(math.radians((cmd + turn * full_turn) /
+                                   wire.JOINT_ANGLE_SCALE))
+    return tuple(lifted)
+
+
 class JointFeedbackRangeError(ValueError):
     """Actual PyBullet measurement cannot fit the existing signed-int16 UART frame."""
 
@@ -529,7 +588,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 raise TimeoutError("FreeRTOS ProtocolRX did not become ready")
 
             # 首个反馈主动发送：ProtocolTX 在未收到反馈前不会发布目标。
-            sock.sendall(joint_feedback_frame(angles_raw(p, arm, joints)))
+            sock.sendall(joint_feedback_frame(
+                canonical_physical_feedback(angles_raw(p, arm, joints))))
+            joint_limits_rad = tuple(
+                (p.getJointInfo(arm, index)[8], p.getJointInfo(arm, index)[9])
+                for index in joints
+            )
             start_wall = time.monotonic()
             last_frame_wall = start_wall
             while True:
@@ -603,10 +667,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 if sequencer.accepted or (sequencer.done and options.interactive_hold):
                                     p.setJointMotorControlArray(
                                         arm, joints, p.POSITION_CONTROL,
-                                        targetPositions=[
-                                            math.radians(v / wire.JOINT_ANGLE_SCALE)
-                                            for v in targets
-                                        ],
+                                        targetPositions=closest_physical_motor_targets(
+                                            targets, last_measured, joint_limits_rad
+                                        ),
                                         forces=[SERVO_MAX_TORQUE_NM] * wire.JOINT_COUNT,
                                     )
                                 # A DIRECT frame is ten 1ms physics steps.
@@ -622,7 +685,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 target_frames += 1
                                 measured = angles_raw(p, arm, joints)
                                 last_measured = tuple(measured)
-                                sock.sendall(joint_feedback_frame(measured))
+                                sock.sendall(joint_feedback_frame(
+                                    canonical_physical_feedback(measured)))
                                 # Detect a real joint-space deviation, irrespective
                                 # of whether it came from mouse picking or test
                                 # forces. Never interpret UART motor commands as
