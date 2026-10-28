@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import math
 import multiprocessing as mp
 import time
 import sys
@@ -152,6 +153,9 @@ class LiveTransportTests(unittest.TestCase):
             LINK_FRAME = 2
             def __init__(self):
                 self.applied = []
+                self.joint_angle_deg = -45.0
+            def getJointState(self, body, joint):
+                return (math.radians(self.joint_angle_deg), 0.0)
             def getJointInfo(self, body, joint):
                 return (None,) * 13 + ((0.0, 1.0, 0.0),)
             def applyExternalTorque(self, *args):
@@ -162,8 +166,13 @@ class LiveTransportTests(unittest.TestCase):
             self.assertTrue(options.headless)
             kwargs["on_physics"](bullet, 0, [0, 1, 2, 3, 4, 5], 10.0, True, False)
             kwargs["on_physics"](bullet, 0, [0, 1, 2, 3, 4, 5], 11.1, True, False)
-            kwargs["on_sample"](11.1, 3,
-                (3400, -4500, 6000, 2000, 500, -1000),
+            bullet.joint_angle_deg = -41.0
+            # The measured shoulder-lift is already 4deg off goal.
+            # Further torque must stop for the remainder of this cycle.
+            kwargs["on_physics"](bullet, 0, [0, 1, 2, 3, 4, 5], 11.2, True, False)
+            kwargs["on_physics"](bullet, 0, [0, 1, 2, 3, 4, 5], 11.3, True, False)
+            kwargs["on_sample"](11.2, 3,
+                (3000, -4100, 6000, 2000, 500, -1000),
                 (3000, -4500, 6000, 2000, 500, -1000), 50, 0)
             return dict(passed=True, segments_settled=3,
                         segments_requested=3, target_frames=600,
@@ -184,6 +193,12 @@ class LiveTransportTests(unittest.TestCase):
         self.assertEqual(len(bullet.applied), 1)
         self.assertEqual(bullet.applied[0][-1], Bullet.LINK_FRAME)
         self.assertEqual(report["disturbance_regression"]["peak_displacement_deg"], 4.0)
+        self.assertEqual(
+            report["disturbance_regression"]["peak_displacement_per_cycle_deg"],
+            [4.0])
+        self.assertEqual(
+            report["disturbance_regression"]["external_torque_substeps_per_cycle"],
+            [1])
         self.assertTrue(report["disturbance_regression"]["passed"])
 
     def test_uart_retains_partial_send_and_retries_without_duplicate_bytes(self):
