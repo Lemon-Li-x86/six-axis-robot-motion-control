@@ -9,6 +9,14 @@ on:
       - 'tools/tests/test_stage5_memory_map.py'
       - 'firmware/freertos_demo/CMakeLists.txt'
       - '.github/workflows/stage5-memory-audit.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tools/stage5_memory_map.py'
+      - 'tools/tests/test_stage5_memory_map.py'
+      - 'firmware/freertos_demo/CMakeLists.txt'
+      - '.github/workflows/stage5-memory-audit.yml'
   workflow_dispatch:
 
 permissions:
