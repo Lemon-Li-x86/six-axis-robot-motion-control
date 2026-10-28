@@ -1,151 +1,113 @@
-# six-axis-robot-motion-control
+# 六轴工业机器人嵌入式运动控制固件与仿真验证
 
-六轴工业机器人嵌入式运动控制固件开发与仿真验证。
+基于 **ARM Cortex-M4、FreeRTOS、QEMU 和 PyBullet** 的 UR5 六轴机器人运动控制项目。使用 C 实现运动学、轨迹规划和 PID 控制，通过 QEMU 运行嵌入式固件，并在 PyBullet 中完成运动仿真与反馈验证。
 
-> **开发状态（2026-10-27）**：第1至第4阶段的基础工程、驱动/协议、UR5 FK/IK、轨迹/PID和FreeRTOS任务均已实现。Stage2 Unity 25/25、ARM/QEMU协议8/8、UART TX 7/7、Motor抽象11/11、GPIO Shadow 13/13通过；Stage3/4 Host与QEMU回归及PyBullet动态验证均有记录。当前分支 `feat/stage5-system-integration-2026-10-27` 的本机更改仍未提交；阶段状态与证据见[第1至4阶段验收状态](docs/phase1-4_acceptance_status_2026-10-27.md)。
+**当前进度：Stage 1–4 核心功能完成，Stage 4 Windows 本机验收通过；Stage 5 系统集成开发中。** 项目以软件仿真为目标，不使用实体机器人。
 
-目前的架构：
-- `common/` 定义公共类型、角度编码及统一数学常量。
-- `model/` 统一UR5 DH、Frame与关节行程。
-- `algorithms/{math,kinematics,motion,trajectory,control}/` 提供无FreeRTOS的纯计算。
-- `application/{services,tasks}/` 管理请求、反馈、Trajectory/Control/Monitor任务。
-- `tests/` / `simulation/` 提供Host、ARM/QEMU和同源C控制器的PyBullet验证。
+## 项目进度
 
-**第1至4阶段仿真开发核心已完成，性能覆盖和完整文档交付仍需补齐**。现已有短时QEMU抖动/栈水位数据及Stage2目标测试，但30分钟高负载、全工作空间奇异性和更全面PID场景还没有完成。运动任务与目标输出CMake默认均为OFF。
+| 阶段 | 主要内容 | 进度 |
+|---|---|---|
+| Stage 1 · 基础环境 | Cortex-M4 / FreeRTOS 工程、QEMU、PyBullet UR5、UART 双向通信 | 已完成 |
+| Stage 2 · 驱动与协议 | UART / Timer / GPIO 驱动、Ring Buffer、协议解析、六轴电机状态抽象 | 已完成 |
+| Stage 3 · 运动学 | UR5 正逆运动学、IK 选解、连续角处理、关节限位 | 已完成 |
+| Stage 4 · 运动控制 | 三次/五次多项式、梯形速度、笛卡尔直线/圆弧轨迹、六轴增量式 PID、FreeRTOS 控制任务 | 核心验收通过，封版候选 |
+| Stage 5 · 系统集成 | QEMU UART ↔ PyBullet 动态联调、GUI 交互、静态障碍物避障与性能优化 | 进行中 |
+| Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
-### 统一非驱动本机验收（Windows PowerShell）
+详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)和 [Stage 5 任务与进度](docs/part5/00_stage5_scope_and_acceptance.md)。
 
-在仓库根目录，关闭占用调试端口的旧QEMU/GDB，再执行完整的第1至4阶段非驱动回归：
+## 系统架构
+
+```text
+      Cortex-M4 固件（QEMU + FreeRTOS）
+                       │
+         协议 / 运动请求 / 状态管理
+                       │
+      C 运动学 → C 轨迹规划 → C PID
+                       │
+               UART 双向通信
+                       │
+              Python 通信桥接
+                       │
+                PyBullet UR5
+             关节执行 / 状态反馈
+```
+
+运动学、轨迹和控制算法使用同一套 C 实现，既可进行 Host 单元测试，也可由固件调用。PyBullet 负责仿真执行与实际关节反馈。
+
+主要技术：**C11、FreeRTOS、CMake、ARM GNU Toolchain、QEMU、UART、Python、PyBullet、GDB**。
+
+## 代码结构
+
+```text
+firmware/freertos_demo/
+├── common/            公共类型、单位与错误码
+├── model/             UR5 模型与关节约束
+├── drivers/           UART、Timer、GPIO、Motor
+├── communications/    二进制协议与 Ring Buffer
+├── algorithms/
+│   ├── kinematics/    FK / IK
+│   ├── motion/        选解、连续角与限位
+│   ├── trajectory/    关节与笛卡尔轨迹
+│   └── control/       PID 与命令限幅
+├── application/       FreeRTOS 任务与运动请求服务
+└── config/            统一默认参数
+
+simulation/             PyBullet 场景与 UART 仿真桥
+tools/                  构建、回归与分析脚本
+docs/                   阶段设计、测试和验收文档
+```
+
+任务周期、六轴 PID、速度/加速度与超时等默认参数统一由 [robot_defaults.json](firmware/freertos_demo/config/robot_defaults.json) 管理。完整模块关系见 [架构说明](docs/architecture.md)。
+
+## 快速开始（Windows）
+
+环境需要 Python、CMake、C/C++ 编译器、ARM GNU Toolchain、QEMU 和 GDB；固件构建使用 Ninja。
+
+安装 Python 依赖：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+构建 Cortex-M4 固件：
+
+```powershell
+cmake --preset arm-qemu
+cmake --build --preset firmware
+```
+
+运行 Stage 1–4 自动化回归：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_once.ps1
 ```
 
-日志保存在 `build/stage4-final-validation.log`。脚本验证UART常量一致性、Stage2 Unity、Stage2协议与UART TX/Motor/GPIO QEMU、六组Stage3/4 Host CTest、ARM算法及近奇异测试、FreeRTOS启动/任务自检、Native C桥和PyBullet单轴/六轴。命令输出默认关闭。
-
-本轮新增多项式整段位置/速度/加速度预检（ARM轨迹20项、FreeRTOS拒绝/恢复8项），并将六轴独立PID、速度/加速度上限和超时策略集中到`firmware/freertos_demo/config/robot_defaults.json`。配置修改后重新构建；10项生成器测试拒绝非法输入。详见[程序补强记录](docs/part4/09_polynomial_preflight_and_json_config_2026-10-27.md)。
-
-详细资料：
-- [第四阶段参数登记簿](docs/part4/00_parameter_register.md)
-- [第四阶段全局架构审查与验收缺口](docs/part4/05_global_architecture_review_2026-10-26.md)
-- [PID调参真实数据](docs/part4/03_pid_tuning_record.md)
-- [实时性和FreeRTOS自检结果](docs/part4/04_realtime_verification.md)
-
-## 快速回归：运动限位与电机驱动（本机 C 编译器）
-
-不依赖 ARM 工具链、QEMU 或 Unity，复用现有 Motion Limits 与 Motor Driver 测试用例：
+运行 Stage 4 的 PID 多工况分析及 FreeRTOS/QEMU 回归：
 
 ```powershell
-cmake -S firmware/freertos_demo/tests/host -B build/motion-host
-cmake --build build/motion-host
-ctest --test-dir build/motion-host --output-on-failure
+powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -IncludeQemuBaseline
 ```
 
-此测试不能替代 ARM 构建及 QEMU/PyBullet 端到端验证。
+后一命令会执行多轮参数搜索，输出及实验文件保存在 `build/stage4-closure-local/evidence/`，完整非驱动回归日志保存在 `build/stage4-final-validation.log`。
 
-## 第1阶段遗留示例：UART ↔ PyBullet通信链路
+## 测试结果与文档
 
-> 以下仅用于Stage1通信与固定目标演示，**不是Stage4运动轨迹命令或完整串口PID闭环的测试流程**。现阶段实际生产运动请求由Application API提交。此路径保留供历史复现。
+2026-10-28 的 Stage 4 Windows 本机验收记录包括：
 
-### 1. 启动 Cortex-M4 / FreeRTOS 通信端
+- Host CTest **6/6**、原生 C 桥接测试 **1/1**；
+- PID 仿真实验 **18/18** 正常执行，候选参数的保留测试条件 **6/6** 达标；
+- FreeRTOS 自检 **29/29**、多项式测试 **8/8**；
+- PyBullet DIRECT 的单关节与六轴动态回归通过。
 
-在项目根目录执行：
+当前六轴仿真 PID 候选配置为 **Kp = 0.25，Ki = 0，Kd = 0.025**。
 
+- [Stage 1：系统设计与通信环境](docs/part1/01_system_design.md)
+- [Stage 2：驱动与协议测试](docs/part2/03_unit_and_function_test_report.md)
+- [Stage 3：运动学验证](docs/part3/02_algorithm_validation_report.md)
+- [Stage 4：封版记录、性能数据与待办](docs/part4/12_stage4_release_candidate_2026-10-28.md)
+- [Stage 5：集成问题记录](docs/part5/02_integration_issue_log.md)
 
-配置 ARM / QEMU 工程
-```text
-cmake --preset arm-qemu
-```
-
-构建正式固件
-```text
-cmake --build --preset firmware
-```
-
-如需构建所有 QEMU 测试目标
-```text
-cmake --build --preset arm-qemu
-```
-
-然后启动 QEMU UART TCP：
-
-```powershell
-qemu-system-arm `
-    -M mps2-an386 `
-    -kernel build/cmake-arm/firmware/freertos_demo/freertos_demo.elf `
-    -serial tcp:127.0.0.1:5555,server=on,wait=off `
-    -monitor none
-```
-
-QEMU 启动后会监听：
-
-```text
-127.0.0.1:5555
-```
-
----
-
-### 2. 启动 Python / PyBullet 通信桥
-
-打开另一个终端，运行：
-
-```powershell
-python simulation\uart_bridge\ur5_uart_bridge.py
-```
-
-程序将自动：
-
-- 连接 QEMU UART TCP；
-- 启动 PyBullet；
-- 加载 UR5；
-- 接收 Cortex-M4 下发的目标关节角；
-- 控制机械臂运动；
-- 读取实际关节状态并返回 Cortex-M4。
-
----
-
-### 3. 预期结果
-
-初始目标角由 `firmware/freertos_demo/config/robot_defaults.json` 的
-`initial_joint_targets_centideg` 决定，单位为 0.01°。下方日志仅为示意，
-不表示当前配置或启动瞬间已经达到目标。
-
-随后可以看到状态反馈：
-
-```text
-TX 0x81 实际角度:
-[目标附近的反馈角度, ...]
-```
-
-以及 Cortex-M4 返回的确认：
-
-```text
-RX 0x82 MCU 已确认状态:
-[目标附近的反馈角度, ...]
-```
-
-同时出现：
-
-```text
-RX 0x01
-TX 0x81
-RX 0x82
-```
-
-表示 Cortex-M4、Python 与 PyBullet / UR5 的双向通信链路工作正常。
-
----
-
-## 第1阶段文档
-
-系统技术方案设计：
-
-```text
-docs/part1/01_system_design.md
-```
-
-环境搭建与通信链路验证：
-
-```text
-docs/part1/04_env.md
-```
+Stage 4 当前为 [封版候选 PR #4](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/4)；Stage 5 的 GUI 与 UART 联调改动在独立的 [PR #3](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/3) 中。
