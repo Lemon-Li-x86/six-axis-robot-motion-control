@@ -370,12 +370,11 @@ class JointFeedbackRangeError(ValueError):
         self.joint_name = JOINT_NAMES[index]
         self.raw_centideg = raw_centideg
         self.angle_deg = raw_centideg / wire.JOINT_ANGLE_SCALE
+        self.fault_type = "noncanonical_uart_feedback"
         super().__init__(
-            f"Real {self.joint_name} measurement {self.angle_deg:.2f}deg "
-            f"(raw={raw_centideg}) exceeds UART signed-int16 range "
-            f"[{MIN_PAYLOAD_RAW / wire.JOINT_ANGLE_SCALE:.2f}, "
-            f"{MAX_PAYLOAD_RAW / wire.JOINT_ANGLE_SCALE:.2f}]deg; "
-            "no clipping or modulo conversion performed"
+            f"{self.joint_name} UART feedback {self.angle_deg:.2f}deg "
+            f"(raw={raw_centideg}) violates the firmware canonical "
+            "[-180, 180)deg contract; no clipping performed"
         )
 
 
@@ -383,10 +382,11 @@ def joint_feedback_frame(raw: Sequence[int]) -> bytes:
     """Encode already-canonical raw angles; physical readings must be normalized first."""
     if len(raw) != wire.JOINT_COUNT:
         raise ValueError("Joint-state feedback requires exactly six angles")
+    half_turn = round(math.degrees(math.pi) * wire.JOINT_ANGLE_SCALE)
     for index, value in enumerate(raw):
         if type(value) is not int:
             raise TypeError(f"Joint {JOINT_NAMES[index]} feedback is not an integer")
-        if not MIN_PAYLOAD_RAW <= value <= MAX_PAYLOAD_RAW:
+        if not -half_turn <= value < half_turn:
             raise JointFeedbackRangeError(index, value)
     payload = struct.pack("<" + str(wire.JOINT_COUNT) + "h", *raw)
     return integration.frame(wire.CMD_JOINT_STATE, payload)
@@ -1054,8 +1054,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             target_frames=target_frames, feedback_acks=feedback_acks,
             segments_settled=sequencer.completed, diagnostics=diagnostic_values)
         if isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError)):
-            fault_type = getattr(
-                error, "fault_type", "joint_feedback_out_of_range")
+            fault_type = error.fault_type
             failure.update(
                 fault_type=fault_type,
                 fault_joint=error.joint_name,
