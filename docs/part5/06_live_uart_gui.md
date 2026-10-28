@@ -309,8 +309,10 @@ Windows 手动拖拽再次复现：松手后先快速甩动，后长时间回位
   `hold_recovery_waiting` 且保留 GUI/UART，不将其报成 PASS。
   完成回位并再次受到新扰动，可开始新的回位事件。
 - 以前的 PyBullet `POSITION_CONTROL` 仅用力矩限制，不控制
-  可达到的执行器追赶速度。GUI 模式现在向官方原生
-  `setJointMotorControlArray(maxVelocities=...)` 传每轴上限，
+  可达到的执行器追赶速度。GUI 模式现在使用 PyBullet 已验证的单关节
+  `setJointMotorControl2(maxVelocity=...)` 分六轴下发速度上限；
+  原 `setJointMotorControlArray(maxVelocities=...)` 在 CI 使用的 PyBullet
+  wheel 中被明确拒绝（`TypeError`），因此不再调用。
   取**C 固件默认配置 `stage4_motion.max_velocity_deg_s`**与
   已加载 URDF `getJointInfo()[11]` 速度上限的较小值。
   无第二套速度数值、无 Python PID/自主轨迹生成。
