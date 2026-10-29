@@ -48,6 +48,12 @@ jobs:
             -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Compile actual RTOS motor_state with deterministic snapshot race mocks
+        run: |
+          cmake -S firmware/freertos_demo/tests/feedback_clock \
+            -B build/stage5-feedback-clock -G Ninja
+          cmake --build build/stage5-feedback-clock
+          ctest --test-dir build/stage5-feedback-clock --output-on-failure
       - name: Validate versioned simulation scenario contract for Stage6 reuse
         run: python -m unittest discover -s tools/tests -p 'test_stage5_scene_catalog.py' -v
       - name: Verify production UART parser against corrupt, partial and lost-byte streams
