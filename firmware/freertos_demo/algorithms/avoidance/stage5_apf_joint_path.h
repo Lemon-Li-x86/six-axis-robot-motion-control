@@ -44,4 +44,12 @@ robot_status_t stage5_apf_points_to_joint_route(
     stage5_apf_joint_segment_t *segments,
     size_t capacity,
     size_t *out_count);
+/* Expose the canonical C IK pose acceptance ceilings to host simulation
+ * adapters. They are owned by kinematics.h, not by Python scene JSON.
+ * A caller may pass a stricter tolerance to the route function.
+ */
+robot_status_t stage5_apf_joint_pose_limits(
+    robot_real_t *maximum_position_error_mm,
+    robot_real_t *maximum_rotation_element_error);
+
 #endif
