@@ -1,0 +1,62 @@
+name: Stage5 blocked static cuboid LIVE C APF to QEMU UART
+on:
+  push:
+    branches: [feat/stage5-blocking-obstacle-uart-20261029]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  physically-blocked-route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real Cortex-M4 QEMU and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
+          python -m pip install numpy pybullet
+      - name: Build production firmware and C APF/IK host bridge
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
+          cmake --build build/stage5-avoidance
+          ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Require a real blocked path and live whole-arm collision-safe movement
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --headless --no-hold --timeout-s 180 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --output-dir build/stage5-blocked-physical
+      - name: Assert actual detour physical feedback and 0 collision/faults
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('build/stage5-blocked-physical')
+          r=json.loads((p/'result.json').read_text())
+          q=json.loads((p/'avoidance_preflight.json').read_text())
+          assert r['passed'] and q['passed']
+          assert q['route_case']=='blocked'
+          assert q['cartesian_waypoints']>=5
+          assert q['direct_cartesian_segment_blocked'] is True
+          assert r['segments_settled']==r['segments_requested']>=5
+          assert r['runtime_full_link_collision_free'] is True
+          assert r['runtime_collision_scans']>=50
+          assert all(n==0 for n in r['fault_counters'].values())
+          print('BLOCKED DETOUR ACTUATED PASS',r['segments_settled'],r['runtime_collision_scans'])
+          PY
+      - name: Preserve blocked-route experiment including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-real-blocked-route-physical-trace
+          path: build/stage5-blocked-physical/*
+          if-no-files-found: ignore
