@@ -51,4 +51,14 @@ uint8_t motor_state_feedback_is_fresh(
     uint32_t max_age_ticks
 );
 
+/* Always take the RTOS clock sample AFTER copying the feedback snapshot.
+ * Sampling time before acquiring the mutex can race ProtocolRX: its newer
+ * accepted_tick then appears to be ~2^32 ticks old by unsigned subtraction.
+ * This API returns NOT_READY for absent or stale feedback and never changes
+ * the caller's output on failure. Task context only, never ISR. */
+robot_status_t motor_state_get_fresh_feedback(
+    motor_state_observation_t *observation,
+    uint32_t max_age_ticks
+);
+
 #endif
