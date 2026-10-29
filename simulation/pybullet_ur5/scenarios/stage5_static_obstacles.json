@@ -71,7 +71,8 @@
           0,
           90
         ]
-      ]
+      ],
+      "shortcut_cartesian": true
     }
   }
 }
