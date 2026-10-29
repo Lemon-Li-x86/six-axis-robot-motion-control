@@ -334,8 +334,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
-    trajectory_period_s = (json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
-                           ["task_period_ms"]["trajectory"] / 1000.0)
+    task_periods = json.loads(DEFAULT_JSON.read_text(
+        encoding="utf-8"))["task_period_ms"]
+    trajectory_period_s = task_periods["trajectory"] / 1000.0
+    monitor_period_s = task_periods["monitor"] / 1000.0
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
     safety_obstacles: tuple[int, ...] = ()
     safety_clearance_m = 0.0
@@ -805,9 +807,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "controller_faults", "planner_faults", "feedback_stale_count",
             )
             faults = {name: diagnostic_values.get(name) for name in fault_names}
-            clock_ratio, clock_aligned = assess_clock_alignment(
+            # Active planner samples need not span physical settling and
+            # final UART diagnostic polling after a short segment. Keep
+            # both clocks visible; use always-running Monitor ticks for
+            # overall experiment wall/physics alignment only in the
+            # C-APF route execution mode.
+            trajectory_ratio, trajectory_clock_aligned = assess_clock_alignment(
                 diagnostic_values.get("trajectory_samples"), target_frames,
                 trajectory_period_s)
+            monitor_ratio, monitor_clock_aligned = assess_clock_alignment(
+                diagnostic_values.get("monitoring_ticks"), target_frames,
+                monitor_period_s)
+            if prepare_motion is None:
+                clock_ratio, clock_aligned = (
+                    trajectory_ratio, trajectory_clock_aligned)
+                clock_reference = "trajectory_samples"
+            else:
+                clock_ratio, clock_aligned = (
+                    monitor_ratio, monitor_clock_aligned)
+                clock_reference = "monitoring_ticks"
             passed = (
                 clock_aligned
                 and sequencer.done
@@ -842,11 +860,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "simulated_physics_s": round(target_frames * FEEDBACK_STEP_S, 3),
                 "trajectory_task_nominal_elapsed_s": round(
                     diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
-                "rtos_trajectory_to_physics_time_ratio": clock_ratio,
+                "rtos_trajectory_to_physics_time_ratio": trajectory_ratio,
+                "rtos_monitor_to_physics_time_ratio": monitor_ratio,
+                "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
-                "clock_alignment_note": "Planning task sample count times configured period; "
-                                        "not a hardware-tick precision measurement",
+                "clock_alignment_note": (
+                    "Planner samples cover active motion references; "
+                    "Monitor ticks cover full simulation including "
+                    "settling and UART diagnostics; not a precision "
+                    "Cortex-M hardware time measurement."),
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
@@ -883,7 +906,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             result["plot_saved"] = write_plot(output_dir, trace)
             if not clock_aligned:
                 audit.write(json.dumps(dict(event="clock_alignment_failed",
-                    rtos_trajectory_to_physics_time_ratio=clock_ratio,
+                    rtos_trajectory_to_physics_time_ratio=trajectory_ratio,
+                    rtos_monitor_to_physics_time_ratio=monitor_ratio,
+                    clock_alignment_reference=clock_reference,
                     nominal_trajectory_s=result["trajectory_task_nominal_elapsed_s"],
                     simulated_physics_s=result["simulated_physics_s"])) + "\n")
             (output_dir / "result.json").write_text(
