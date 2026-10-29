@@ -23,7 +23,7 @@
 | 当前关节反馈、活跃任务、运行故障 | FreeRTOS/虚拟反馈运行状态 | 写入静态模型或全局配置作为“默认状态” |
 | 运行时全连杆最小净距/路径采样预算 | 场景验证策略；必须明确标注为**仿真门禁** | 混同于 C APF 末端点 clearance，或静默降低净距以使 CI 通过 |
 
-当前 Python→C IK 的容差仍通过接口显式传入，接口边界和相关单测必须持续约束其不宽于 `KINEMATICS_IK_MAX_*_RESIDUAL`，后续第六阶段应集中消除跨语言重复的数值声明。
+Python→C IK 的默认 FK 误差限值现在由 `stage5_apf_joint_pose_limits()` 从生产 C 的 `KINEMATICS_IK_MAX_*_RESIDUAL` 唯一来源读取。场景 JSON 不得复制该数值；调用方可主动要求更严，但不能放宽 C 上限。相应 C Host 测试和 PyBullet 测试均应持续覆盖这一接口契约。
 
 ## 3. 数据化场景格式
 
