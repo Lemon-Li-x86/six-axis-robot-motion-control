@@ -5,11 +5,13 @@ authoritative sources. No pre-canned joint trajectory or bypass of C IK.
 Nothing sends a UART command until all-link preflight reports success.
 """
 from __future__ import annotations
+import ctypes
 import json
+import math
 from pathlib import Path
 
 from stage4_dynamic_closed_loop import DEFAULT_JSON
-from stage5_static_obstacle_probe import Config
+from stage5_static_obstacle_probe import Config, Point, AABB, point
 from stage5_avoidance_preflight import preflight_joint_avoidance
 
 
@@ -57,6 +59,39 @@ def make_avoidance_preflight(library: Path, route_case: str):
         obstacle = physics.createMultiBody(
             baseMass=0.0, baseCollisionShapeIndex=shape,
             basePosition=center, physicsClientId=client)
+        direct_blocked = False
+        if route_case == "blocked":
+            # The box must really intersect the direct point segment.
+            # Check with the SAME production C segment/AABB intersection,
+            # not an independent Python geometry approximation.
+            low, high = physics.getAABB(
+                obstacle, physicsClientId=client)
+            bounds = AABB(point([1000*v for v in low]),
+                          point([1000*v for v in high]))
+            start_mm = point((1000*x, 1000*y, 1000*z))
+            goal_point = point(goal)
+            direct = Config(
+                apf.attraction_gain, 0.0, apf.influence_distance_mm,
+                apf.clearance_mm, math.dist(tuple(start_mm.mm), goal),
+                apf.goal_tolerance_mm)
+            c = ctypes.CDLL(str(library.resolve()))
+            c.robot_apf_step.restype = ctypes.c_int
+            c.robot_apf_step.argtypes = [
+                ctypes.POINTER(Point), ctypes.POINTER(Point),
+                ctypes.POINTER(AABB), ctypes.c_size_t,
+                ctypes.POINTER(Config), ctypes.POINTER(Point),
+                ctypes.c_void_p,
+            ]
+            candidate = Point()
+            straight_status = c.robot_apf_step(
+                ctypes.byref(start_mm), ctypes.byref(goal_point),
+                ctypes.byref(bounds), 1,
+                ctypes.byref(direct), ctypes.byref(candidate), None)
+            if straight_status != -10:  # Existing C NO_SOLUTION enum.
+                raise ValueError(
+                    "Fixture did not block a valid direct segment: "
+                    f"C_APF_status={straight_status}")
+            direct_blocked = True
         result = preflight_joint_avoidance(
             library, physics, robot, [obstacle], joints, end_link, goal,
             apf_config=apf,
@@ -70,6 +105,7 @@ def make_avoidance_preflight(library: Path, route_case: str):
             physics_client_id=client)
         result["obstacle_ids"] = [obstacle]
         result["route_case"] = route_case
+        result["direct_cartesian_segment_blocked"] = direct_blocked
         result["obstacle_center_m"] = center
         result["obstacle_half_extents_m"] = half_extents
         return result
