@@ -54,7 +54,7 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             baseMass=0.0, baseCollisionShapeIndex=collision,
             basePosition=centre, physicsClientId=self.client)
 
-    def preflight(self, obstacle):
+    def preflight(self, obstacle, *, minimum_full_link_clearance_m=None):
         return preflight_joint_avoidance(
             LIBRARY, p, self.robot, [obstacle], self.joints, self.ee,
             self.goal,
@@ -66,7 +66,8 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             waypoint_capacity=16,
             max_joint_step_rad=0.02,
             max_collision_samples=1000,
-            physics_client_id=self.client)
+            physics_client_id=self.client,
+            minimum_full_link_clearance_m=minimum_full_link_clearance_m)
 
     def assert_unmodified(self):
         observed = tuple(p.getJointState(
@@ -85,6 +86,26 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
         self.assertTrue(all(math.isfinite(x) and x>=0
                             for x in result["segment_duration_s"]))
         self.assert_unmodified()
+
+    def test_point_clearance_is_not_full_link_clearance(self):
+        # 5mm Cartesian APF point clearance is separate from a 20mm
+        # required robot-body clearance, the original source of false safety.
+        distant = self.box([5, 5, 5], [0.05]*3)
+        result = self.preflight(
+            distant, minimum_full_link_clearance_m=0.020)
+        self.assertTrue(result["passed"])
+        self.assertAlmostEqual(result["cartesian_point_clearance_m"], 0.005)
+        self.assertAlmostEqual(result["static_collision_clearance_m"], 0.020)
+        self.assert_unmodified()
+
+    def test_invalid_full_link_clearance_fails_closed(self):
+        distant = self.box([5, 5, 5], [0.05]*3)
+        for invalid in (-0.001, float("nan"), float("inf")):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(RejectedRoute, "clearance"):
+                    self.preflight(
+                        distant, minimum_full_link_clearance_m=invalid)
+                self.assert_unmodified()
 
     def test_blocked_middle_link_rejected_without_motion(self):
         low,high = p.getAABB(
