@@ -38,20 +38,20 @@
     },
     "blocked": {
       "goal_offset_mm": [
-        110,
-        44,
+        -180,
+        0,
         0
       ],
       "obstacle": {
         "center_offset_ee_mm": [
-          55,
-          22,
+          -90,
+          0,
           0
         ],
         "half_extents_m": [
-          0.015,
-          0.015,
-          0.02
+          0.01,
+          0.01,
+          0.01
         ]
       },
       "apf": {
@@ -67,9 +67,9 @@
       "expect_direct_blocked": true,
       "via_offsets_ee_mm": [
         [
-          35,
-          100,
-          35
+          -90,
+          0,
+          90
         ]
       ]
     }
