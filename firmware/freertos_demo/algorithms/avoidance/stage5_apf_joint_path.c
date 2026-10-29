@@ -7,6 +7,19 @@
 #include "motion_limits.h"
 #include "angle_utils.h"
 
+robot_status_t stage5_apf_joint_pose_limits(
+    robot_real_t *maximum_position_error_mm,
+    robot_real_t *maximum_rotation_element_error)
+{
+    if(maximum_position_error_mm==NULL ||
+       maximum_rotation_element_error==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    *maximum_position_error_mm=KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM;
+    *maximum_rotation_element_error=
+        KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL;
+    return ROBOT_STATUS_OK;
+}
+
 static robot_status_t convert_pass(
     const robot_joint_positions_t *start_joints,
     const robot_apf_point_t *cartesian_points,
