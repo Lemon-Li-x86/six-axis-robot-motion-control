@@ -60,8 +60,18 @@ def preflight_joint_avoidance(
     max_joint_step_rad: float,
     max_collision_samples: int,
     physics_client_id: int,
+    minimum_full_link_clearance_m: float | None = None,
 ) -> dict:
     """Compute C path and C joint targets, and reject unsafe joint routes."""
+    # Cartesian APF point clearance and physical link clearance are
+    # different constraints. An EE point does not include wrist/link volume.
+    # Preserve the original API default for callers that did not specify
+    # a separate full-link requirement.
+    if minimum_full_link_clearance_m is None:
+        minimum_full_link_clearance_m = apf_config.clearance_mm / 1000.0
+    if (not math.isfinite(minimum_full_link_clearance_m) or
+            minimum_full_link_clearance_m < 0.0):
+        raise RejectedRoute("invalid full-link collision clearance")
     if not library.is_file():
         raise FileNotFoundError(library)
     if (not isinstance(waypoint_capacity, int) or waypoint_capacity <= 0
@@ -147,7 +157,7 @@ def preflight_joint_avoidance(
         gate = validate_joint_path(
             physics, robot_id, obstacle_ids, joint_indices, path,
             maximum_joint_step_rad=max_joint_step_rad,
-            clearance_m=apf_config.clearance_mm/1000,
+            clearance_m=minimum_full_link_clearance_m,
             maximum_samples=max_collision_samples,
             physics_client_id=physics_client_id,
         )
@@ -165,7 +175,8 @@ def preflight_joint_avoidance(
         "segment_duration_s": durations,
         "sampled_full_arm_states": gate["sampled_states"],
         "total_minimum_rest_to_rest_duration_s": sum(durations),
-        "static_collision_clearance_m": apf_config.clearance_mm/1000,
+        "static_collision_clearance_m": minimum_full_link_clearance_m,
+        "cartesian_point_clearance_m": apf_config.clearance_mm/1000,
         "not_certified": [
             "continuous swept collision", "self collision",
             "dynamic obstacles", "FreeRTOS command/feedback execution",
