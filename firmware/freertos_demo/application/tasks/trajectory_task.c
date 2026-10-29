@@ -183,10 +183,9 @@ static void task_trajectory(void *arg)
              * must not resume at a later, jumped setpoint after reconnect. */
             {
                 motor_state_observation_t observation;
-                TickType_t now=xTaskGetTickCount();
-                if(motor_state_get_feedback(&observation)!=ROBOT_STATUS_OK ||
-                   !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
-                        (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
+                if(motor_state_get_fresh_feedback(
+                     &observation,(uint32_t)pdMS_TO_TICKS(
+                         r->config.feedback_timeout_ms))!=ROBOT_STATUS_OK) {
                     cancel_motion(r,ROBOT_STATUS_ERROR_NOT_READY);
                     armed=0U; moving=0U;
                     break;
