@@ -13,6 +13,8 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_static_obstacle_probe.py'
       - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
       - 'simulation/pybullet_ur5/src/stage5_avoidance_preflight.py'
+      - 'simulation/pybullet_ur5/scenarios/**'
+      - 'tools/tests/test_stage5_scene_catalog.py'
       - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
       - 'simulation/pybullet_ur5/tests/test_stage5_avoidance_preflight.py'
       - '.github/workflows/stage5-system-integration.yml'
@@ -23,6 +25,10 @@ on:
       - 'firmware/freertos_demo/**'
       - 'simulation/pybullet_ur5/src/stage5_collision_validation.py'
       - 'simulation/pybullet_ur5/tests/test_stage5_collision_validation.py'
+      - 'simulation/pybullet_ur5/tests/test_stage5_avoidance_preflight.py'
+      - 'simulation/pybullet_ur5/src/stage5_avoidance_preflight.py'
+      - 'simulation/pybullet_ur5/scenarios/**'
+      - 'tools/tests/test_stage5_scene_catalog.py'
       - '.github/workflows/stage5-system-integration.yml'
   workflow_dispatch:
 
@@ -42,6 +48,8 @@ jobs:
             -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Validate versioned simulation scenario contract for Stage6 reuse
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_scene_catalog.py' -v
       - name: Verify production UART parser against corrupt, partial and lost-byte streams
         run: |
           cmake -S firmware/freertos_demo/tests/host \

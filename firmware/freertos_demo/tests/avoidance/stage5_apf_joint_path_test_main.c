@@ -103,8 +103,21 @@ static void fail_closed_no_partial_joint_path(void)
     CHECK(n==0U && out[0].segment_duration_s==-777.0);
 }
 
+static void authoritative_pose_limits(void)
+{
+    robot_real_t position=0.0F,rotation=0.0F;
+    CHECK(stage5_apf_joint_pose_limits(&position,&rotation)==ROBOT_STATUS_OK);
+    CHECK(position==KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM);
+    CHECK(rotation==KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL);
+    CHECK(stage5_apf_joint_pose_limits(NULL,&rotation)
+          ==ROBOT_STATUS_ERROR_NULL_POINTER);
+    CHECK(stage5_apf_joint_pose_limits(&position,NULL)
+          ==ROBOT_STATUS_ERROR_NULL_POINTER);
+}
+
 int main(void)
 {
+    authoritative_pose_limits();
     real_apf_to_production_ik();
     fail_closed_no_partial_joint_path();
     printf("Stage5 APF->C IK->trapezoid: %u checks, %u failures\\n",tests,failed);
