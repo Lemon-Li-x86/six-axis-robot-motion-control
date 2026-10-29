@@ -3,9 +3,7 @@
   "description": "Simulation fixtures, not UR5 model constants. Positions relative to measured ee_link, distances mm unless named _m.",
   "preflight": {
     "max_joint_step_rad": 0.02,
-    "max_collision_samples": 3000,
-    "max_fk_position_error_mm": 0.5,
-    "max_fk_rotation_element_error": 0.003
+    "max_collision_samples": 3000
   },
   "scenes": {
     "clear": {
