@@ -12,7 +12,7 @@ from pathlib import Path
 
 from stage4_dynamic_closed_loop import DEFAULT_JSON
 from stage5_static_obstacle_probe import Config, Point, AABB, point
-from stage5_avoidance_preflight import preflight_joint_avoidance
+from stage5_avoidance_preflight import preflight_joint_avoidance, RejectedRoute
 
 
 def make_avoidance_preflight(library: Path, route_case: str):
@@ -53,61 +53,88 @@ def make_avoidance_preflight(library: Path, route_case: str):
             apf = Config(1.0, 50000.0, 150.0, 10.0, 10.0, 2.0)
             capacity = 96
 
-        shape = physics.createCollisionShape(
-            physics.GEOM_BOX, halfExtents=half_extents,
-            physicsClientId=client)
-        obstacle = physics.createMultiBody(
-            baseMass=0.0, baseCollisionShapeIndex=shape,
-            basePosition=center, physicsClientId=client)
-        direct_blocked = False
+        # Only the experimental blocked case tests several *scene*
+        # placements. Every C/IK/full-link policy remains identical.
+        # Reject one candidate entirely and remove its obstacle before
+        # trying the next. Never emit a UART motion request on rejection.
         if route_case == "blocked":
-            # The box must really intersect the direct point segment.
-            # Check with the SAME production C segment/AABB intersection,
-            # not an independent Python geometry approximation.
-            low, high = physics.getAABB(
-                obstacle, physicsClientId=client)
-            bounds = AABB(point([1000*v for v in low]),
-                          point([1000*v for v in high]))
-            start_mm = point((1000*x, 1000*y, 1000*z))
-            goal_point = point(goal)
-            direct = Config(
-                apf.attraction_gain, 0.0, apf.influence_distance_mm,
-                apf.clearance_mm, math.dist(tuple(start_mm.mm), goal),
-                apf.goal_tolerance_mm)
-            c = ctypes.CDLL(str(library.resolve()))
-            c.robot_apf_step.restype = ctypes.c_int
-            c.robot_apf_step.argtypes = [
-                ctypes.POINTER(Point), ctypes.POINTER(Point),
-                ctypes.POINTER(AABB), ctypes.c_size_t,
-                ctypes.POINTER(Config), ctypes.POINTER(Point),
-                ctypes.c_void_p,
+            centers = [
+                (x-0.075, y+0.015, z),
+                (x-0.075, y+0.035, z),
+                (x-0.075, y+0.045, z),
+                (x-0.075, y+0.025, z-0.010),
+                (x-0.075, y+0.025, z+0.010),
+                (x-0.060, y+0.015, z),
+                (x-0.090, y+0.015, z),
             ]
-            candidate = Point()
-            straight_status = c.robot_apf_step(
-                ctypes.byref(start_mm), ctypes.byref(goal_point),
-                ctypes.byref(bounds), 1,
-                ctypes.byref(direct), ctypes.byref(candidate), None)
-            if straight_status != -10:  # Existing C NO_SOLUTION enum.
-                raise ValueError(
-                    "Fixture did not block a valid direct segment: "
-                    f"C_APF_status={straight_status}")
-            direct_blocked = True
-        result = preflight_joint_avoidance(
-            library, physics, robot, [obstacle], joints, end_link, goal,
-            apf_config=apf,
-            max_velocity_deg_s=motion["max_velocity_deg_s"],
-            max_acceleration_deg_s2=motion["max_acceleration_deg_s2"],
-            max_fk_position_error_mm=0.5,
-            max_fk_rotation_element_error=0.003,
-            waypoint_capacity=capacity,
-            max_joint_step_rad=0.02,
-            max_collision_samples=3000,
-            physics_client_id=client)
-        result["obstacle_ids"] = [obstacle]
-        result["route_case"] = route_case
-        result["direct_cartesian_segment_blocked"] = direct_blocked
-        result["obstacle_center_m"] = center
-        result["obstacle_half_extents_m"] = half_extents
-        return result
+        else:
+            centers = [center]
+
+        rejections = []
+        for center in centers:
+            shape = physics.createCollisionShape(
+                physics.GEOM_BOX, halfExtents=half_extents,
+                physicsClientId=client)
+            obstacle = physics.createMultiBody(
+                baseMass=0.0, baseCollisionShapeIndex=shape,
+                basePosition=center, physicsClientId=client)
+            try:
+                direct_blocked = False
+                if route_case == "blocked":
+                    # Prove real direct-line obstruction with the actual C
+                    # segment/AABB test, *not* a second Python algorithm.
+                    low, high = physics.getAABB(
+                        obstacle, physicsClientId=client)
+                    bounds = AABB(point([1000*v for v in low]),
+                                  point([1000*v for v in high]))
+                    start_mm = point((1000*x, 1000*y, 1000*z))
+                    goal_point = point(goal)
+                    direct = Config(
+                        apf.attraction_gain, 0.0, apf.influence_distance_mm,
+                        apf.clearance_mm, math.dist(tuple(start_mm.mm), goal),
+                        apf.goal_tolerance_mm)
+                    c = ctypes.CDLL(str(library.resolve()))
+                    c.robot_apf_step.restype = ctypes.c_int
+                    c.robot_apf_step.argtypes = [
+                        ctypes.POINTER(Point), ctypes.POINTER(Point),
+                        ctypes.POINTER(AABB), ctypes.c_size_t,
+                        ctypes.POINTER(Config), ctypes.POINTER(Point),
+                        ctypes.c_void_p,
+                    ]
+                    candidate = Point()
+                    straight_status = c.robot_apf_step(
+                        ctypes.byref(start_mm), ctypes.byref(goal_point),
+                        ctypes.byref(bounds), 1,
+                        ctypes.byref(direct), ctypes.byref(candidate), None)
+                    if straight_status != -10:
+                        raise RejectedRoute(
+                            "Fixture does not block a valid direct segment: "
+                            f"C_APF_status={straight_status}")
+                    direct_blocked = True
+                result = preflight_joint_avoidance(
+                    library, physics, robot, [obstacle], joints, end_link, goal,
+                    apf_config=apf,
+                    max_velocity_deg_s=motion["max_velocity_deg_s"],
+                    max_acceleration_deg_s2=motion["max_acceleration_deg_s2"],
+                    max_fk_position_error_mm=0.5,
+                    max_fk_rotation_element_error=0.003,
+                    waypoint_capacity=capacity,
+                    max_joint_step_rad=0.02,
+                    max_collision_samples=3000,
+                    physics_client_id=client)
+            except RejectedRoute as error:
+                rejections.append((center, str(error)))
+                physics.removeBody(obstacle, physicsClientId=client)
+                continue
+            result["obstacle_ids"] = [obstacle]
+            result["route_case"] = route_case
+            result["direct_cartesian_segment_blocked"] = direct_blocked
+            result["obstacle_center_m"] = center
+            result["obstacle_half_extents_m"] = half_extents
+            result["rejected_trial_count"] = len(rejections)
+            return result
+        raise RejectedRoute(
+            "No C-IK/all-link-safe blocked scene among fixed finite "
+            f"fixture candidates: {rejections!r}")
 
     return prepare
