@@ -51,9 +51,14 @@ jobs:
           q=json.loads((p/'avoidance_preflight.json').read_text())
           assert r['passed'] and q['passed']
           assert q['route_case']=='blocked'
-          assert q['cartesian_waypoints']>=5
+          # The complete production C APF route still exists; only C
+          # collision-verified shortcuts may reduce UART request volume.
+          assert q['raw_apf_waypoints']>=10
+          assert q['cartesian_shortcut_used'] is True
+          assert 2 <= q['cartesian_waypoints'] < q['raw_apf_waypoints']
+          assert len(q['via_points_mm'])==1
           assert q['direct_cartesian_segment_blocked'] is True
-          assert r['segments_settled']==r['segments_requested']>=5
+          assert r['segments_settled']==r['segments_requested']==q['cartesian_waypoints']
           assert r['runtime_full_link_collision_free'] is True
           assert r['runtime_collision_scans']>=50
           assert all(n==0 for n in r['fault_counters'].values())
