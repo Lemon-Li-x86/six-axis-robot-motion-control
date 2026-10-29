@@ -67,6 +67,8 @@ def load_scene(route_case: str) -> tuple[dict, dict]:
         raise ValueError("invalid waypoint capacity")
     if type(scene["expect_direct_blocked"]) is not bool:
         raise ValueError("expect_direct_blocked must be a boolean")
+    if type(scene.get("shortcut_cartesian", False)) is not bool:
+        raise ValueError("shortcut_cartesian must be a boolean")
     policy = catalog["preflight"]
     if not (math.isfinite(policy["max_joint_step_rad"]) and
             policy["max_joint_step_rad"] > 0 and
@@ -165,6 +167,7 @@ def make_avoidance_preflight(library: Path, route_case: str):
             max_collision_samples=safety["max_collision_samples"],
             physics_client_id=client,
             via_points_mm=via_points,
+            shortcut_cartesian=scene.get("shortcut_cartesian", False),
             minimum_full_link_clearance_m=(
                 scene["minimum_full_link_clearance_mm"] / 1000.0))
         result.update(
