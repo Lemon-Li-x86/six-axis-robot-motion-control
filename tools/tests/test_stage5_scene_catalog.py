@@ -17,6 +17,8 @@ class DeclarativeSceneCatalogTests(unittest.TestCase):
         clear, safety = gate.load_scene("clear")
         blocked, same_policy = gate.load_scene("blocked")
         self.assertEqual(safety, same_policy)
+        self.assertNotIn("max_fk_position_error_mm", safety)
+        self.assertNotIn("max_fk_rotation_element_error", safety)
         self.assertFalse(clear["expect_direct_blocked"])
         self.assertTrue(blocked["expect_direct_blocked"])
         self.assertGreater(blocked["apf"]["clearance_mm"],
