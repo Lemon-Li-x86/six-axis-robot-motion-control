@@ -56,7 +56,7 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
 
     def preflight(self, obstacle, *, minimum_full_link_clearance_m=None,
                   via_points_mm=(), position_gate_mm=0.5,
-                  rotation_gate=0.003):
+                  rotation_gate=0.003, shortcut_cartesian=False):
         return preflight_joint_avoidance(
             LIBRARY, p, self.robot, [obstacle], self.joints, self.ee,
             self.goal,
@@ -70,7 +70,8 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             max_collision_samples=1000,
             physics_client_id=self.client,
             minimum_full_link_clearance_m=minimum_full_link_clearance_m,
-            via_points_mm=via_points_mm)
+            via_points_mm=via_points_mm,
+            shortcut_cartesian=shortcut_cartesian)
 
     def assert_unmodified(self):
         observed = tuple(p.getJointState(
@@ -130,6 +131,23 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
         self.assertGreater(route["cartesian_waypoints"], 4)
         self.assertAlmostEqual(route["cartesian_route_mm"][-1][0],
                                self.goal[0], delta=0.1)
+        self.assert_unmodified()
+
+    def test_c_geometry_shortcut_keeps_mission_leg_boundary(self):
+        # No Python collision approximation: the reduction relies on the
+        # production C swept-segment ABI, then re-runs IK + full-link checks.
+        distant = self.box([5, 5, 5], [0.05]*3)
+        via = (self.goal[0]-3.0, self.goal[1]+5.0, self.goal[2])
+        result = self.preflight(
+            distant, via_points_mm=[via], shortcut_cartesian=True)
+        self.assertTrue(result["passed"])
+        self.assertTrue(result["cartesian_shortcut_used"])
+        self.assertEqual(result["cartesian_waypoints"], 2)
+        self.assertGreater(result["raw_apf_waypoints"], 2)
+        self.assertEqual(len(result["joint_waypoints_rad"]), 3)
+        self.assertEqual(len(result["cartesian_route_mm"]), 2)
+        self.assertAlmostEqual(result["cartesian_route_mm"][0][0],
+                               via[0], delta=0.1)
         self.assert_unmodified()
 
     def test_unreachable_mission_via_rejects_whole_route(self):
