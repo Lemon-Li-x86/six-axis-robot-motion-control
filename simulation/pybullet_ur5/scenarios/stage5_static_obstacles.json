@@ -60,13 +60,20 @@
         "attraction_gain": 1,
         "repulsion_gain": 50000,
         "influence_distance_mm": 150,
-        "clearance_mm": 20,
+        "clearance_mm": 12,
         "maximum_step_mm": 10,
         "goal_tolerance_mm": 2
       },
       "minimum_full_link_clearance_mm": 10,
       "waypoint_capacity": 96,
-      "expect_direct_blocked": true
+      "expect_direct_blocked": true,
+      "via_offsets_ee_mm": [
+        [
+          -40,
+          90,
+          20
+        ]
+      ]
     }
   }
 }
