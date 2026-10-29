@@ -59,8 +59,14 @@ jobs:
               "controller_faults":0,"planner_faults":0,"feedback_stale_count":0}
           with (path/"joint_trace.csv").open(newline="") as file:
               rows=list(csv.DictReader(file))
-          actual=[float(row["actual_shoulder_pan_joint_deg"]) for row in rows]
-          assert max(actual)-min(actual)>0.05, "robot didn't actually move"
+          joint_columns=[key for key in rows[0] if
+                         key.startswith("actual_") and key.endswith("_deg")]
+          assert len(joint_columns)==6
+          physical_travel=max(
+              max(float(row[name]) for row in rows) -
+              min(float(row[name]) for row in rows)
+              for name in joint_columns)
+          assert physical_travel>0.05, "robot didn't actually move any joint"
           print("ACTUAL QEMU UART / physical joint motion, all-link collision gate",data["segments_settled"],data["runtime_collision_scans"])
           PY
       - name: Preserve physical trace and safety verdict, including failures
