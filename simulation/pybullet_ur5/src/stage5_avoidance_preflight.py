@@ -186,67 +186,98 @@ def preflight_joint_avoidance(
     if total_points == 0:
         raise RejectedRoute("goal already reached; refusing empty motion request")
     raw_apf_waypoints = total_points
-    if shortcut_cartesian:
-        # Geometry shortcut is not itself safe-to-actuate. It uses C
-        # segment/AABB checks, retains each task-leg endpoint, then the
-        # exact production C IK + full-link validator below runs again.
-        from stage5_cartesian_shortcut import (
-            shortcut_c_apf_legs, InvalidShortcut,
-        )
-        try:
-            compact = shortcut_c_apf_legs(
-                c, start, tuple(apf_points[:total_points]), leg_end_counts,
-                boxes, apf_config.clearance_mm)
-        except InvalidShortcut as exc:
-            raise RejectedRoute(f"C APF visibility shortcut rejected: {exc}") from exc
-        for index, value in enumerate(compact):
-            apf_points[index] = value
-        total_points = len(compact)
-    apf_n = ctypes.c_size_t(total_points)
-
-    segments = (JointRouteSegment * waypoint_capacity)()
-    joint_n = ctypes.c_size_t(0)
+    # Clone the C APF output before evaluating simplification candidates:
+    # ctypes array aliases must not make a rejected trial alter raw data.
+    raw_points = tuple(point(tuple(value.mm))
+                       for value in apf_points[:total_points])
     velocity = JointRates((ctypes.c_float * JOINT_COUNT)(*max_velocity_deg_s))
     acceleration = JointAccelerations(
         (ctypes.c_float * JOINT_COUNT)(*max_acceleration_deg_s2))
-    ik_status = c.stage5_apf_points_to_joint_route(
-        ctypes.byref(start_raw), apf_points, apf_n.value,
-        ctypes.byref(velocity), ctypes.byref(acceleration),
-        max_fk_position_error_mm, max_fk_rotation_element_error,
-        segments, waypoint_capacity, ctypes.byref(joint_n))
-    if ik_status or joint_n.value != apf_n.value:
-        raise RejectedRoute(
-            f"production C IK/FK/rate route rejected: status={ik_status}, "
-            f"converted={joint_n.value}/{apf_n.value}")
 
-    path = [tuple(initial_rad)]
-    durations = []
-    for segment in segments[:joint_n.value]:
-        path.append(tuple(math.radians(raw/100)
-                          for raw in segment.target.value))
-        durations.append(segment.segment_duration_s)
-    try:
-        gate = validate_joint_path(
-            physics, robot_id, obstacle_ids, joint_indices, path,
-            maximum_joint_step_rad=max_joint_step_rad,
-            clearance_m=minimum_full_link_clearance_m,
-            maximum_samples=max_collision_samples,
-            physics_client_id=physics_client_id,
+    def validate_candidate(candidate):
+        """No candidate is executable until BOTH real safety gates pass."""
+        candidate_array = (Point * len(candidate))(*candidate)
+        segments = (JointRouteSegment * len(candidate))()
+        joint_n = ctypes.c_size_t(0)
+        ik_status = c.stage5_apf_points_to_joint_route(
+            ctypes.byref(start_raw), candidate_array, len(candidate),
+            ctypes.byref(velocity), ctypes.byref(acceleration),
+            max_fk_position_error_mm, max_fk_rotation_element_error,
+            segments, len(candidate), ctypes.byref(joint_n))
+        if ik_status or joint_n.value != len(candidate):
+            raise RejectedRoute(
+                f"production C IK/FK/rate route rejected: status={ik_status}, "
+                f"converted={joint_n.value}/{len(candidate)}")
+        path = [tuple(initial_rad)]
+        durations = []
+        for segment in segments[:joint_n.value]:
+            path.append(tuple(math.radians(raw/100)
+                              for raw in segment.target.value))
+            durations.append(segment.segment_duration_s)
+        try:
+            gate = validate_joint_path(
+                physics, robot_id, obstacle_ids, joint_indices, path,
+                maximum_joint_step_rad=max_joint_step_rad,
+                clearance_m=minimum_full_link_clearance_m,
+                maximum_samples=max_collision_samples,
+                physics_client_id=physics_client_id)
+        except InvalidPath as error:
+            raise RejectedRoute(
+                f"full-arm geometry rejected: {error}") from error
+        if not gate["passed"]:
+            raise RejectedRoute(
+                "full-arm collision gate rejected: " + str(gate["collision"]))
+        return path, durations, gate
+
+    shortcut_attempts = []
+    chosen_span = None
+    if shortcut_cartesian:
+        # Coarse-to-fine search: never reduce the link-clearance threshold
+        # or accept a partial path. Last rung is the untouched C APF route.
+        from stage5_cartesian_shortcut import (
+            shortcut_c_apf_legs, InvalidShortcut,
+            VERIFIED_SHORTCUT_SPANS,
         )
-    except InvalidPath as error:
-        raise RejectedRoute(f"full-arm geometry rejected: {error}") from error
-    if not gate["passed"]:
-        raise RejectedRoute(
-            "full-arm collision gate rejected: " + str(gate["collision"]))
+        for span in VERIFIED_SHORTCUT_SPANS:
+            try:
+                selected = shortcut_c_apf_legs(
+                    c, start, raw_points, leg_end_counts,
+                    boxes, apf_config.clearance_mm,
+                    max_original_span=span)
+                path, durations, gate = validate_candidate(selected)
+            except (InvalidShortcut, RejectedRoute) as error:
+                shortcut_attempts.append({
+                    "max_original_span": span,
+                    "passed": False,
+                    "reason": str(error),
+                })
+                continue
+            chosen_span = span
+            chosen_points = selected
+            shortcut_attempts.append({
+                "max_original_span": span,
+                "passed": True,
+                "cartesian_waypoints": len(chosen_points),
+            })
+            break
+        else:
+            raise RejectedRoute(
+                "all C APF shortcut spans failed full-arm safety: "
+                + str(shortcut_attempts))
+    else:
+        chosen_points = raw_points
+        path, durations, gate = validate_candidate(chosen_points)
 
     return {
         "passed": True,
         "scope": "simulation_preflight_only_no_uart_no_actuation",
-        "cartesian_waypoints": apf_n.value,
+        "cartesian_waypoints": len(chosen_points),
         "raw_apf_waypoints": raw_apf_waypoints,
         "cartesian_shortcut_used": bool(shortcut_cartesian),
+        "shortcut_accepted_max_original_span": chosen_span,
+        "shortcut_attempts": shortcut_attempts,
         "via_points_mm": intermediate,
-        "cartesian_route_mm": [list(apf_points[i].mm) for i in range(apf_n.value)],
+        "cartesian_route_mm": [list(value.mm) for value in chosen_points],
         "joint_waypoints_rad": path,
         "segment_duration_s": durations,
         "sampled_full_arm_states": gate["sampled_states"],
