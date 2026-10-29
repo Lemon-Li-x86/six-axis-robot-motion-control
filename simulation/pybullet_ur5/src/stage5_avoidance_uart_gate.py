@@ -157,8 +157,9 @@ def make_avoidance_preflight(library: Path, route_case: str):
             apf_config=apf,
             max_velocity_deg_s=motion["max_velocity_deg_s"],
             max_acceleration_deg_s2=motion["max_acceleration_deg_s2"],
-            max_fk_position_error_mm=safety["max_fk_position_error_mm"],
-            max_fk_rotation_element_error=safety["max_fk_rotation_element_error"],
+            # None asks the bridge for the single authoritative C IK limits.
+            max_fk_position_error_mm=None,
+            max_fk_rotation_element_error=None,
             waypoint_capacity=scene["waypoint_capacity"],
             max_joint_step_rad=safety["max_joint_step_rad"],
             max_collision_samples=safety["max_collision_samples"],
