@@ -58,11 +58,11 @@ static robot_status_t start_request(
 {
     motor_state_observation_t observation;
     robot_status_t s;
-    TickType_t now=xTaskGetTickCount();
-    if(motor_state_get_feedback(&observation)!=ROBOT_STATUS_OK)
-        return ROBOT_STATUS_ERROR_NOT_READY;
-    if(!motor_state_feedback_is_fresh(&observation,(uint32_t)now,
-          (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms)))
+    /* Read feedback first, then RTOS time inside the synchronized gateway.
+     * Otherwise a ProtocolRX update can race and look 2^32 ticks stale. */
+    if(motor_state_get_fresh_feedback(
+         &observation,(uint32_t)pdMS_TO_TICKS(
+             r->config.feedback_timeout_ms))!=ROBOT_STATUS_OK)
         return ROBOT_STATUS_ERROR_NOT_READY;
     *last_joint=observation.feedback.unwrapped_positions;
     if(request->kind==MOTION_REQUEST_JOINT) {
