@@ -38,25 +38,25 @@
     },
     "blocked": {
       "goal_offset_mm": [
-        -150,
-        60,
+        110,
+        44,
         0
       ],
       "obstacle": {
         "center_offset_ee_mm": [
-          -75,
-          25,
+          55,
+          22,
           0
         ],
         "half_extents_m": [
           0.015,
-          0.02,
+          0.015,
           0.02
         ]
       },
       "apf": {
         "attraction_gain": 1,
-        "repulsion_gain": 50000,
+        "repulsion_gain": 10000,
         "influence_distance_mm": 150,
         "clearance_mm": 12,
         "maximum_step_mm": 10,
@@ -67,9 +67,9 @@
       "expect_direct_blocked": true,
       "via_offsets_ee_mm": [
         [
-          -40,
-          90,
-          20
+          35,
+          100,
+          35
         ]
       ]
     }
