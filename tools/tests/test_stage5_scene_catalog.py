@@ -27,6 +27,16 @@ class DeclarativeSceneCatalogTests(unittest.TestCase):
         self.assertEqual(len(blocked["goal_offset_mm"]), 3)
         self.assertEqual(len(blocked["obstacle"]["half_extents_m"]), 3)
 
+    def test_uncompressed_test_override_is_explicit_and_type_safe(self):
+        # The override is a harness setting; no scene JSON gets mutated.
+        before=gate.SCENE_CATALOG.read_bytes()
+        with self.assertRaisesRegex(ValueError, "shortcut_override"):
+            gate.make_avoidance_preflight(Path("unused.so"), "blocked",
+                                         shortcut_override="false")
+        self.assertTrue(callable(gate.make_avoidance_preflight(
+            Path("unused.so"), "blocked", shortcut_override=False)))
+        self.assertEqual(gate.SCENE_CATALOG.read_bytes(), before)
+
     def test_unknown_fixture_is_not_silently_replaced(self):
         with self.assertRaisesRegex(ValueError, "unknown scene"):
             gate.load_scene("missing")
