@@ -1,4 +1,3 @@
-
 {
   "version": 2,
   "cmakeMinimumRequired": {
@@ -15,6 +14,18 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake"
       }
+    },
+    {
+      "name": "stage5-live-uart",
+      "inherits": "arm-qemu",
+      "binaryDir": "${sourceDir}/build/stage5-live-uart",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ROBOT_ENABLE_STAGE4_TASKS": "ON",
+        "ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT": "ON",
+        "ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION": "ON",
+        "ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -25,6 +36,13 @@
     {
       "name": "firmware",
       "configurePreset": "arm-qemu",
+      "targets": [
+        "freertos_demo"
+      ]
+    },
+    {
+      "name": "stage5-live-uart",
+      "configurePreset": "stage5-live-uart",
       "targets": [
         "freertos_demo"
       ]
