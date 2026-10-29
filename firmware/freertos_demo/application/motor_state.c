@@ -4,6 +4,7 @@
 
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 #include "motor_state.h"
 
