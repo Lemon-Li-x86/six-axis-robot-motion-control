@@ -60,8 +60,19 @@ def preflight_joint_avoidance(
     max_joint_step_rad: float,
     max_collision_samples: int,
     physics_client_id: int,
+    minimum_full_link_clearance_m: float | None = None,
+    via_points_mm: Sequence[Sequence[float]] = (),
 ) -> dict:
     """Compute C path and C joint targets, and reject unsafe joint routes."""
+    # Cartesian APF point clearance and physical link clearance are
+    # different constraints. An EE point does not include wrist/link volume.
+    # Preserve the original API default for callers that did not specify
+    # a separate full-link requirement.
+    if minimum_full_link_clearance_m is None:
+        minimum_full_link_clearance_m = apf_config.clearance_mm / 1000.0
+    if (not math.isfinite(minimum_full_link_clearance_m) or
+            minimum_full_link_clearance_m < 0.0):
+        raise RejectedRoute("invalid full-link collision clearance")
     if not library.is_file():
         raise FileNotFoundError(library)
     if (not isinstance(waypoint_capacity, int) or waypoint_capacity <= 0
@@ -111,16 +122,48 @@ def preflight_joint_avoidance(
         boxes.append(AABB(point([1000*x for x in low]),
                           point([1000*x for x in high])))
     obstacle_array = (AABB * len(boxes))(*boxes)
+    # Stage6-compatible multi-leg Cartesian route: the caller supplies
+    # intermediate *task* waypoints. Every leg is still planned solely by
+    # production C APF. This Python application bridge never implements an
+    # independent attraction/repulsion planner or blind point interpolation.
+    intermediate = []
+    for index, waypoint in enumerate(via_points_mm):
+        if (len(waypoint) != 3 or
+                not all(math.isfinite(float(x)) for x in waypoint)):
+            raise RejectedRoute(f"invalid intermediate waypoint {index}")
+        intermediate.append(tuple(float(x) for x in waypoint))
+    targets = intermediate + [tuple(goal.mm)]
     apf_points = (Point * waypoint_capacity)()
-    apf_n = ctypes.c_size_t(0)
-    apf_status = c.robot_apf_plan_path(
-        ctypes.byref(start), ctypes.byref(goal),
-        obstacle_array, len(boxes), ctypes.byref(apf_config),
-        apf_points, waypoint_capacity, ctypes.byref(apf_n))
-    if apf_status:
-        raise RejectedRoute(f"production C APF route rejected: status={apf_status}")
-    if not apf_n.value:
+    total_points = 0
+    leg_start = start
+    for leg, target_mm in enumerate(targets):
+        remaining = waypoint_capacity - total_points
+        if remaining <= 0:
+            raise RejectedRoute("C APF multi-leg route exceeded shared waypoint capacity")
+        leg_points = (Point * remaining)()
+        leg_count = ctypes.c_size_t(0)
+        leg_goal = point(target_mm)
+        apf_status = c.robot_apf_plan_path(
+            ctypes.byref(leg_start), ctypes.byref(leg_goal),
+            obstacle_array, len(boxes), ctypes.byref(apf_config),
+            leg_points, remaining, ctypes.byref(leg_count))
+        if apf_status:
+            raise RejectedRoute(
+                f"production C APF route leg {leg+1}/{len(targets)} "
+                f"rejected: status={apf_status}")
+        if leg_count.value:
+            for i in range(leg_count.value):
+                apf_points[total_points+i] = leg_points[i]
+            total_points += leg_count.value
+            leg_start = leg_points[leg_count.value-1]
+        # Do not silently make a jump between a reached-via tolerance
+        # and the next segment, nor accept a partially reached task target.
+        if math.dist(list(leg_start.mm), list(leg_goal.mm)) > (
+                apf_config.goal_tolerance_mm + 1e-6):
+            raise RejectedRoute(f"C APF leg {leg+1} did not reach goal tolerance")
+    if total_points == 0:
         raise RejectedRoute("goal already reached; refusing empty motion request")
+    apf_n = ctypes.c_size_t(total_points)
 
     segments = (JointRouteSegment * waypoint_capacity)()
     joint_n = ctypes.c_size_t(0)
@@ -147,7 +190,7 @@ def preflight_joint_avoidance(
         gate = validate_joint_path(
             physics, robot_id, obstacle_ids, joint_indices, path,
             maximum_joint_step_rad=max_joint_step_rad,
-            clearance_m=apf_config.clearance_mm/1000,
+            clearance_m=minimum_full_link_clearance_m,
             maximum_samples=max_collision_samples,
             physics_client_id=physics_client_id,
         )
@@ -161,11 +204,14 @@ def preflight_joint_avoidance(
         "passed": True,
         "scope": "simulation_preflight_only_no_uart_no_actuation",
         "cartesian_waypoints": apf_n.value,
+        "via_points_mm": intermediate,
+        "cartesian_route_mm": [list(apf_points[i].mm) for i in range(apf_n.value)],
         "joint_waypoints_rad": path,
         "segment_duration_s": durations,
         "sampled_full_arm_states": gate["sampled_states"],
         "total_minimum_rest_to_rest_duration_s": sum(durations),
-        "static_collision_clearance_m": apf_config.clearance_mm/1000,
+        "static_collision_clearance_m": minimum_full_link_clearance_m,
+        "cartesian_point_clearance_m": apf_config.clearance_mm/1000,
         "not_certified": [
             "continuous swept collision", "self collision",
             "dynamic obstacles", "FreeRTOS command/feedback execution",
