@@ -28,6 +28,12 @@ jobs:
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Scan real C-planned full-arm-safe candidate corridors (diagnostic only)
+        run: |
+          python simulation/pybullet_ur5/tools/stage5_scene_fixture_scan.py \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --limit 126 \
+            --output build/stage5-blocked-physical/fixture_scan.json
       - name: Require a real blocked path and live whole-arm collision-safe movement
         run: |
           python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
