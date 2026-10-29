@@ -73,6 +73,12 @@ static void task_control(void *arg)
             }
             if(!active) break;
 
+            /* Re-read after consuming the latest reference: a reference
+             * published by Trajectory since the period-start tick must
+             * never wrap into an apparent UINT32_MAX-tick-old sample.
+             * Keep the earlier tick for dt measurement, but use the
+             * post-snapshot tick for freshness checks. */
+            now=xTaskGetTickCount();
             if((now-reference.created_tick)>
                  pdMS_TO_TICKS(r->config.reference_timeout_ms)) {
                 motion_record_fault(ROBOT_STATUS_ERROR_NOT_READY,1U);
@@ -80,10 +86,10 @@ static void task_control(void *arg)
                 joint_controller_reset(&controller);
                 break;
             }
-            status=motor_state_get_feedback(&observation);
-            if(status!=ROBOT_STATUS_OK ||
-               !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
-                  (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
+            status=motor_state_get_fresh_feedback(
+                &observation,(uint32_t)pdMS_TO_TICKS(
+                    r->config.feedback_timeout_ms));
+            if(status!=ROBOT_STATUS_OK) {
                 taskENTER_CRITICAL();
                 r->diagnostics.feedback_stale_count++;
                 taskEXIT_CRITICAL();
