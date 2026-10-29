@@ -80,10 +80,10 @@ static void task_control(void *arg)
                 joint_controller_reset(&controller);
                 break;
             }
-            status=motor_state_get_feedback(&observation);
-            if(status!=ROBOT_STATUS_OK ||
-               !motor_state_feedback_is_fresh(&observation,(uint32_t)now,
-                  (uint32_t)pdMS_TO_TICKS(r->config.feedback_timeout_ms))) {
+            status=motor_state_get_fresh_feedback(
+                &observation,(uint32_t)pdMS_TO_TICKS(
+                    r->config.feedback_timeout_ms));
+            if(status!=ROBOT_STATUS_OK) {
                 taskENTER_CRITICAL();
                 r->diagnostics.feedback_stale_count++;
                 taskEXIT_CRITICAL();
