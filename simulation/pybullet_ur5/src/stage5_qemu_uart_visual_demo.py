@@ -980,6 +980,9 @@ def main() -> int:
                              "preflight before virtual UART motion")
     parser.add_argument("--stage5-route-case",
                         choices=("clear", "blocked"), default="clear")
+    parser.add_argument("--stage5-raw-route", action="store_true",
+                        help="Test harness: disable optional APF waypoint compression "
+                             "without editing the versioned obstacle scenario")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-visual-demo")
     parser.add_argument("--headless", action="store_true",
@@ -997,6 +1000,8 @@ def main() -> int:
         parser.error("--headless-step-delay-ms must be between 0 and 50")
     if not args.headless and args.headless_step_delay_ms:
         parser.error("--headless-step-delay-ms requires --headless")
+    if args.stage5_raw_route and args.stage5_c_apf_library is None:
+        parser.error("--stage5-raw-route requires --stage5-c-apf-library")
     options = DemoOptions(
         scenario=args.scenario,
         headless=args.headless,
@@ -1009,7 +1014,8 @@ def main() -> int:
     if args.stage5_c_apf_library is not None:
         from stage5_avoidance_uart_gate import make_avoidance_preflight
         prepare_motion = make_avoidance_preflight(
-            args.stage5_c_apf_library, args.stage5_route_case)
+            args.stage5_c_apf_library, args.stage5_route_case,
+            shortcut_override=False if args.stage5_raw_route else None)
     report = run(args.elf, args.output_dir, args.qemu, options,
                  prepare_motion=prepare_motion)
     print(json.dumps(report, indent=2, ensure_ascii=False))

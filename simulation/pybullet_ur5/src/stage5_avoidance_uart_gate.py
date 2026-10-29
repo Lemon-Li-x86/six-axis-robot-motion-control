@@ -98,7 +98,16 @@ def _direct_is_blocked(library: Path, start_mm: tuple[float, ...],
     return bool(hit.value)
 
 
-def make_avoidance_preflight(library: Path, route_case: str):
+def make_avoidance_preflight(
+    library: Path, route_case: str, *, shortcut_override: bool | None = None
+):
+    """Build immutable scene preflight; allow test harness to disable optimization.
+
+    No scene JSON is rewritten. Overrides are explicit and only control
+    preprocessing; C APF, C IK and collision gates stay identical.
+    """
+    if shortcut_override is not None and type(shortcut_override) is not bool:
+        raise ValueError("shortcut_override must be None or bool")
     scene, safety = load_scene(route_case)
     # The robot's velocity and acceleration limits remain solely in the
     # existing firmware config. Scene JSON contains no duplicate joint data.
@@ -167,7 +176,9 @@ def make_avoidance_preflight(library: Path, route_case: str):
             max_collision_samples=safety["max_collision_samples"],
             physics_client_id=client,
             via_points_mm=via_points,
-            shortcut_cartesian=scene.get("shortcut_cartesian", False),
+            shortcut_cartesian=(scene.get("shortcut_cartesian", False)
+                                if shortcut_override is None
+                                else shortcut_override),
             minimum_full_link_clearance_m=(
                 scene["minimum_full_link_clearance_mm"] / 1000.0))
         result.update(
