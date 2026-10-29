@@ -18,6 +18,7 @@ SRC = ROOT / "simulation/pybullet_ur5/src"
 sys.path.insert(0, str(SRC))
 
 from stage4_dynamic_closed_loop import START_RAW, DEFAULT_JSON, URDF, joint_indices
+import qemu_uart_receiver as wire
 from stage5_static_obstacle_probe import Config, AABB, point
 from stage5_avoidance_preflight import preflight_joint_avoidance, RejectedRoute
 from stage5_avoidance_uart_gate import _direct_is_blocked, load_scene
@@ -73,7 +74,7 @@ def scan(library: Path, output_file: Path, *, limit: int = 126):
         robot = p.loadURDF(str(URDF), useFixedBase=True, physicsClientId=c)
         joints = joint_indices(p, robot)
         for joint, raw in zip(joints, START_RAW):
-            p.resetJointState(robot, joint, math.radians(raw / 100.0),
+            p.resetJointState(robot, joint, math.radians(raw / wire.JOINT_ANGLE_SCALE),
                               physicsClientId=c)
         ee = next(i for i in range(p.getNumJoints(robot, physicsClientId=c))
                   if p.getJointInfo(robot, i, physicsClientId=c)[12]
