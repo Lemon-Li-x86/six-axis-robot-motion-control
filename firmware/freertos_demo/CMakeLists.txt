@@ -641,6 +641,7 @@ endif()
 target_sources(freertos_demo PRIVATE
     algorithms/avoidance/potential_field.c
     algorithms/avoidance/potential_field_path.c
+    algorithms/avoidance/stage5_apf_joint_path.c
 )
 target_include_directories(freertos_demo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/avoidance
