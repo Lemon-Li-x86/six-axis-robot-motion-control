@@ -30,10 +30,26 @@ add_test(NAME stage5_potential_field_host COMMAND stage5_potential_field_host)
 add_library(stage5_apf_bridge SHARED
     ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field.c
     ${FIRMWARE_ROOT}/algorithms/avoidance/potential_field_path.c
+    ${FIRMWARE_ROOT}/algorithms/avoidance/stage5_apf_joint_path.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_common.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_forward.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/ur5_analytic_ik.c
+    ${FIRMWARE_ROOT}/algorithms/kinematics/kinematics_inverse.c
+    ${FIRMWARE_ROOT}/algorithms/motion/ik_solution_selector.c
+    ${FIRMWARE_ROOT}/algorithms/motion/motion_limits.c
+    ${FIRMWARE_ROOT}/algorithms/trajectory/trapezoidal_profile.c
+    ${FIRMWARE_ROOT}/algorithms/math/matrix4.c
+    ${FIRMWARE_ROOT}/common/angle_utils.c
+    ${FIRMWARE_ROOT}/model/ur5_model.c
 )
 target_include_directories(stage5_apf_bridge PRIVATE
     ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/model
     ${FIRMWARE_ROOT}/algorithms/avoidance
+    ${FIRMWARE_ROOT}/algorithms/kinematics
+    ${FIRMWARE_ROOT}/algorithms/motion
+    ${FIRMWARE_ROOT}/algorithms/trajectory
+    ${FIRMWARE_ROOT}/algorithms/math
 )
 set_target_properties(stage5_apf_bridge PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
