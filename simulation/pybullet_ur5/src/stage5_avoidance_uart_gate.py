@@ -37,6 +37,11 @@ def load_scene(route_case: str) -> tuple[dict, dict]:
     except KeyError as error:
         raise ValueError(f"unknown scene: {route_case}") from error
     _vec3(scene["goal_offset_mm"], "goal_offset_mm")
+    vias = scene.get("via_offsets_ee_mm", [])
+    if not isinstance(vias, list):
+        raise ValueError("via_offsets_ee_mm must be a list")
+    for index, via in enumerate(vias):
+        _vec3(via, f"via_offsets_ee_mm[{index}]")
     box = scene["obstacle"]
     has_world = "world_center_m" in box
     has_offset = "center_offset_ee_mm" in box
@@ -140,6 +145,13 @@ def make_avoidance_preflight(library: Path, route_case: str):
                 f"direct obstacle fixture invalid, blocked={direct_blocked}, "
                 f"expected={scene['expect_direct_blocked']}")
 
+        # Via points describe application mission geometry; they do not
+        # change C APF's force law or the embedded UR5 kinematics layer.
+        via_points = [
+            tuple(a + b for a, b in zip(
+                start_mm, _vec3(offset, "via_offsets_ee_mm")))
+            for offset in scene.get("via_offsets_ee_mm", [])
+        ]
         result = preflight_joint_avoidance(
             library, physics, robot, [obstacle], joints, end_link, goal_mm,
             apf_config=apf,
@@ -151,6 +163,7 @@ def make_avoidance_preflight(library: Path, route_case: str):
             max_joint_step_rad=safety["max_joint_step_rad"],
             max_collision_samples=safety["max_collision_samples"],
             physics_client_id=client,
+            via_points_mm=via_points,
             minimum_full_link_clearance_m=(
                 scene["minimum_full_link_clearance_mm"] / 1000.0))
         result.update(
