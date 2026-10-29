@@ -62,6 +62,7 @@ def preflight_joint_avoidance(
     physics_client_id: int,
     minimum_full_link_clearance_m: float | None = None,
     via_points_mm: Sequence[Sequence[float]] = (),
+    shortcut_cartesian: bool = False,
 ) -> dict:
     """Compute C path and C joint targets, and reject unsafe joint routes."""
     # Cartesian APF point clearance and physical link clearance are
@@ -154,6 +155,7 @@ def preflight_joint_avoidance(
     targets = intermediate + [tuple(goal.mm)]
     apf_points = (Point * waypoint_capacity)()
     total_points = 0
+    leg_end_counts = []
     leg_start = start
     for leg, target_mm in enumerate(targets):
         remaining = waypoint_capacity - total_points
@@ -174,6 +176,7 @@ def preflight_joint_avoidance(
             for i in range(leg_count.value):
                 apf_points[total_points+i] = leg_points[i]
             total_points += leg_count.value
+            leg_end_counts.append(total_points)
             leg_start = leg_points[leg_count.value-1]
         # Do not silently make a jump between a reached-via tolerance
         # and the next segment, nor accept a partially reached task target.
@@ -182,6 +185,23 @@ def preflight_joint_avoidance(
             raise RejectedRoute(f"C APF leg {leg+1} did not reach goal tolerance")
     if total_points == 0:
         raise RejectedRoute("goal already reached; refusing empty motion request")
+    raw_apf_waypoints = total_points
+    if shortcut_cartesian:
+        # Geometry shortcut is not itself safe-to-actuate. It uses C
+        # segment/AABB checks, retains each task-leg endpoint, then the
+        # exact production C IK + full-link validator below runs again.
+        from stage5_cartesian_shortcut import (
+            shortcut_c_apf_legs, InvalidShortcut,
+        )
+        try:
+            compact = shortcut_c_apf_legs(
+                c, start, tuple(apf_points[:total_points]), leg_end_counts,
+                boxes, apf_config.clearance_mm)
+        except InvalidShortcut as exc:
+            raise RejectedRoute(f"C APF visibility shortcut rejected: {exc}") from exc
+        for index, value in enumerate(compact):
+            apf_points[index] = value
+        total_points = len(compact)
     apf_n = ctypes.c_size_t(total_points)
 
     segments = (JointRouteSegment * waypoint_capacity)()
@@ -223,6 +243,8 @@ def preflight_joint_avoidance(
         "passed": True,
         "scope": "simulation_preflight_only_no_uart_no_actuation",
         "cartesian_waypoints": apf_n.value,
+        "raw_apf_waypoints": raw_apf_waypoints,
+        "cartesian_shortcut_used": bool(shortcut_cartesian),
         "via_points_mm": intermediate,
         "cartesian_route_mm": [list(apf_points[i].mm) for i in range(apf_n.value)],
         "joint_waypoints_rad": path,
