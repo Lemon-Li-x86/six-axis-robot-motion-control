@@ -55,15 +55,16 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             basePosition=centre, physicsClientId=self.client)
 
     def preflight(self, obstacle, *, minimum_full_link_clearance_m=None,
-                  via_points_mm=()):
+                  via_points_mm=(), position_gate_mm=0.5,
+                  rotation_gate=0.003):
         return preflight_joint_avoidance(
             LIBRARY, p, self.robot, [obstacle], self.joints, self.ee,
             self.goal,
             apf_config=Config(1.0, 0.0, 150.0, 5.0, 1.5, 0.1),
             max_velocity_deg_s=[15.0]*6,
             max_acceleration_deg_s2=[30.0]*6,
-            max_fk_position_error_mm=0.5,
-            max_fk_rotation_element_error=0.003,
+            max_fk_position_error_mm=position_gate_mm,
+            max_fk_rotation_element_error=rotation_gate,
             waypoint_capacity=16,
             max_joint_step_rad=0.02,
             max_collision_samples=1000,
@@ -98,6 +99,16 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertAlmostEqual(result["cartesian_point_clearance_m"], 0.005)
         self.assertAlmostEqual(result["static_collision_clearance_m"], 0.020)
+        self.assert_unmodified()
+
+    def test_python_ik_limits_default_to_authoritative_c_not_json(self):
+        distant=self.box([5,5,5],[0.05]*3)
+        route=self.preflight(distant,position_gate_mm=None,
+                             rotation_gate=None)
+        self.assertTrue(route["passed"])
+        with self.assertRaisesRegex(RejectedRoute, "production C limits"):
+            self.preflight(distant,position_gate_mm=1000.0,
+                           rotation_gate=None)
         self.assert_unmodified()
 
     def test_invalid_full_link_clearance_fails_closed(self):
