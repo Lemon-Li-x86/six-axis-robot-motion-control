@@ -54,7 +54,8 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             baseMass=0.0, baseCollisionShapeIndex=collision,
             basePosition=centre, physicsClientId=self.client)
 
-    def preflight(self, obstacle, *, minimum_full_link_clearance_m=None):
+    def preflight(self, obstacle, *, minimum_full_link_clearance_m=None,
+                  via_points_mm=()):
         return preflight_joint_avoidance(
             LIBRARY, p, self.robot, [obstacle], self.joints, self.ee,
             self.goal,
@@ -67,7 +68,8 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
             max_joint_step_rad=0.02,
             max_collision_samples=1000,
             physics_client_id=self.client,
-            minimum_full_link_clearance_m=minimum_full_link_clearance_m)
+            minimum_full_link_clearance_m=minimum_full_link_clearance_m,
+            via_points_mm=via_points_mm)
 
     def assert_unmodified(self):
         observed = tuple(p.getJointState(
@@ -106,6 +108,25 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
                     self.preflight(
                         distant, minimum_full_link_clearance_m=invalid)
                 self.assert_unmodified()
+
+    def test_multi_leg_mission_waypoint_uses_same_c_apf_and_ik(self):
+        distant = self.box([5,5,5], [0.05]*3)
+        via=(self.goal[0]-3.0, self.goal[1]+5.0,
+             self.goal[2])
+        route=self.preflight(distant, via_points_mm=[via])
+        self.assertTrue(route["passed"])
+        self.assertEqual(route["via_points_mm"], [via])
+        self.assertGreater(route["cartesian_waypoints"], 4)
+        self.assertAlmostEqual(route["cartesian_route_mm"][-1][0],
+                               self.goal[0], delta=0.1)
+        self.assert_unmodified()
+
+    def test_unreachable_mission_via_rejects_whole_route(self):
+        distant = self.box([5,5,5], [0.05]*3)
+        with self.assertRaisesRegex(RejectedRoute, "C APF route leg"):
+            self.preflight(distant,
+                           via_points_mm=[(5000.0,0.0,0.0)])
+        self.assert_unmodified()
 
     def test_blocked_middle_link_rejected_without_motion(self):
         low,high = p.getAABB(
