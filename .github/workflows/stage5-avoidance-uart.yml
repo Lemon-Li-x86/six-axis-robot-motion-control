@@ -26,7 +26,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
-          python -m pip install pybullet
+          python -m pip install numpy pybullet
       - name: Build real ARM FreeRTOS UART firmware and real C APF/IK host bridge
         run: |
           cmake --preset stage5-live-uart
