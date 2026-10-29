@@ -21,6 +21,11 @@ class InvalidShortcut(ValueError):
     pass
 
 
+# Bounded application-level optimization policy, not a UR5 mechanical
+# limit. The final rung preserves ALL production C APF points.
+VERIFIED_SHORTCUT_SPANS = (None, 8, 4, 2, 1)
+
+
 def shortcut_c_apf_legs(
     c,
     start: Point,
@@ -28,12 +33,17 @@ def shortcut_c_apf_legs(
     leg_end_counts: Sequence[int],
     obstacles: Sequence[AABB],
     clearance_mm: float,
+    *,
+    max_original_span: int | None = None,
 ) -> list[Point]:
     """Greedy, leg-preserving visibility shortcuts using authoritative C geometry.
 
     leg_end_counts are cumulative exclusive point counts, e.g. [12, 26].
     Returns newly selected C Point objects; never writes to caller buffers.
     """
+    if (max_original_span is not None and
+            (type(max_original_span) is not int or max_original_span < 1)):
+        raise InvalidShortcut("max_original_span must be positive")
     if (not points or not leg_end_counts or not obstacles or
             not math.isfinite(clearance_mm) or clearance_mm < 0):
         raise InvalidShortcut("invalid C APF shortcut input")
@@ -56,7 +66,9 @@ def shortcut_c_apf_legs(
     for end in leg_end_counts:
         while cursor < end:
             chosen=None
-            for idx in range(end-1, cursor-1, -1):
+            furthest = end-1 if max_original_span is None else min(
+                end-1, cursor + max_original_span - 1)
+            for idx in range(furthest, cursor-1, -1):
                 blocked=ctypes.c_uint()
                 status=c.robot_apf_segment_blocked(
                     ctypes.byref(previous), ctypes.byref(points[idx]),
