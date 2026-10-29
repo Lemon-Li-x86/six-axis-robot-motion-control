@@ -54,8 +54,8 @@ def preflight_joint_avoidance(
     apf_config: Config,
     max_velocity_deg_s: Sequence[float],
     max_acceleration_deg_s2: Sequence[float],
-    max_fk_position_error_mm: float,
-    max_fk_rotation_element_error: float,
+    max_fk_position_error_mm: float | None,
+    max_fk_rotation_element_error: float | None,
     waypoint_capacity: int,
     max_joint_step_rad: float,
     max_collision_samples: int,
@@ -85,6 +85,25 @@ def preflight_joint_avoidance(
         raise RejectedRoute("invalid route or robot configuration")
 
     c = ctypes.CDLL(str(library.resolve()))
+    # There is exactly one authority for IK FK residual ceilings:
+    # kinematics.h in the production C build. Scene JSON never redefines it.
+    c.stage5_apf_joint_pose_limits.restype = ctypes.c_int
+    c.stage5_apf_joint_pose_limits.argtypes = (
+        ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float))
+    c_position, c_rotation = ctypes.c_float(), ctypes.c_float()
+    status = c.stage5_apf_joint_pose_limits(
+        ctypes.byref(c_position), ctypes.byref(c_rotation))
+    if status:
+        raise RejectedRoute(f"C IK acceptance limits unavailable: {status}")
+    if max_fk_position_error_mm is None:
+        max_fk_position_error_mm = c_position.value
+    if max_fk_rotation_element_error is None:
+        max_fk_rotation_element_error = c_rotation.value
+    if (not math.isfinite(max_fk_position_error_mm) or
+            not math.isfinite(max_fk_rotation_element_error) or
+            not (0 < max_fk_position_error_mm <= c_position.value) or
+            not (0 < max_fk_rotation_element_error <= c_rotation.value)):
+        raise RejectedRoute("IK residual gates cannot exceed production C limits")
     c.robot_apf_plan_path.restype = ctypes.c_int
     c.robot_apf_plan_path.argtypes = [
         ctypes.POINTER(Point), ctypes.POINTER(Point),
