@@ -111,6 +111,21 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertEqual(assess_clock_alignment(None, 100, 0.020),
                          (None, False))
 
+    def test_short_apf_route_total_time_uses_monitor_tick_not_only_planning(self):
+        # Real CI #40808180745: 3/3 joints settled, 192 physics frames,
+        # 65 trajectory samples during motion and 20 Monitor periods spanning
+        # motion + settling + UART diagnostics. No threshold is widened.
+        active_ratio, active_aligned = assess_clock_alignment(
+            65, 192, 0.020)
+        self.assertFalse(active_aligned)
+        self.assertAlmostEqual(active_ratio, 1.30/1.92)
+        total_ratio, total_aligned = assess_clock_alignment(
+            20, 192, 0.100)
+        self.assertTrue(total_aligned)
+        self.assertAlmostEqual(total_ratio, 2.00/1.92)
+        # A broken Monitor timebase still fails.
+        self.assertFalse(assess_clock_alignment(20, 80, 0.100)[1])
+
     def test_gui_native_substeps_preserve_physics_interval_and_reduce_api_calls(self) -> None:
         """Native GUI gets one API call per UART frame, with 1ms internal steps."""
         from unittest.mock import Mock
