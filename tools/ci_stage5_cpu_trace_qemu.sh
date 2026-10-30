@@ -29,6 +29,21 @@ while $i<g_stage5_cpu_trace_report.observed_tasks
     printf "task_%u_cpu_bp=%u\n", $i, g_stage5_cpu_trace_report.tasks[$i].cpu_share_basis_points
     set $i=$i+1
 end
+printf "timing_frequency_hz=%u\\n", g_stage4_timing_frequency_hz
+set $j=0
+while $j<3
+    printf "timing_%u_interval_sample_count=%u\\n", $j, g_stage4_timing_summary[$j].interval_sample_count
+    printf "timing_%u_execution_sample_count=%u\\n", $j, g_stage4_timing_summary[$j].execution_sample_count
+    printf "timing_%u_expected_period_counter_ticks=%u\\n", $j, g_stage4_timing_summary[$j].expected_period_counter_ticks
+    printf "timing_%u_maximum_abs_period_jitter_ticks=%u\\n", $j, g_stage4_timing_summary[$j].maximum_abs_period_jitter_ticks
+    printf "timing_%u_p99_abs_period_jitter_ticks=%u\\n", $j, g_stage4_timing_summary[$j].p99_abs_period_jitter_ticks
+    printf "timing_%u_maximum_processing_ticks=%u\\n", $j, g_stage4_timing_summary[$j].maximum_processing_ticks
+    printf "timing_%u_p99_processing_ticks=%u\\n", $j, g_stage4_timing_summary[$j].p99_processing_ticks
+    set $j=$j+1
+end
+printf "stack_control_free_words=%u\\n", g_motion_runtime.diagnostics.control_stack_free_words
+printf "stack_trajectory_free_words=%u\\n", g_motion_runtime.diagnostics.trajectory_stack_free_words
+printf "stack_monitor_free_words=%u\\n", g_motion_runtime.diagnostics.monitor_stack_free_words
 disconnect
 quit
 GDB
@@ -41,3 +56,5 @@ timeout 120s gdb-multiarch -nx -batch -x "$gdb_file" "$elf" > "${prefix}.log" 2>
 cat "${prefix}.log"
 grep -Eq '^Breakpoint [0-9]+, stage4_rtos_selftest_done' "${prefix}.log"
 python3 tools/analyze_stage5_cpu_trace.py "${prefix}.log" "${prefix}.json"
+
+python3 tools/analyze_stage5_task_timing.py "${prefix}.log" "${prefix}-timing.json"
