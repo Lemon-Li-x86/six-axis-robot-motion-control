@@ -7,6 +7,7 @@ on:
       - fix/stage5-native-pybullet-interaction-20261027
       - fix/stage5-qmp-physics-clock-gate-20261028
       - fix/stage5-native-gui-feedback-overflow-20261028
+      - feat/stage5-gui-preserved-integration-20261030
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
@@ -19,6 +20,8 @@ on:
       - 'tools/run_stage5_live_windows.ps1'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
