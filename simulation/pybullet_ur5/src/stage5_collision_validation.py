@@ -87,9 +87,14 @@ def validate_joint_path(
         for j in joints
     )
     sampled = 0
+    minimum_measured_clearance_m = float("inf")
+    nearest_link_index = None
+    # Same real Bullet geometry; a wider *measurement* search radius does
+    # not relax the 10 mm (or scene-specific) rejection threshold.
+    measurement_radius_m = max(clearance_m, 0.1)
     try:
         def inspect(pose):
-            nonlocal sampled
+            nonlocal sampled, minimum_measured_clearance_m, nearest_link_index
             for joint, angle in zip(joints, pose):
                 physics.resetJointState(
                     robot_id, joint, targetValue=angle, targetVelocity=0.0,
@@ -101,20 +106,28 @@ def validate_joint_path(
             for link in range(-1, count):
                 for obstacle in obstacles:
                     contacts = physics.getClosestPoints(
-                        robot_id, obstacle, clearance_m,
+                        robot_id, obstacle, measurement_radius_m,
                         linkIndexA=link, linkIndexB=-1,
                         physicsClientId=physics_client_id)
                     if contacts:
-                        return {
-                            "passed": False,
-                            "sampled_states": sampled,
-                            "collision": {
-                                "robot_link_index": link,
-                                "obstacle_id": obstacle,
-                                "signed_distance_m": float(min(c[8] for c in contacts)),
-                            },
-                            "scope": "discrete_full_link_static_obstacle_clearance",
-                        }
+                        distance = float(min(c[8] for c in contacts))
+                        if distance < minimum_measured_clearance_m:
+                            minimum_measured_clearance_m = distance
+                            nearest_link_index = link
+                        if distance < clearance_m:
+                            return {
+                                "passed": False,
+                                "sampled_states": sampled,
+                                "collision": {
+                                    "robot_link_index": link,
+                                    "obstacle_id": obstacle,
+                                    "signed_distance_m": distance,
+                                },
+                                "minimum_measured_clearance_m":
+                                    minimum_measured_clearance_m,
+                                "nearest_link_index": nearest_link_index,
+                                "scope": "discrete_full_link_static_obstacle_clearance",
+                            }
             return None
 
         collision = inspect(poses[0])
@@ -132,6 +145,9 @@ def validate_joint_path(
             "passed": True,
             "sampled_states": sampled,
             "collision": None,
+            "minimum_measured_clearance_m": minimum_measured_clearance_m,
+            "nearest_link_index": nearest_link_index,
+            "clearance_search_radius_m": measurement_radius_m,
             "scope": "discrete_full_link_static_obstacle_clearance",
         }
     finally:
