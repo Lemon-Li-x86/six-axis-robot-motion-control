@@ -69,3 +69,24 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Di
 人工验收按：自动运动完成 → 进入 HOLD → 使用原生鼠标拾取慢慢拉开且松开 → 等固件回到合法连续目标 → 按 Q 退出 → 查看各自目录 `result.json`、`worker.log`、`uart_live.jsonl`、`joint_trace.csv`。如关节逼近 URDF 极限，缓慢松开，不以故障停机假冒成功。
 
 这是**Windows 本机 PyBullet/QEMU 仿真实验**，不是实体工业机器人安全认证。
+
+## 6. GUI 六关节单圈试验行程（2026-10-30，待 Windows 鼠标验收）
+
+观察到 J1 底座鼠标拖拽时偶尔可旋转两整圈。经检查，这与 URDF/C authoritative model 的关节 travel 一致：J1/J2/J4/J5/J6 均允许 [-360°, +360°]（合计 720°）；J3 为 [-180°, +180°]。此前 GUI 的关节 guard 只有超出 URDF 边界才复位，并非专门的人机交互单圈限制。
+
+为使 Windows PyBullet 交互测试直观，新增仅用于 **native GUI mouse picking** 的行程模式，且不更改 URDF、C Model、固件规划、PID、UART canonical 协议、DIRECT 验收：
+- 默认 `-GuiJointTravel single-turn`：逐个关节使用 `URDF joint limits ∩ [-π,π]`，也就是六轴 [-180°, +180°]；这是 GUI **实验交互窗**，不是改变机械模型的物理行程或硬件安全边界；
+- `-GuiJointTravel urdf`：沿用原版 URDF 上的宽行程（J1/J2/J4/J5/J6 各 ±360°，J3 ±180°），用于历史行为对照；
+- PyBullet 原生限位和每帧守卫、HOLD 连续角 servo 解绕使用**同一份本次加载后生效的六轴限制**，避免界面允许角与控制目标限制的重复硬编码；读到无穷、非法或没有可行等效角度时拒绝执行，而非静默假限幅。
+- 运行开始时 `worker.log` 会打印 `[GUI JOINT LIMITS]` 及 6 个实际加载的范围；`run_metadata.json` 标记行程模式；新回归 `test_stage5_gui_joint_travel.py` 覆盖全部六轴和真实 Bullet 对象的越界纠正。
+- **每次 Windows 原生 GUI 人手拖拽与松手回位仍需人工确认**；已有历史闭环 CI 或测试函数成功不能替代真实鼠标验证，也不宣称无限强度鼠标约束下的物理硬停止。
+
+```powershell
+# 六轴运动与 HOLD（新默认单圈交互限位）
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -DiagnosticsTimeoutSeconds 30 -GuiJointTravel single-turn -OutputDir build/stage5-gui-limits-check
+
+# 对照原始 URDF 机械模型的宽行程（仅对照实验）
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -DiagnosticsTimeoutSeconds 30 -GuiJointTravel urdf -OutputDir build/stage5-gui-urdf-check
+```
+
+如果操作者要验证避障与单圈限位，可以在第一个命令加上 `-Stage5RouteCase blocked`；该选项会按启动脚本原有行为构建并先测试生产 C APF/IK 主机 DLL。
