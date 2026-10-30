@@ -156,6 +156,23 @@ def assess_clock_alignment(trajectory_samples: int | None,
     return ratio, abs(ratio - 1.0) <= CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR
 
 
+def reject_failed_motion_diagnostic(name: str, value: int) -> None:
+    """Fail a simulation mission as soon as firmware reports a safety fault.
+
+    UART ACK means that a request entered a queue, not that the planner
+    finished moving. A stale setpoint after a planner fault is never
+    permission to wait for a simulated arrival or send another segment.
+    No physical motor output is performed by this simulator.
+    """
+    fatal = ("controller_faults", "planner_faults",
+             "feedback_stale_count", "last_fault")
+    if name in fatal and value != 0:
+        signed = (value - (1 << 32) if value >= (1 << 31) else value)
+        raise RuntimeError(
+            f"Firmware motion safety fault: {name}={signed}; "
+            "virtual mission aborted before any further motion request")
+
+
 def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
     """Return (API calls per feedback, warm-up calls).
 
@@ -1341,6 +1358,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         "last_fault and HOLD recovery.",
                                         flush=True,
                                     )
+                                if prepare_motion is not None:
+                                    # Strict APF mission policy; keep the recovered
+                                    # manual GUI HOLD behavior unchanged otherwise.
+                                    reject_failed_motion_diagnostic(
+                                        diagnostics_pending,
+                                        diagnostic_values[diagnostics_pending])
                                 diagnostics_pending = None
                     # A large GUI physics batch can delay the next socket
                     # read and feedback ACK processing. Measure it without
