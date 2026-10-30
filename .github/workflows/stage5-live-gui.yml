@@ -15,6 +15,7 @@ on:
       - 'simulation/pybullet_ur5/src/qemu_clock_gate.py'
       - 'tools/tests/test_stage5_live_gui.py'
       - 'tools/tests/test_stage5_visual_demo.py'
+      - 'tools/tests/test_stage5_gui_apf_integration.py'
       - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
@@ -40,6 +41,7 @@ jobs:
         run: |
           python -m unittest discover -s tools/tests -p 'test_stage5_live_gui.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_apf_integration.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
