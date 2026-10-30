@@ -32,6 +32,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
     assess_clock_alignment,
+    reject_failed_motion_diagnostic,
     joint_feedback_frame,
     canonical_physical_feedback,
     closest_physical_motor_targets,
@@ -113,6 +114,26 @@ class QmpClockGateTests(unittest.TestCase):
     def test_clock_gate_resumes_guest_on_physics_error(self):
         with self.assertRaisesRegex(ValueError, "mock failure"):
             self.run_fake_qmp(raise_during_physics=True)
+
+
+class FailFastFirmwareSafetyTests(unittest.TestCase):
+    def test_good_diagnostics_do_not_abort(self):
+        for name in ("planner_faults", "controller_faults",
+                     "feedback_stale_count", "last_fault"):
+            reject_failed_motion_diagnostic(name, 0)
+        reject_failed_motion_diagnostic("trajectory_samples", 130)
+
+    def test_fatal_diagnostics_abort_immediately(self):
+        for name in ("planner_faults", "controller_faults",
+                     "feedback_stale_count", "last_fault"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                        RuntimeError, "Firmware motion safety fault"):
+                    reject_failed_motion_diagnostic(name, 1)
+
+    def test_signed_not_ready_is_reported_as_minus_seven(self):
+        with self.assertRaisesRegex(RuntimeError, "last_fault=-7"):
+            reject_failed_motion_diagnostic("last_fault", 4294967289)
 
 
 class MotionSequencerTests(unittest.TestCase):
