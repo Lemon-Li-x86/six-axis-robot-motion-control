@@ -90,3 +90,19 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Di
 ```
 
 如果操作者要验证避障与单圈限位，可以在第一个命令加上 `-Stage5RouteCase blocked`；该选项会按启动脚本原有行为构建并先测试生产 C APF/IK 主机 DLL。
+
+## 7. 2026-10-30 避障 GUI 现场排障：4/4 到位后进入 HOLD 触发安全间隙
+
+Windows 手测 `blocked` + `single-turn` 的日志显示：`[SETTLED] Segment 1..4/4` 全部到位，然后进入 `[HOLD]`；发生关节 J1/J4 的原生拖拽限位修正；随后 `getClosestPoints` 对 link=5 报告 `distance_m=0.009787`，低于**不变**的 `minimum_full_link_clearance_mm=10`，违反量为 0.213 mm。这个**正距离**说明安全余量不足，不能直接声称物理接触，更不能将它伪装成 APF 规划器故障。因为事件发生在 HOLD，不排除人为拾取拖拽导致；仍须按实际安全违规处理。
+
+观察到的 GUI 障碍方块“无法到达”还有独立的显示原因：历史 blocked 场景创建了真实碰撞箱（2cm x 2cm x 2cm），却没有与之相同形状的 `createVisualShape`；预检的 `direct_cartesian_segment_blocked=True` 是按测量到的 EE 初始世界坐标，沿世界 X 平移 -180mm 的末端直线与障碍箱相交算出来的，并不自动意味着用户能看见它。现在**同一位置/尺寸**创建红色可视物体，实际 GUI 覆盖一条红色原始直线及绿色由 C APF 产生的笛卡尔路径，实际物理 EE 动作仍绘制既有淡蓝色运动尾迹。引导用户区分规划路径与实测轨迹，不伪造避障。
+
+新增严格区分 `planned_motion` 和 `interactive_hold` 的 `Stage5RuntimeClearanceError`，将 link、box、间距、10mm 要求、阶段存入 `result.json` 和 `uart_live.jsonl`。无论任何阶段，违规**立即停止物理和 QEMU 控制、返回 FAIL**，但在 native GUI 上保留冻结场景直到用户按 Q（而非窗口突然消失）。`[APF PHYSICAL EE]` 在最先到达 HOLD 时记录实际末端世界坐标与规划目标坐标、毫米级差值，即使随后人工拖拽触发安全停机也保留这一测量。未降低 10mm 碰撞间隙、未改原场景、未改机械模型、未关闭整臂检查。
+
+回归新增 `test_stage5_gui_avoidance_visibility.py`，覆盖真实 PyBullet 可视障碍与几何位置、HOLD 正间距违规、负间距真实穿透、严格阈值、原直线和 C 规划线渲染；这些仍不足以取代 Windows 人工 GUI 手动拖拽和远程 CI 验收。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -DiagnosticsTimeoutSeconds 30 -Stage5RouteCase blocked -GuiJointTravel single-turn -OutputDir build/stage5-blocked-visible-check
+```
+
+先**不拖拽**，观察红色物理箱、红色直线路径、绿色规划路径与蓝色实测轨迹；等 4/4 到位、日志 `[APF PHYSICAL EE]` 显示实际末端误差，再缓慢移动关节。任何 `[SAFE STOP]` 都是故障证据而非通过。安全停机时按 Q 退出后提供 `result.json`、`avoidance_preflight.json` 和 `worker.log`。
