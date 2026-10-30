@@ -68,6 +68,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
           "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
           python -m pip install numpy pybullet
+      - name: Probe actual PyBullet URDF stops and servo velocity caps
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_native_joint_stops.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
