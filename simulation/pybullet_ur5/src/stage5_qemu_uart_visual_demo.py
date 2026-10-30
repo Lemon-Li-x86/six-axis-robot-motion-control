@@ -707,6 +707,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         on_sample: Callable | None = None,
         stop_requested: Callable[[], bool] | None = None,
         on_physics: Callable | None = None,
+        prepare_motion: Callable | None = None,
         ) -> dict:
     """启动真实 ARM 固件并与 PyBullet 双向交互，返回真实观测统计。"""
     import pybullet as p
@@ -735,6 +736,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     parser = integration.FrameStream()
     firmware_defaults = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
     trajectory_period_s = firmware_defaults["task_period_ms"]["trajectory"] / 1000.0
+    monitor_period_s = firmware_defaults["task_period_ms"]["monitor"] / 1000.0
+    safety_obstacles: tuple[int, ...] = ()
+    safety_clearance_m = 0.0
+    collision_scans = 0
+    avoidance_report: dict | None = None
     firmware_max_velocity_deg_s = tuple(
         firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
@@ -868,6 +874,23 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 gui_motor_velocity_caps)
             for _ in range(warmup_calls):
                 p.stepSimulation()
+            if prepare_motion is not None:
+                # Optional Stage5 route preflight only. The validated GUI/HOLD
+                # motor and angular unwrapping path below stays unchanged.
+                plan = prepare_motion(p, arm, joints, client)
+                targets = [tuple(
+                    int(round(math.degrees(q) * wire.JOINT_ANGLE_SCALE))
+                    for q in pose)
+                    for pose in plan["joint_waypoints_rad"][1:]]
+                sequencer = MotionSequencer(targets)
+                hold_goal_raw = tuple(sequencer.goals[-1])
+                safety_obstacles = tuple(plan["obstacle_ids"])
+                safety_clearance_m = float(plan["static_collision_clearance_m"])
+                avoidance_report = {
+                    key: value for key, value in plan.items() if key != "obstacle_ids"
+                }
+                (output_dir / "avoidance_preflight.json").write_text(
+                    json.dumps(avoidance_report, indent=2), encoding="utf-8")
             if not options.headless:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=1.05, cameraYaw=50, cameraPitch=-26,
@@ -1026,6 +1049,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         GUI_JOINT_STOP_NUMERICAL_SLOP_DEG
                                         if not options.headless else 0.0))
                                 last_measured = tuple(measured)
+                                if safety_obstacles:
+                                    # Verify every actual 10ms robot pose, not
+                                    # just the collision-free C APF/IK plan.
+                                    p.performCollisionDetection()
+                                    collision_scans += 1
+                                    for link in range(-1, p.getNumJoints(arm)):
+                                        for obstacle in safety_obstacles:
+                                            contacts = p.getClosestPoints(
+                                                arm, obstacle, safety_clearance_m,
+                                                linkIndexA=link, linkIndexB=-1)
+                                            if contacts:
+                                                raise RuntimeError(
+                                                    "Stage5 runtime full-arm collision "
+                                                    f"link={link}, obstacle={obstacle}, "
+                                                    f"distance_m={min(c[8] for c in contacts):.6f}")
                                 sock.sendall(joint_feedback_frame(
                                     canonical_physical_feedback(measured)))
                                 # Detect a real joint-space deviation, irrespective
@@ -1345,9 +1383,19 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "controller_faults", "planner_faults", "feedback_stale_count",
             )
             faults = {name: diagnostic_values.get(name) for name in fault_names}
-            clock_ratio, clock_aligned = assess_clock_alignment(
+            trajectory_ratio, trajectory_aligned = assess_clock_alignment(
                 diagnostic_values.get("trajectory_samples"), target_frames,
                 trajectory_period_s)
+            monitor_ratio, monitor_aligned = assess_clock_alignment(
+                diagnostic_values.get("monitoring_ticks"), target_frames,
+                monitor_period_s)
+            # A short APF route has a larger fraction of idle/settle time;
+            # Monitor ticks include it, while planner samples do not.
+            clock_ratio, clock_aligned = (
+                (trajectory_ratio, trajectory_aligned) if prepare_motion is None
+                else (monitor_ratio, monitor_aligned))
+            clock_reference = (
+                "trajectory_samples" if prepare_motion is None else "monitoring_ticks")
             passed = (
                 clock_aligned
                 and sequencer.done
@@ -1369,6 +1417,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "scenario": options.scenario,
                 "headless": options.headless,
                 "motor_commands": "virtual_serial_only",
+                "avoidance_preflight": avoidance_report,
+                "runtime_collision_scans": collision_scans,
+                "runtime_full_link_collision_free": (
+                    bool(collision_scans) if prepare_motion is not None else None),
                 "segments_requested": len(sequencer.goals),
                 "segments_settled": sequencer.completed,
                 "segment_final_errors_deg": sequencer.segment_final_errors_deg,
@@ -1378,7 +1430,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "simulated_physics_s": round(target_frames * FEEDBACK_STEP_S, 3),
                 "trajectory_task_nominal_elapsed_s": round(
                     diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
-                "rtos_trajectory_to_physics_time_ratio": clock_ratio,
+                "rtos_trajectory_to_physics_time_ratio": trajectory_ratio,
+                "rtos_monitor_to_physics_time_ratio": monitor_ratio,
+                "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
                 "clock_alignment_note": "Planning task sample count times configured period; "
@@ -1417,7 +1471,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "passed": passed,
                 "not_tested": [
                     "Cartesian line/arc UART commands",
-                    "full-link collision safety",
+                    *(["full-link collision safety"] if prepare_motion is None else []),
                     "real servo torque control",
                     "long-term worst-case timing",
                 ],
@@ -1500,6 +1554,12 @@ def main() -> int:
     parser.add_argument("--qemu", default="qemu-system-arm")
     parser.add_argument("--scenario", choices=tuple(SCENARIOS),
                         default="six_axis")
+    parser.add_argument("--stage5-c-apf-library", type=Path,
+                        help="Use production C APF/IK with all-link preflight")
+    parser.add_argument("--stage5-route-case", choices=("clear", "blocked"),
+                        default="clear")
+    parser.add_argument("--stage5-raw-route", action="store_true",
+                        help="Keep all original C APF waypoints (no compaction)")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-visual-demo")
     parser.add_argument("--headless", action="store_true",
@@ -1517,6 +1577,8 @@ def main() -> int:
         parser.error("--headless-step-delay-ms must be between 0 and 50")
     if not args.headless and args.headless_step_delay_ms:
         parser.error("--headless-step-delay-ms requires --headless")
+    if args.stage5_raw_route and args.stage5_c_apf_library is None:
+        parser.error("--stage5-raw-route requires --stage5-c-apf-library")
     options = DemoOptions(
         scenario=args.scenario,
         headless=args.headless,
@@ -1525,7 +1587,14 @@ def main() -> int:
         timeout_s=args.timeout_s,
         hold_window=not args.no_hold,
     )
-    report = run(args.elf, args.output_dir, args.qemu, options)
+    prepare_motion = None
+    if args.stage5_c_apf_library is not None:
+        from stage5_avoidance_uart_gate import make_avoidance_preflight
+        prepare_motion = make_avoidance_preflight(
+            args.stage5_c_apf_library, args.stage5_route_case,
+            shortcut_override=False if args.stage5_raw_route else None)
+    report = run(args.elf, args.output_dir, args.qemu, options,
+                 prepare_motion=prepare_motion)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0 if report["passed"] else 1
 
