@@ -4,7 +4,9 @@ param(
     [string]$OutputDir = "build/stage5-live-windows",
     [double]$DiagnosticsTimeoutSeconds = 0,  # 0 means use the Python default (5 s).
     [switch]$ObserveHold,
-    [switch]$NoHold
+    [switch]$NoHold,
+    [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
+    [switch]$RawRoute
 )
 $ErrorActionPreference = "Stop"
 Push-Location (Join-Path $PSScriptRoot "..")
@@ -16,6 +18,27 @@ try {
     $liveArgs = @("simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py",
         "--elf", "build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf",
         "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2")
+    if ($Stage5RouteCase -ne "") {
+        # Opt-in only. Keep original six-axis/HOLD execution unchanged by default.
+        $apfBuild = "build/stage5-avoidance-win"
+        & cmake -S firmware/freertos_demo/tests/avoidance -B $apfBuild
+        if ($LASTEXITCODE -ne 0) { throw "C APF/IK host bridge configure failed" }
+        & cmake --build $apfBuild --config Debug
+        if ($LASTEXITCODE -ne 0) { throw "C APF/IK host bridge build failed" }
+        & ctest --test-dir $apfBuild -C Debug --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw "C APF/IK host bridge tests failed" }
+        $apfDll = Get-ChildItem -Path $apfBuild -Recurse -File |
+            Where-Object { $_.Name -eq "stage5_apf_bridge.dll" -or
+                           $_.Name -eq "libstage5_apf_bridge.dll" } |
+            Select-Object -First 1
+        if ($null -eq $apfDll) { throw "C APF/IK bridge DLL was not produced" }
+        $liveArgs += @("--stage5-c-apf-library", $apfDll.FullName,
+                       "--stage5-route-case", $Stage5RouteCase)
+        if ($RawRoute) { $liveArgs += "--stage5-raw-route" }
+        Write-Host "[Stage5] C APF route: $Stage5RouteCase; bridge: $($apfDll.FullName)"
+    } elseif ($RawRoute) {
+        throw "-RawRoute requires -Stage5RouteCase clear or blocked"
+    }
     if ($NoHold) { $liveArgs += "--no-hold" }
     if ($ObserveHold) { $liveArgs += "--observe-hold" }
     if ($DiagnosticsTimeoutSeconds -ne 0) {
