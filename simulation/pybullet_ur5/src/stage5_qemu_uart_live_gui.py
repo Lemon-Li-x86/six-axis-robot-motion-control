@@ -23,6 +23,7 @@ import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
     DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
+    GUI_JOINT_TRAVEL_MODES, DEFAULT_GUI_JOINT_TRAVEL_MODE,
 )
 
 # Observer polling never changes the physics timestep or UART pacing.
@@ -84,6 +85,7 @@ def capture_worker(
     headless=False, opengl2=False,
     diagnostics_timeout_s=DIAGNOSTICS_TIMEOUT_S, observe_hold=False,
     c_apf_library=None, route_case="clear", raw_route=False,
+    gui_joint_travel=DEFAULT_GUI_JOINT_TRAVEL_MODE,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
@@ -92,6 +94,7 @@ def capture_worker(
         interactive_hold=interactive, hold_duration_s=hold_seconds,
         opengl2=opengl2, diagnostics_timeout_s=diagnostics_timeout_s,
         hold_observe_only=observe_hold,
+        gui_joint_travel=gui_joint_travel,
     )
     hold_at = None
     peak_error_deg = 0.0
@@ -277,6 +280,7 @@ def run_live(
     c_apf_library: Path | None = None,
     route_case: str = "clear",
     raw_route: bool = False,
+    gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -306,6 +310,8 @@ def run_live(
         raise ValueError("Headless hold requires --hold-seconds")
     if raw_route and c_apf_library is None:
         raise ValueError("Raw APF route requires a C APF shared library")
+    if gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
+        raise ValueError("Invalid GUI joint travel policy")
     if c_apf_library is not None and not c_apf_library.is_file():
         raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
 
@@ -321,7 +327,7 @@ def run_live(
             test_disturbance, disturbance_cycles, headless_observer, opengl2,
             diagnostics_timeout_s, observe_hold,
             str(c_apf_library.resolve()) if c_apf_library else None,
-            route_case, raw_route,
+            route_case, raw_route, gui_joint_travel,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
@@ -506,6 +512,9 @@ def main() -> int:
                         default="clear")
     parser.add_argument("--stage5-raw-route", action="store_true",
                         help="Disable optional APF waypoint compaction")
+    parser.add_argument("--gui-joint-travel", choices=GUI_JOINT_TRAVEL_MODES,
+                        default=DEFAULT_GUI_JOINT_TRAVEL_MODE,
+                        help="Native GUI picking range only; never changes C model")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-live-qemu-gui")
     parser.add_argument("--timeout-s", type=float, default=210.0)
@@ -533,7 +542,7 @@ def main() -> int:
              args.test_disturbance_recovery, args.opengl2, args.disturbance_cycles,
              args.diagnostics_timeout_s, args.observe_hold,
              args.stage5_c_apf_library, args.stage5_route_case,
-             args.stage5_raw_route)
+             args.stage5_raw_route, args.gui_joint_travel)
     return 0
 
 
