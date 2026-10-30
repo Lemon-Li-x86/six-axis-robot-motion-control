@@ -108,6 +108,32 @@ jobs:
           assert actual['runtime_full_link_collision_free'] is True
           print("Blocked C APF LIVE OBSERVER real QEMU + PyBullet PASS")
           PY
+      - name: Check actual C APF HOLD geometry in PyBullet DIRECT without any mouse drag
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --headless-observer --interactive --hold-seconds 8 --timeout-s 120 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --output-dir build/stage5-observer-blocked-hold
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("build/stage5-observer-blocked-hold/result.json").read_text())
+          print("C APF HOLD clearance planned, at entry, fault:",
+                r.get("avoidance_preflight",{}).get("minimum_planned_full_link_clearance_m"),
+                r.get("hold_entry_minimum_full_link_clearance_m"),
+                r.get("measured_clearance_m"),
+                flush=True)
+          assert r["segments_settled"] == r["segments_requested"]
+          assert r["passed"], r
+          PY
+      - name: Preserve blocked HOLD geometry and joint telemetry evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-blocked-apf-direct-hold-geometry
+          path: build/stage5-observer-blocked-hold/*
+          if-no-files-found: ignore
       - name: Preserve blocked APF observer evidence
         if: always()
         uses: actions/upload-artifact@v4
