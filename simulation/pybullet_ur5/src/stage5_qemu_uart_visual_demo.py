@@ -637,6 +637,84 @@ def joint_feedback_frame(raw: Sequence[int]) -> bytes:
     return integration.frame(wire.CMD_JOINT_STATE, payload)
 
 
+class Stage5RuntimeClearanceError(ValueError):
+    """Actual link-to-obstacle clearance is smaller than the scene safety rule."""
+
+    fault_type = "stage5_runtime_full_arm_clearance_violation"
+
+    def __init__(self, link_index: int, obstacle_id: int, distance_m: float,
+                 required_m: float, phase: str):
+        self.link_index = link_index
+        self.obstacle_id = obstacle_id
+        self.distance_m = distance_m
+        self.required_m = required_m
+        self.phase = phase
+        super().__init__(
+            f"Stage5 full-arm clearance violation in {phase}: "
+            f"link={link_index}, obstacle={obstacle_id}, "
+            f"distance_m={distance_m:.6f}, required_m={required_m:.6f}")
+
+
+def enforce_runtime_obstacle_clearance(
+    bullet, arm: int, obstacles: Sequence[int],
+    required_m: float, phase: str,
+) -> None:
+    """Fail closed on actual PyBullet link geometry in BOTH motion and HOLD.
+
+    Positive distances below required_m are clearance faults, not contact.
+    A drag-induced HOLD violation is still a fault, not a reason to quietly
+    lower the C/scene clearance. Do not mutate physics or motor commands.
+    """
+    if not math.isfinite(required_m) or required_m < 0:
+        raise ValueError("Invalid full-arm clearance")
+    if phase not in ("planned_motion", "interactive_hold"):
+        raise ValueError("Invalid obstacle clearance phase")
+    bullet.performCollisionDetection()
+    for link in range(-1, bullet.getNumJoints(arm)):
+        for obstacle in obstacles:
+            contacts = bullet.getClosestPoints(
+                arm, obstacle, required_m,
+                linkIndexA=link, linkIndexB=-1)
+            if contacts:
+                distance = min(float(contact[8]) for contact in contacts)
+                raise Stage5RuntimeClearanceError(
+                    link, obstacle, distance, required_m, phase)
+
+
+def draw_avoidance_gui_evidence(bullet, preflight: dict) -> None:
+    """Draw the actual C route vs direct EE shortcut in the native GUI.
+
+    These are only visual overlays on the single authoritative Bullet scene.
+    They do NOT replace C APF, geometry, UART or collision validation.
+    """
+    start = preflight["cartesian_start_m"]
+    goal = preflight["cartesian_goal_m"]
+    center = preflight["obstacle_center_m"]
+    route = [start] + [
+        [coord / 1000.0 for coord in waypoint]
+        for waypoint in preflight["cartesian_route_mm"]
+    ]
+    bullet.addUserDebugLine(
+        start, goal, [1.0, 0.15, 0.15], lineWidth=3.0, lifeTime=0)
+    for before, after in zip(route, route[1:]):
+        bullet.addUserDebugLine(
+            before, after, [0.1, 1.0, 0.25], lineWidth=4.0, lifeTime=0)
+    bullet.addUserDebugText(
+        "RED: direct EE line (blocked) | GREEN: C APF route",
+        [center[0], center[1], center[2] + 0.15],
+        textColorRGB=[0.05, 0.9, 0.15], textSize=0.9, lifeTime=0)
+    bullet.addUserDebugText(
+        "PHYSICAL RED OBSTACLE",
+        [center[0], center[1], center[2] + 0.07],
+        textColorRGB=[1.0, 0.2, 0.1], textSize=1.1, lifeTime=0)
+    print(
+        "[APF SCENE] red visible collision box at "
+        f"{tuple(round(c, 3) for c in center)}m; "
+        f"direct_EE_blocked={preflight['direct_cartesian_segment_blocked']}; "
+        f"green C path has {len(route) - 1} waypoints",
+        flush=True)
+
+
 def preserve_gui_after_physics_fault(
     bullet, qemu, stop_requested: Callable[[], bool] | None,
     error: ValueError,
@@ -917,6 +995,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 }
                 (output_dir / "avoidance_preflight.json").write_text(
                     json.dumps(avoidance_report, indent=2), encoding="utf-8")
+                if not options.headless:
+                    draw_avoidance_gui_evidence(p, avoidance_report)
             if not options.headless:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=1.05, cameraYaw=50, cameraPitch=-26,
@@ -1081,20 +1161,15 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         if not options.headless else 0.0))
                                 last_measured = tuple(measured)
                                 if safety_obstacles:
-                                    # Verify every actual 10ms robot pose, not
-                                    # just the collision-free C APF/IK plan.
-                                    p.performCollisionDetection()
+                                    # Motion and manual HOLD use the SAME strict
+                                    # scene clearance. A fault stops QEMU and
+                                    # freezes the GUI instead of claiming PASS.
+                                    enforce_runtime_obstacle_clearance(
+                                        p, arm, safety_obstacles,
+                                        safety_clearance_m,
+                                        "interactive_hold" if sequencer.done
+                                        else "planned_motion")
                                     collision_scans += 1
-                                    for link in range(-1, p.getNumJoints(arm)):
-                                        for obstacle in safety_obstacles:
-                                            contacts = p.getClosestPoints(
-                                                arm, obstacle, safety_clearance_m,
-                                                linkIndexA=link, linkIndexB=-1)
-                                            if contacts:
-                                                raise RuntimeError(
-                                                    "Stage5 runtime full-arm collision "
-                                                    f"link={link}, obstacle={obstacle}, "
-                                                    f"distance_m={min(c[8] for c in contacts):.6f}")
                                 sock.sendall(joint_feedback_frame(
                                     canonical_physical_feedback(measured)))
                                 # Detect a real joint-space deviation, irrespective
@@ -1526,6 +1601,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             segments_settled=sequencer.completed, diagnostics=diagnostic_values,
             gui_joint_stop_corrections=gui_joint_stop_corrections,
             gui_joint_stop_last=gui_joint_stop_last)
+        if isinstance(error, Stage5RuntimeClearanceError):
+            failure.update(
+                fault_type=error.fault_type,
+                fault_phase=error.phase,
+                fault_link_index=error.link_index,
+                fault_obstacle_id=error.obstacle_id,
+                measured_clearance_m=error.distance_m,
+                required_clearance_m=error.required_m,
+                clearance_violation_m=error.required_m-error.distance_m,
+                segments_requested=len(sequencer.goals),
+            )
+            audit.write(json.dumps(dict(
+                event=error.fault_type, phase=error.phase,
+                link=error.link_index, obstacle=error.obstacle_id,
+                measured_clearance_m=error.distance_m,
+                required_clearance_m=error.required_m,
+                target_frames=target_frames,
+                segments_settled=sequencer.completed,
+            )) + "\n")
         if isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError)):
             fault_type = error.fault_type
             failure.update(
@@ -1544,8 +1638,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         audit.flush()
         (output_dir / "result.json").write_text(
             json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
-        if (isinstance(error, (JointFeedbackRangeError, JointPhysicalSafetyError))
-                and not options.headless and options.interactive_hold and client >= 0):
+        if (isinstance(error, (
+                JointFeedbackRangeError, JointPhysicalSafetyError,
+                Stage5RuntimeClearanceError))
+                and not options.headless and client >= 0):
             try:
                 preserve_gui_after_physics_fault(
                     p, qemu, stop_requested, error)
