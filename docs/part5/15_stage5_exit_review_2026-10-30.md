@@ -42,7 +42,15 @@
 
 初始基线：[Actions #40737897100](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40737897100)，原始 CPU Trace：4.748秒内 Control 0.96%、Trajectory 0.21%、Monitor 0.06%、ProtocolRX 0.01%、ProtocolTX 0.03%、IDLE 97.95%，overflow=0。与真实高负载不同，**不可称高负载剩余算力 97.95%**。含 Test 任务时的 GDB 栈高水位和周期 P99 数据见本 PR 的 `stage5-freeRTOS-cpu-trace` 附件 `observed-timing.json`，以最终成功的 Actions 版本为准。
 
-该计量复用 `stage4_timing_probe.c` 的 Timer0 原始计数和 FreeRTOS `uxTaskGetStackHighWaterMark()`，未复制另一套时钟或在正式运行任务中加入排序/阻塞操作。周期绝对抖动按 nominal_period 的 Timer0 ticks 差值测得，P99 为最近最多 128 个样本的 nearest-rank 百分位；短样本只作基线。
+最新完整 GDB 测量：[Actions #41015285084](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41015285084)，工件 `stage5-freeRTOS-cpu-trace`（`observed.log`、`observed.json`、`observed-timing.json`），CPU 观测窗 **4.735 秒**，Control **0.98%**、Trajectory **0.21%**、Monitor **0.06%**、IDLE **97.87%**，overflow=0。
+
+| 任务 | 周期(ms) | 间隔采样数 | 周期抖动 P99 / 最大 (ms) | 处理耗时 P99 / 最大 (ms) | 观察到的最小栈余量 (FreeRTOS words) |
+|---|---:|---:|---:|---:|---:|
+| Control | 10 | 119 | **0.0606 / 0.21164** | 0.30828 / 2.44832 | 371 |
+| Trajectory | 20 | 59 | **0.032 / 0.032** | 2.211 / 2.211 | 465 |
+| Monitor | 100 | 11 | **0.04256 / 0.04256** | 0.71016 / 0.71016 | 330 |
+
+该计量复用 `stage4_timing_probe.c` 的 Timer0 原始计数和 FreeRTOS `uxTaskGetStackHighWaterMark()`，未复制另一套时钟或在正式运行任务中加入排序/阻塞操作。周期绝对抖动按 nominal_period 的 Timer0 ticks 差值测得，P99 为最近最多 128 个样本的 nearest-rank 百分位；**Monitor 只有11个间隔样本，不能将其 P99 当成长期稳定性保证**。这些任务数据来自自测条件的短时 QEMU 运行，不能直接外推到交互式 GUI 或第六阶段满负载。
 
 ### 3. ARM 链接静态内存同配置 A/B
 
