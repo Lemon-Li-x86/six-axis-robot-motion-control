@@ -17,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation/pybullet_ur5/src"))
 
 from stage5_qemu_uart_closed_loop import BufferedUART
-from stage5_qemu_uart_live_gui import LiveMeasurements, LatestMailbox, capture_worker  # noqa: E402
+from stage5_qemu_uart_live_gui import (  # noqa: E402
+    LiveMeasurements, LatestMailbox, capture_worker, required_motion_axes,
+)
 
 
 def produce_without_reader(channel):
@@ -234,6 +236,40 @@ class LiveTransportTests(unittest.TestCase):
         self.assertEqual(tracker.frames_while_worker_alive, 2)
         self.assertEqual(tracker.segments, {1, 2, 3})
         self.assertEqual(tracker.ranges_deg(), (10.0,) * 6)
+
+    def test_blocked_C_APF_four_segments_are_accepted_without_relaxing_validation(self):
+        tracker = LiveMeasurements(max_segments=28)
+        for segment in (1, 2, 3, 4):
+            tracker.observe((segment * 0.1, segment, (100 * segment,) * 6), True)
+        self.assertEqual(tracker.segments, {1, 2, 3, 4})
+        self.assertEqual(tracker.frames_received, 4)
+        with self.assertRaisesRegex(ValueError, "segment=29"):
+            tracker.observe((1.0, 29, (0,) * 6), True)
+        with self.assertRaises(ValueError):
+            tracker.observe((float("nan"), 5, (0,) * 6), True)
+
+    def test_raw_C_APF_28_segments_follow_scene_capacity(self):
+        tracker = LiveMeasurements(max_segments=28)
+        for segment in range(1, 29):
+            tracker.observe((segment * 0.01, segment, (segment * 100,) * 6), True)
+        self.assertEqual(max(tracker.segments), 28)
+        self.assertEqual(tracker.frames_received, 28)
+        self.assertEqual(tracker.ranges_deg(), (27.0,) * 6)
+
+    def test_real_C_APF_waypoints_define_required_axes_not_scripted_six_axes(self):
+        # One joint is physically commanded to move 8deg; the other five
+        # have <=0.5deg planning motion and must not be artificially failed.
+        waypoints = [
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            (math.radians(8), math.radians(0.5), 0.0, 0.0, 0.0, 0.0),
+        ]
+        self.assertEqual(
+            required_motion_axes("six_axis", {"joint_waypoints_rad": waypoints}),
+            [0],
+        )
+        self.assertEqual(len(required_motion_axes("six_axis", None)), 6)
+        with self.assertRaisesRegex(ValueError, "Malformed C APF"):
+            required_motion_axes("six_axis", {"joint_waypoints_rad": [(0.0,)]})
 
     def test_invalid_live_frame_is_rejected(self) -> None:
         tracker = LiveMeasurements()
