@@ -83,6 +83,7 @@ def capture_worker(
     hold_seconds=None, test_disturbance=False, disturbance_cycles=1,
     headless=False, opengl2=False,
     diagnostics_timeout_s=DIAGNOSTICS_TIMEOUT_S, observe_hold=False,
+    c_apf_library=None, route_case="clear", raw_route=False,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
@@ -172,9 +173,16 @@ def capture_worker(
     faulthandler.enable(log)
     # Deliberately no asynchronous stack walker: Python 3.11 Windows crash.
     try:
+        prepare_motion = None
+        if c_apf_library is not None:
+            from stage5_avoidance_uart_gate import make_avoidance_preflight
+            prepare_motion = make_avoidance_preflight(
+                Path(c_apf_library), route_case,
+                shortcut_override=False if raw_route else None)
         report = run(
             Path(elf), destination, qemu, options, on_sample=publish,
             stop_requested=stop.is_set, on_physics=physics if interactive else None,
+            prepare_motion=prepare_motion,
         )
         if test_disturbance:
             regression = {
@@ -266,6 +274,9 @@ def run_live(
     opengl2: bool = False, disturbance_cycles: int = 1,
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S,
     observe_hold: bool = False,
+    c_apf_library: Path | None = None,
+    route_case: str = "clear",
+    raw_route: bool = False,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -293,6 +304,10 @@ def run_live(
         interactive = True
     if headless_observer and interactive and hold_seconds is None:
         raise ValueError("Headless hold requires --hold-seconds")
+    if raw_route and c_apf_library is None:
+        raise ValueError("Raw APF route requires a C APF shared library")
+    if c_apf_library is not None and not c_apf_library.is_file():
+        raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
 
     context = mp.get_context("spawn")
     channel = LatestMailbox(context)
@@ -305,6 +320,8 @@ def run_live(
             timeout_s, channel, stop, ready, interactive, hold_seconds,
             test_disturbance, disturbance_cycles, headless_observer, opengl2,
             diagnostics_timeout_s, observe_hold,
+            str(c_apf_library.resolve()) if c_apf_library else None,
+            route_case, raw_route,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
@@ -335,7 +352,8 @@ def run_live(
                 segment = frame[1]
                 if segment > last_segment:
                     print(f"[LIVE] Physical segment {segment}/"
-                          f"{len(SCENARIOS[scenario])}", flush=True)
+                          f"{len(SCENARIOS[scenario]) if c_apf_library is None else 'APF route'}",
+                          flush=True)
                     last_segment = segment
 
             now = time.monotonic()
@@ -482,6 +500,12 @@ def main() -> int:
     parser.add_argument("--elf", required=True, type=Path)
     parser.add_argument("--qemu", default="qemu-system-arm")
     parser.add_argument("--scenario", choices=tuple(SCENARIOS), default="six_axis")
+    parser.add_argument("--stage5-c-apf-library", type=Path,
+                        help="Opt in to real C APF/IK and full-link collision gate")
+    parser.add_argument("--stage5-route-case", choices=("clear", "blocked"),
+                        default="clear")
+    parser.add_argument("--stage5-raw-route", action="store_true",
+                        help="Disable optional APF waypoint compaction")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-live-qemu-gui")
     parser.add_argument("--timeout-s", type=float, default=210.0)
@@ -507,7 +531,9 @@ def main() -> int:
              args.timeout_s, args.refresh_hz, args.headless_observer,
              not args.no_hold, args.interactive, args.hold_seconds,
              args.test_disturbance_recovery, args.opengl2, args.disturbance_cycles,
-             args.diagnostics_timeout_s, args.observe_hold)
+             args.diagnostics_timeout_s, args.observe_hold,
+             args.stage5_c_apf_library, args.stage5_route_case,
+             args.stage5_raw_route)
     return 0
 
 
