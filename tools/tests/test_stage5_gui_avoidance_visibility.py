@@ -64,6 +64,26 @@ class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
         self.assertEqual(physics.performed, 1)
         self.assertIn("clearance violation", str(fault))
 
+    def test_hold_geometry_probe_records_nearest_link_without_relaxing_limit(self):
+        # A separate 150mm diagnostic radius must not be confused with
+        # the fixed 10mm acceptance threshold.
+        actual = FakePhysics(0.020)
+        distance, link = enforce_runtime_obstacle_clearance(
+            actual, 0, [1], 0.010, "interactive_hold",
+            measurement_radius_m=0.150)
+        self.assertAlmostEqual(distance, 0.020)
+        self.assertEqual(link, 5)
+        with self.assertRaises(Stage5RuntimeClearanceError):
+            enforce_runtime_obstacle_clearance(
+                FakePhysics(0.0098), 0, [1], 0.010, "interactive_hold",
+                measurement_radius_m=0.150)
+
+    def test_geometry_probe_radius_cannot_be_below_required_clearance(self):
+        with self.assertRaisesRegex(ValueError, "cannot weaken"):
+            enforce_runtime_obstacle_clearance(
+                FakePhysics(0.020), 0, [1], 0.010, "interactive_hold",
+                measurement_radius_m=0.009)
+
     def test_motion_clearance_violation_is_not_hidden(self):
         with self.assertRaises(Stage5RuntimeClearanceError) as caught:
             enforce_runtime_obstacle_clearance(
