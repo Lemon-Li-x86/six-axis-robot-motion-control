@@ -103,11 +103,42 @@ static void invalid_arguments(void)
     CHECK(out.mm[0]==1.0);
 }
 
+static void segment_geometry_api(void)
+{
+    const robot_apf_point_t crossing_a={{0.0,0.0,0.0}};
+    const robot_apf_point_t crossing_b={{10.0,0.0,0.0}};
+    const robot_apf_point_t grazing_a={{0.0,2.0,0.0}};
+    const robot_apf_point_t grazing_b={{10.0,2.0,0.0}};
+    robot_apf_aabb_t invalid=box;
+    unsigned int blocked=77U;
+    CHECK(robot_apf_segment_blocked(&crossing_a,&crossing_b,
+        &box,1U,0.0,&blocked)==ROBOT_STATUS_OK);
+    CHECK(blocked==1U);
+    CHECK(robot_apf_segment_blocked(&grazing_a,&grazing_b,
+        &box,1U,0.0,&blocked)==ROBOT_STATUS_OK);
+    CHECK(blocked==0U);
+    CHECK(robot_apf_segment_blocked(&grazing_a,&grazing_b,
+        &box,1U,1.0,&blocked)==ROBOT_STATUS_OK);
+    CHECK(blocked==1U); /* touching expanded obstacle is forbidden */
+    blocked=77U;
+    CHECK(robot_apf_segment_blocked(&crossing_a,&crossing_b,
+        &box,1U,NAN,&blocked)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    CHECK(blocked==77U);
+    invalid.max_corner.mm[0]=invalid.min_corner.mm[0];
+    CHECK(robot_apf_segment_blocked(&crossing_a,&crossing_b,
+        &invalid,1U,0.0,&blocked)==ROBOT_STATUS_ERROR_INVALID_ARGUMENT);
+    CHECK(blocked==77U);
+    CHECK(robot_apf_segment_blocked(&crossing_a,&crossing_b,
+        NULL,1U,0.0,&blocked)==ROBOT_STATUS_ERROR_NULL_POINTER);
+    CHECK(blocked==77U);
+}
+
 int main(void)
 {
     free_space();
     repulsion_and_safety();
     invalid_arguments();
+    segment_geometry_api();
     printf("Stage5 potential field: %u checks, %u failures\n",checks,failures);
     return failures==0U?0:1;
 }

@@ -151,7 +151,22 @@
 
 #define configUSE_IDLE_HOOK 0
 
+#ifndef ROBOT_ENABLE_STAGE5_CPU_TRACE
+#define ROBOT_ENABLE_STAGE5_CPU_TRACE 0
+#endif
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+/* QEMU-only: the existing Timer0 is the single performance clock. */
+#include "stage5_cpu_trace.h"
+#define configUSE_TICK_HOOK 1
+#define configUSE_TRACE_FACILITY 1
+#define traceTASK_SWITCHED_IN() \
+    stage5_cpu_trace_switched_in((void *)pxCurrentTCB)
+#define traceTASK_SWITCHED_OUT() \
+    stage5_cpu_trace_switched_out((void *)pxCurrentTCB)
+#else
 #define configUSE_TICK_HOOK 0
+#define configUSE_TRACE_FACILITY 0
+#endif
 
 
 /* =========================================================

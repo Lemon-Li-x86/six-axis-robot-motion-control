@@ -47,6 +47,45 @@ static int intersect_segment_aabb(
     return 1; /* touching a clearance boundary is forbidden */
 }
 
+/* Public Cartesian geometry query used by scenario/mission acceptance.
+ * Uses the same private slab intersection as the C APF safety gate.
+ * Never changes output or global state on malformed input. */
+robot_status_t robot_apf_segment_blocked(
+    const robot_apf_point_t *start,
+    const robot_apf_point_t *goal,
+    const robot_apf_aabb_t *obstacles,
+    size_t obstacle_count,
+    double clearance_mm,
+    unsigned int *blocked)
+{
+    size_t i,axis;
+    unsigned int hit=0U;
+    if(start==NULL || goal==NULL || blocked==NULL ||
+       (obstacle_count>0U && obstacles==NULL))
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(obstacle_count>ROBOT_APF_MAX_OBSTACLES ||
+       !valid_point(start) || !valid_point(goal) ||
+       !isfinite(clearance_mm) || clearance_mm<0.0)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    for(i=0U;i<obstacle_count;++i) {
+        double lo[3],hi[3];
+        for(axis=0U;axis<3U;++axis) {
+            double l=obstacles[i].min_corner.mm[axis];
+            double h=obstacles[i].max_corner.mm[axis];
+            if(!isfinite(l) || !isfinite(h) || l>=h)
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            lo[axis]=l-clearance_mm;
+            hi[axis]=h+clearance_mm;
+            if(!isfinite(lo[axis]) || !isfinite(hi[axis]))
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        }
+        if(intersect_segment_aabb(start,goal,lo,hi))
+            hit=1U;
+    }
+    *blocked=hit;
+    return ROBOT_STATUS_OK;
+}
+
 robot_status_t robot_apf_step(
     const robot_apf_point_t *current,
     const robot_apf_point_t *goal,

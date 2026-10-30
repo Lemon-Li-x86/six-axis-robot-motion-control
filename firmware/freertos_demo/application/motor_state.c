@@ -4,6 +4,7 @@
 
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 #include "motor_state.h"
 
@@ -87,6 +88,31 @@ robot_status_t motor_state_get_feedback(motor_state_observation_t *observation)
         observation->accepted_tick = tick;
     }
     return status;
+}
+
+robot_status_t motor_state_get_fresh_feedback(
+    motor_state_observation_t *observation,
+    uint32_t max_age_ticks)
+{
+    motor_state_observation_t snapshot;
+    robot_status_t status;
+    uint32_t now_tick;
+
+    if (observation == NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    status = motor_state_get_feedback(&snapshot);
+    if (status != ROBOT_STATUS_OK)
+        return status;
+    /* Snapshot has already been released from the motor-state mutex.
+     * A concurrent RX update can only make the stored feedback newer;
+     * the copied accepted_tick can no longer lie in this clock's future. */
+    now_tick = (uint32_t)xTaskGetTickCount();
+    if (!motor_state_feedback_is_fresh(
+            &snapshot, now_tick, max_age_ticks))
+        return ROBOT_STATUS_ERROR_NOT_READY;
+
+    *observation = snapshot;
+    return ROBOT_STATUS_OK;
 }
 
 robot_status_t motor_state_set_targets(const robot_joint_angles_t *targets)

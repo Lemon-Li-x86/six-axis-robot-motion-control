@@ -621,3 +621,45 @@ target_compile_definitions(qemu_ik_near_singular_trace PRIVATE
     ROBOT_KINEMATICS_ELBOW_TRACE=1
 )
 configure_qemu_target(qemu_ik_near_singular_trace m)
+
+
+# Stage5 link-time memory audit, opt-in and isolated from Stage4 self-test.
+# Not a runtime CPU/stack benchmark and not a hardware memory measurement.
+option(ROBOT_ENABLE_STAGE5_LINK_MAP
+    "Generate GNU ld .map for the current Stage5 ARM firmware build" OFF)
+if(ROBOT_ENABLE_STAGE5_LINK_MAP)
+    if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
+        message(FATAL_ERROR
+            "Stage5 map audit and Stage4 self-test map cannot share this build")
+    endif()
+    target_link_options(freertos_demo PRIVATE
+        "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/stage5_firmware.map")
+endif()
+
+# Pure Stage5 planning library; no task, implicit motion or default obstacle
+# configuration is activated by this compilation-only dependency.
+target_sources(freertos_demo PRIVATE
+    algorithms/avoidance/potential_field.c
+    algorithms/avoidance/potential_field_path.c
+    algorithms/avoidance/stage5_apf_joint_path.c
+)
+target_include_directories(freertos_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/avoidance
+)
+
+
+# QEMU-only Stage5 task utilization instrumentation. Defaults OFF, so
+# production scheduling, PID and Stage4 acceptance remain unchanged.
+option(ROBOT_ENABLE_STAGE5_CPU_TRACE
+    "Instrument FreeRTOS switches/ticks with Timer0 task CPU trace" OFF)
+if(ROBOT_ENABLE_STAGE5_CPU_TRACE)
+    if(NOT ROBOT_ENABLE_STAGE4_TASKS)
+        message(FATAL_ERROR
+            "Stage5 CPU trace requires the FreeRTOS motion tasks")
+    endif()
+    target_sources(freertos_demo PRIVATE
+        diagnostics/stage5_cpu_trace.c)
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE5_CPU_TRACE=$<BOOL:${ROBOT_ENABLE_STAGE5_CPU_TRACE}>
+)

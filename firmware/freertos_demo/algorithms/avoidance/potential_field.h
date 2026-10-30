@@ -59,4 +59,19 @@ robot_status_t robot_apf_step(
     robot_apf_point_t *next,
     robot_apf_step_info_t *details);
 
+/* Test a complete Cartesian line segment against expanded static AABBs.
+ * Reuses the exact swept-segment geometry used by robot_apf_step.
+ * Returns blocked=1 when the segment touches any inflated box.
+ * No APF force tuning, side effects, sampling or Python-only geometry.
+ * Both endpoints and AABBs are base_link millimetres.
+ * On validation failure, *blocked is unchanged.
+ */
+robot_status_t robot_apf_segment_blocked(
+    const robot_apf_point_t *start,
+    const robot_apf_point_t *goal,
+    const robot_apf_aabb_t *obstacles,
+    size_t obstacle_count,
+    double clearance_mm,
+    unsigned int *blocked);
+
 #endif
