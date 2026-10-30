@@ -141,8 +141,16 @@ def make_avoidance_preflight(
         shape = physics.createCollisionShape(
             physics.GEOM_BOX, halfExtents=half_extents_m,
             physicsClientId=client)
+        # Collision shapes have no guaranteed visible representation in
+        # PyBullet's native GUI. Match the visual box to the SAME geometry
+        # and pose, rather than drawing an unrelated debug-only obstacle.
+        visual = physics.createVisualShape(
+            physics.GEOM_BOX, halfExtents=half_extents_m,
+            rgbaColor=[0.95, 0.2, 0.10, 0.95],
+            physicsClientId=client)
         obstacle = physics.createMultiBody(
             baseMass=0.0, baseCollisionShapeIndex=shape,
+            baseVisualShapeIndex=visual,
             basePosition=center_m, physicsClientId=client)
         # Both tests use actual PyBullet geometry rather than a duplicate
         # Python box intersection implementation.
@@ -187,6 +195,8 @@ def make_avoidance_preflight(
             direct_cartesian_segment_blocked=direct_blocked,
             obstacle_center_m=center_m,
             obstacle_half_extents_m=half_extents_m,
+            cartesian_start_m=list(end_m),
+            cartesian_goal_m=[v / 1000.0 for v in goal_mm],
         )
         return result
 
