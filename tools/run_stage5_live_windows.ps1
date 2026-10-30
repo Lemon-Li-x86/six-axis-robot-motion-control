@@ -6,7 +6,8 @@ param(
     [switch]$ObserveHold,
     [switch]$NoHold,
     [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
-    [switch]$RawRoute
+    [switch]$RawRoute,
+    [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn"
 )
 $ErrorActionPreference = "Stop"
 Push-Location (Join-Path $PSScriptRoot "..")
@@ -17,7 +18,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed" }
     $liveArgs = @("simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py",
         "--elf", "build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf",
-        "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2")
+        "--qemu", $Qemu, "--scenario", "six_axis", "--output-dir", $OutputDir, "--opengl2",
+        "--gui-joint-travel", $GuiJointTravel)
     if ($Stage5RouteCase -ne "") {
         # Opt-in only. Keep original six-axis/HOLD execution unchanged by default.
         $apfBuild = "build/stage5-avoidance-win"
