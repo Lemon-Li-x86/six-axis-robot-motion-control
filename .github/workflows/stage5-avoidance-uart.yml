@@ -43,6 +43,35 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
             --stage5-route-case clear --output-dir build/stage5-actual-path
+      - name: Verify variable-length blocked C APF route through live observer transport
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --headless-observer --no-hold --timeout-s 120 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --output-dir build/stage5-observer-blocked
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=Path('build/stage5-observer-blocked')
+          actual=json.loads((d/'result.json').read_text())
+          observer=json.loads((d/'observer_result.json').read_text())
+          assert actual['passed'], actual
+          assert actual['segments_requested'] > 3, actual
+          assert actual['segments_settled'] == actual['segments_requested']
+          assert observer['segments_requested'] == actual['segments_requested']
+          assert observer['segments_settled'] == actual['segments_settled']
+          assert observer['received'] >= 10
+          assert actual['runtime_full_link_collision_free'] is True
+          print("Blocked C APF LIVE OBSERVER real QEMU + PyBullet PASS")
+          PY
+      - name: Preserve blocked APF observer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-c-apf-blocked-live-observer
+          path: build/stage5-observer-blocked/*
+          if-no-files-found: ignore
       - name: Validate dynamic physics measurements, not only preflight
         run: |
           python - <<'PY'
