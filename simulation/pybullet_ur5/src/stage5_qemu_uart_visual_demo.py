@@ -658,7 +658,8 @@ class Stage5RuntimeClearanceError(ValueError):
 def enforce_runtime_obstacle_clearance(
     bullet, arm: int, obstacles: Sequence[int],
     required_m: float, phase: str,
-) -> None:
+    measurement_radius_m: float | None = None,
+) -> tuple[float, int | None]:
     """Fail closed on actual PyBullet link geometry in BOTH motion and HOLD.
 
     Positive distances below required_m are clearance faults, not contact.
@@ -669,16 +670,28 @@ def enforce_runtime_obstacle_clearance(
         raise ValueError("Invalid full-arm clearance")
     if phase not in ("planned_motion", "interactive_hold"):
         raise ValueError("Invalid obstacle clearance phase")
+    if measurement_radius_m is not None and (
+            not math.isfinite(measurement_radius_m) or
+            measurement_radius_m < required_m):
+        raise ValueError("Measurement radius cannot weaken the safety threshold")
+    search_radius = (required_m if measurement_radius_m is None
+                     else measurement_radius_m)
+    closest = float("inf")
+    closest_link = None
     bullet.performCollisionDetection()
     for link in range(-1, bullet.getNumJoints(arm)):
         for obstacle in obstacles:
             contacts = bullet.getClosestPoints(
-                arm, obstacle, required_m,
+                arm, obstacle, search_radius,
                 linkIndexA=link, linkIndexB=-1)
             if contacts:
                 distance = min(float(contact[8]) for contact in contacts)
-                raise Stage5RuntimeClearanceError(
-                    link, obstacle, distance, required_m, phase)
+                if distance < closest:
+                    closest, closest_link = distance, link
+                if distance < required_m:
+                    raise Stage5RuntimeClearanceError(
+                        link, obstacle, distance, required_m, phase)
+    return closest, closest_link
 
 
 def draw_avoidance_gui_evidence(bullet, preflight: dict) -> None:
@@ -861,6 +874,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     hold_started = None
     settled_ee_xyz_m = None
     settled_ee_goal_error_mm = None
+    hold_entry_clearance_m = None
+    hold_entry_closest_link = None
+    hold_entry_actual_joint_deg = None
     ending = False
     motor_target_rebase_pending = True
     hold_request_sequence = None
@@ -1059,11 +1075,30 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             f"{[round(v, 4) for v in expected_ee]}, "
                             f"error_mm={settled_ee_goal_error_mm:.3f}",
                             flush=True)
+                        hold_entry_actual_joint_deg = [
+                            value / wire.JOINT_ANGLE_SCALE
+                            for value in last_measured]
+                        (hold_entry_clearance_m, hold_entry_closest_link) = (
+                            enforce_runtime_obstacle_clearance(
+                                p, arm, safety_obstacles, safety_clearance_m,
+                                "interactive_hold", measurement_radius_m=0.15))
+                        print(
+                            "[APF HOLD GEOMETRY] planned_route_min_m="
+                            f"{avoidance_report.get('minimum_planned_full_link_clearance_m')}; "
+                            f"hold_entry_min_m={hold_entry_clearance_m:.6f}, "
+                            f"closest_link={hold_entry_closest_link}; "
+                            f"actual_joint_deg={hold_entry_actual_joint_deg}",
+                            flush=True)
                         audit.write(json.dumps(dict(
                             event="apf_physical_ee_at_hold_entry",
                             actual_ee_xyz_m=settled_ee_xyz_m,
                             goal_ee_xyz_m=expected_ee,
                             physical_ee_goal_error_mm=settled_ee_goal_error_mm,
+                            minimum_planned_full_link_clearance_m=avoidance_report.get(
+                                "minimum_planned_full_link_clearance_m"),
+                            hold_entry_minimum_clearance_m=hold_entry_clearance_m,
+                            hold_entry_closest_link=hold_entry_closest_link,
+                            hold_entry_actual_joint_deg=hold_entry_actual_joint_deg,
                             segments_settled=sequencer.completed)) + "\n")
                     if options.interactive_hold:
                         print("[HOLD] PyBullet native mouse picking is active; controller holds the final goal", flush=True)
@@ -1549,6 +1584,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
                 "physical_ee_goal_error_at_hold_entry_mm":
                     settled_ee_goal_error_mm,
+                "hold_entry_minimum_full_link_clearance_m": hold_entry_clearance_m,
+                "hold_entry_closest_link_index": hold_entry_closest_link,
+                "hold_entry_actual_joint_deg": hold_entry_actual_joint_deg,
                 "runtime_collision_scans": collision_scans,
                 "runtime_full_link_collision_free": (
                     bool(collision_scans) if prepare_motion is not None else None),
@@ -1626,6 +1664,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             segments_settled=sequencer.completed, diagnostics=diagnostic_values,
             physical_ee_at_hold_entry_m=settled_ee_xyz_m,
             physical_ee_goal_error_at_hold_entry_mm=settled_ee_goal_error_mm,
+            planned_route_minimum_full_link_clearance_m=(
+                avoidance_report.get("minimum_planned_full_link_clearance_m")
+                if avoidance_report is not None else None),
+            hold_entry_minimum_full_link_clearance_m=hold_entry_clearance_m,
+            hold_entry_closest_link_index=hold_entry_closest_link,
+            hold_entry_actual_joint_deg=hold_entry_actual_joint_deg,
             gui_joint_stop_corrections=gui_joint_stop_corrections,
             gui_joint_stop_last=gui_joint_stop_last)
         if isinstance(error, Stage5RuntimeClearanceError):
@@ -1637,6 +1681,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 measured_clearance_m=error.distance_m,
                 required_clearance_m=error.required_m,
                 clearance_violation_m=error.required_m-error.distance_m,
+                actual_joint_deg=[v / wire.JOINT_ANGLE_SCALE
+                                  for v in last_measured],
+                planned_final_C_IK_joint_deg=(
+                    [math.degrees(v) for v in
+                     avoidance_report["joint_waypoints_rad"][-1]]
+                    if avoidance_report is not None else None),
                 segments_requested=len(sequencer.goals),
             )
             audit.write(json.dumps(dict(
