@@ -730,7 +730,7 @@ def preserve_gui_after_physics_fault(
           flush=True)
     try:
         bullet.addUserDebugText(
-            "PHYSICAL SAFETY STOP / PHYSICS STOPPED / PRESS Q TO EXIT",
+            "PHYSICAL FEEDBACK FAULT / SAFETY STOP / PHYSICS STOPPED / PRESS Q TO EXIT",
             [-0.7, 0.0, 0.85], textColorRGB=[1.0, 0.1, 0.1],
             textSize=1.35, lifeTime=0,
         )
