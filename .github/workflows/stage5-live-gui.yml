@@ -16,6 +16,7 @@ on:
       - 'tools/tests/test_stage5_live_gui.py'
       - 'tools/tests/test_stage5_visual_demo.py'
       - 'tools/tests/test_stage5_gui_apf_integration.py'
+      - 'tools/tests/test_stage5_gui_joint_travel.py'
       - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
@@ -42,6 +43,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_live_gui.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_apf_integration.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -75,6 +77,7 @@ jobs:
       - name: Real Bullet URDF joint-stop physics against imposed torque
         run: |
           python -m unittest discover -s tools/tests -p 'test_stage5_native_joint_stops.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
