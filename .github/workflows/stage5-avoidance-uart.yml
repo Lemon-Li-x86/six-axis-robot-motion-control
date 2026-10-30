@@ -1,0 +1,78 @@
+name: Stage5 QEMU UART execution of C-verified UR5 joint route
+on:
+  push:
+    branches: [feat/stage5-avoidance-uart-20261029]
+    paths:
+      - 'simulation/pybullet_ur5/src/**'
+      - 'firmware/freertos_demo/**'
+      - 'CMakePresets.json'
+      - '.github/workflows/stage5-avoidance-uart.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+jobs:
+  c-apf-ik-rtos-uart-pybullet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install actual ARM/QEMU toolchain and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
+          python -m pip install numpy pybullet
+      - name: Build real ARM FreeRTOS UART firmware and real C APF/IK host bridge
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
+          cmake --build build/stage5-avoidance
+          ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Verify original three-segment UART and short-duration timebase regression
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
+      - name: Execute C planned, C IK converted, whole-arm preflighted route via QEMU UART
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --headless --no-hold --timeout-s 120 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case clear --output-dir build/stage5-actual-path
+      - name: Validate dynamic physics measurements, not only preflight
+        run: |
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          path=Path("build/stage5-actual-path")
+          data=json.loads((path/"result.json").read_text())
+          pre=json.loads((path/"avoidance_preflight.json").read_text())
+          assert data["passed"] and pre["passed"]
+          assert data["runtime_full_link_collision_free"] is True
+          assert data["runtime_collision_scans"]>=30
+          assert data["segments_settled"]==data["segments_requested"]>=2
+          assert data["fault_counters"]=={
+              "controller_faults":0,"planner_faults":0,"feedback_stale_count":0}
+          with (path/"joint_trace.csv").open(newline="") as file:
+              rows=list(csv.DictReader(file))
+          joint_columns=[key for key in rows[0] if
+                         key.startswith("actual_") and key.endswith("_deg")]
+          assert len(joint_columns)==6
+          physical_travel=max(
+              max(float(row[name]) for row in rows) -
+              min(float(row[name]) for row in rows)
+              for name in joint_columns)
+          assert physical_travel>0.05, "robot didn't actually move any joint"
+          print("ACTUAL QEMU UART / physical joint motion, all-link collision gate",data["segments_settled"],data["runtime_collision_scans"])
+          PY
+      - name: Preserve physical trace and safety verdict, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-c-apf-ik-qemu-uart-live-physics
+          path: build/stage5-actual-path/*
+          if-no-files-found: ignore

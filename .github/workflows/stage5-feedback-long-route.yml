@@ -1,0 +1,108 @@
+name: Stage5 blocked route long-motion feedback ordering regression
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'simulation/pybullet_ur5/src/**'
+      - 'simulation/pybullet_ur5/scenarios/**'
+      - '.github/workflows/stage5-feedback-long-route.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  long-blocked-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real ARM QEMU and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
+          python -m pip install numpy pybullet
+      - name: Build production firmware and C APF IK library
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
+          cmake --build build/stage5-avoidance
+          ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Reproduce formerly failing real blocked four-leg route
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --headless --no-hold --timeout-s 130 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked \
+            --output-dir build/stage5-feedback-long-route
+      - name: Require full real physical completion with no stale-feedback faults
+        run: |
+          python - <<'PY'
+          import json,csv
+          from pathlib import Path
+          d=Path('build/stage5-feedback-long-route')
+          r=json.loads((d/'result.json').read_text())
+          q=json.loads((d/'avoidance_preflight.json').read_text())
+          assert q['passed'] and q['direct_cartesian_segment_blocked'] is True
+          assert q['raw_apf_waypoints']>=20
+          assert q['cartesian_shortcut_used'] is True
+          assert 3 <= q['cartesian_waypoints'] <= 8
+          assert r['passed'] is True
+          assert r['segments_settled'] == r['segments_requested'] == q['cartesian_waypoints']
+          assert r['runtime_full_link_collision_free'] is True
+          assert r['runtime_collision_scans']>=30
+          assert r['fault_counters']=={
+              'controller_faults':0,'planner_faults':0,'feedback_stale_count':0}
+          assert r['diagnostics']['last_fault']==0
+          with (d/'joint_trace.csv').open(newline='') as file:
+              rows=list(csv.DictReader(file))
+          assert len(rows)>100
+          print('BLOCKED UART FULL-ARM PASS', r['segments_settled'],len(rows))
+          PY
+      - name: Run identical blocked scene with all production C APF waypoints preserved
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py \
+            --headless --no-hold --timeout-s 160 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --stage5-raw-route \
+            --output-dir build/stage5-feedback-raw-route
+      - name: Verify uncompressed multi-segment full-arm motion (Issue 22)
+        run: |
+          python - <<'PY'
+          import json,csv
+          from pathlib import Path
+          d=Path('build/stage5-feedback-raw-route')
+          r=json.loads((d/'result.json').read_text())
+          q=json.loads((d/'avoidance_preflight.json').read_text())
+          assert q['passed'] and q['direct_cartesian_segment_blocked']
+          assert q['cartesian_shortcut_used'] is False
+          assert q['raw_apf_waypoints']==q['cartesian_waypoints']>=20
+          assert r['passed'] and r['segments_settled']==r['segments_requested']==q['cartesian_waypoints']
+          assert r['runtime_full_link_collision_free'] and r['runtime_collision_scans']>=100
+          assert r['fault_counters']=={
+              'controller_faults':0,'planner_faults':0,'feedback_stale_count':0}
+          assert r['diagnostics']['last_fault']==0
+          with (d/'joint_trace.csv').open(newline='') as file:
+              rows=list(csv.DictReader(file))
+          assert len(rows)>=100
+          print('UNCOMPRESSED LONG ROUTE VERIFIED',q['cartesian_waypoints'],len(rows))
+          PY
+      - name: Archive raw production C APF path, including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-feedback-raw-long-blocked-qemu-evidence
+          path: build/stage5-feedback-raw-route/*
+          if-no-files-found: ignore
+      - name: Archive all evidence, including failed partial physical motions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-feedback-long-blocked-qemu-evidence
+          path: build/stage5-feedback-long-route/*
+          if-no-files-found: ignore

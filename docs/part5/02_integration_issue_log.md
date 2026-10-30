@@ -4,7 +4,7 @@
 
 | ID | 优先级 | 当前现象 / 缺口 | 状态 | 证据 / 下一步 |
 |---|---|---|---|---|
-| S5-001 | 实机专用（本项目N/A） | 缺实体电机独立急停、失联制动和安全联锁设计；现有Control故障仅阻止继续下发新目标 | **纯仿真交付不阻塞**；禁止据此实机动作 | `docs/part4/05_global_architecture_review_2026-10-26.md`；仅允许非驱动模拟 |
+| S5-001 | 实机专用（本项目N/A） | 缺实体电机独立急停、失联制动和安全联锁设计；现有Control故障仅阻止继续下发新目标 | **纯仿真交付不阻塞**；禁止据此实机动作 | `docs/part4_archive/05_global_architecture_review_2026-10-26.md`；仅允许非驱动模拟 |
 | S5-002 | P1 | 接收运动请求尚未与 `motion_pipeline_submit_*` 建立 UART 方向清晰的完整接口/ACK/NAK | 未实现 | 审核 `communications/protocol.h` 与 `protocol_commands.c`，再定兼容协议 |
 | S5-003 | P1 | APF当前仅检查EE点到静态长方体膨胀AABB的单段，不包括整臂连杆碰撞 | 正在开发（第一切片CI通过） | CI [#40427456854](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40427456854)；下一步连杆碰撞与IK |
 | S5-004 | P1 | APF可陷入局部极小/路线不完整；未做整段轨迹重规划和到达率测试 | 未实现 | 当前 `ROBOT_STATUS_ERROR_NO_SOLUTION` 明确拒绝，不伪造可达 |
@@ -31,86 +31,22 @@
 - **已知边界**：该解析器不自带接收超时功能；半帧停滞的超时策略仍应由UART/ProtocolRX拥有。这次测试证明软件字节流解析器恢复，不等于真实UART DMA/中断、串口反向协议以及端到端闭环已通过。
 
 
-## 2026-10-27 待定位问题 S5-012：原生拖拽大扰动后无法回位
+## 2026-10-30 进度复核（保留上述 10-27 原始问题状态作历史记录）
 
-**优先级**：P1（仿真完整闭环）。**状态**：现象已在 Windows 桌面观察，根因待查，不得标记为已修复。
+下表是**最新证据状态**，与文件开头建档当日的待办状态不同。正式阶段结项须优先查阅 `docs/part5/15_stage5_exit_review_2026-10-30.md`，不能将两天前的“未实现”当作当前结论。
 
-- **复现条件**：`fix/stage5-native-pybullet-interaction-20261027` 原生 `p.GUI` 完成三段请求后进入 HOLD，用 PyBullet 原生鼠标拾取将连杆大幅拉偏。
-- **用户提供的最后现场**：执行角/实测角 `J1=12.55/12.50°, J2=-32.46/-32.43°, J3=75.35/75.29°`，而 `six_axis` 最终请求目标 `[30,-45,60,20,5,-10]°`；`RX=2851, ACK=2187, age=0.297s, checksum_bad=0`；父进程报 `Physics worker exited 1`。**当前尚未获得本轮 worker.log 真正的子进程异常行**，不能将其直接归因于 PID 或 `last_fault`。
-- **不等价的证据**：此前另一轮报告 `Diagnostics timeout: last_fault`，只能证明该字段的诊断响应未及时到达，并不表示 C 控制器返回了 `last_fault` 错误码。QEMU 反馈 ACK 计数落后目标帧数是异常线索，但不能未经协议追踪计算“丢包数”。
-- **已经提供的取证功能**：仅仿真选项 `-ObserveHold` 跳过自动重复重规划，让已有 C PID 在原参考角下持续运行；`-DiagnosticsTimeoutSeconds 30` 对单条诊断查询设置有限延长等待。UART 失联、QEMU 停机、命令 ACK 和真实故障仍保持硬门禁；未恢复仍写 `passed=false`，不宣称回位完成。
-- **下一步必须验证**：原始 `worker.log` 的末尾异常，`uart_live.jsonl` 的 `hold_deviation`/`hold_observe_stalled`/`hold_replan`/`diagnostics_timeout`，`result.json` 的 `controller_faults`/`feedback_stale_count`，以及在鼠标完全释放、无新增运动请求时 `joint_trace.csv` 距最终请求目标的误差趋势。验证物理拾取是否保持约束，不能通过增加超时掩盖控制停用。
+| 编号 | 现状及证据 | 结项判定 |
+|---|---|---|
+| S5-001 | 本项目只运行虚拟 UART/ARM QEMU/PyBullet；真实伺服电机及安全联锁未启用，代码不得用于真机控制 | 不属仿真交付范围 |
+| S5-002 | QEMU 经 `CMD_REQUEST_JOINT_MOVE` 接收关节轨迹，实际 ACK、反馈到位与失败处理均已验证；4/4与28/28静态避障路线成功 | 已验证仿真关节执行方向 |
+| S5-003 | C APF/IK、真实 PyBullet AABB 和全臂离散碰撞预检，与运行时各关节实际物理净距检查成功 | **已验证静态长方体具体场景**；非连续时间/动态障碍证明 |
+| S5-004 | 局部极小值仍可返回 `NO_SOLUTION` 安全拒绝；通过上层显式 via 与 C 几何检验的航点压缩成功避开一个实际障碍 | 算法限制已明确，非任意障碍保证 |
+| S5-005 | QEMU Timer0/GDB 已采 CPU、处理窗口/周期抖动最大与 P99、FreeRTOS 栈余量；真实数值见结项审查报告 | **短时基线通过**，持续满载尾部时延后续验证 |
+| S5-006 | 生产 C 字节流损坏/分片测试、QEMU UART 半帧超时和最终反馈过期处理有真实验证；计划中的全面故障矩阵仍未全覆盖 | 核心故障恢复已验证，其他边界需追加 |
+| S5-007 | ARM GNU ld map 解析、ELF真实构建与同配置前后对比已完成；FLASH增加48B、RAM不变 | 内存审计完成，**没有证明内存缩减** |
+| S5-008 | C/Python 协议镜像通过 `check_protocol_mirror.py` 防漂移测试 | 双侧一致性验证完成，独立 schema 生成仍可作未来改进 |
+| S5-009 | 损坏帧字节复用帧头导致丢失下一帧：生产C解析器重同步修复，Host 回归通过 | 已修复并回归 |
+| Issue #22 | 反馈 Tick 与最新样本不一致导致 `NOT_READY(-7)`，在 PR #25 中修复，PR #26 用28段不压缩真实路径确认 | 已关闭，有端到端证据 |
+| PR #15 / #28 | 原生 GUI 旧版 xvfb 第2段超时，正在基于最新固件重复原生窗口测试 | **未签收**，不得拿 PyBullet DIRECT 通过代替 |
 
-
-## 2026-10-27 新证据 S5-013：第二段运行时 UART 诊断超时与反馈积压
-
-**级别**：P1。**状态**：根因待定位，尚未修复。
-
-- **本机真实复现**：`-ObserveHold -DiagnosticsTimeoutSeconds 30`，第一段 `[SETTLED]`，第二段 `[ACCEPTED]` 后始终未完成。工作进程最终报 `Diagnostics timeout: controller_steps; UART targets=7900, ACK=5275`，墙钟等待 `33.937s`，`segments_settled=1`，绝未进入 `HOLD`。
-- **最后成功获取的不同时间点计数**：`requests_accepted=2`、`trajectory_samples=2865`、`controller_steps=444`、`controller_faults=0`、`planner_faults=0`、`feedback_stale_count=0`、`last_fault=0`、`monitoring_ticks=260`。这些都是诊断**历史快照**，不是超时发生时的控制器实时状态。
-- **关键区别**：`7900 * 0.01=79s` 是 Python 依赖 **UART 目标帧数量**推进的 PyBullet 仿真时间，而不是独立的 FreeRTOS 时钟证据；`7900-5275=2625` 是目标帧数与反馈 ACK 数的计数差，**不能直接命名为丢帧**。
-- **架构风险点**：`stage5_qemu_uart_visual_demo.py` 每收到一个 UART 目标帧，在同一个阻塞轮询中运行 10 次 PyBullet 步进、生成反馈再读取下一批串口数据；原生 GUI 的渲染/鼠标交互可能放大积压。C 的 `protocol_commands.c` 通过 `uart_tx_manager_send_frame()` 提交诊断响应，但忽略返回状态；缓冲区满时可能静默丢失诊断响应。此两点目前仅为**源码级候选原因**。
-- **只加取证，不改控制**：在 Python 复用已存在的 C 协议 `DIAGNOSTICS_METRIC_RX_DROP_COUNT=0`，以 `uart_rx_dropped_bytes` 查询 UART RX 溢出，并在 `uart_live.jsonl` 输出 `uart_batch_delay` 事件（帧数、处理墙钟耗时和 ACK 滞后），不降低 UART 频率、不丢弃目标帧、不掩盖故障、不修改 FreeRTOS/PID/URDF。补丁提交 `612b02fa`、`8ad479fc`。
-- **下一步验证**：如 RX 丢字节快速增加，检查控制器调度/输入环形缓冲区；如处理批次耗时长且 ACK 滞后增加，检查 GUI 同步物理步进造成的 UART 积压；如两者正常却诊断丢失，再审查 TX 缓冲与诊断回包发送返回值。不能简单增大超时宣称已修复。
-
-
-### 2026-10-27 S5-013 第二轮日志与定向优化（待 Windows 验收）
-
-- **无需拖拽即可复现**：Windows `p.GUI --opengl2 --no-hold`，`segments_settled=0`，在 `monitoring_ticks` 查询超时退出；最后 `target_frames=730`, `feedback_acks=382`、`uart_rx_dropped_bytes=0`（历史查询）。
-- **实际积压实证**：同一 `uart_live.jsonl` 中 `uart_batch_delay` 由 26帧/0.172s -> 73帧/0.750s -> 109帧/1.563s -> 236帧/3.953s -> **481帧/7.172s**。接收与GUI物理推进在同一线程串行，吞吐低于固件持续输出时，处理大批次阻塞诊断超时检查。此处是可观测的同步批处理瓶颈，不等价于已经证明某条UART帧丢失。
-- **关键对照**：同机 Windows `--headless-observer --no-hold` 获得 `passed=true`，`segments_settled=3`，末端误差最高0.07°，`target_frames=640`, `feedback_acks=641`, `uart_rx_dropped_bytes=0`, 三类固件故障均0。问题高度关联GUI路径，而非基本C运动算法。
-- **定向优化 `c1ff3e83`**：保留权威的 `FEEDBACK_STEP_S=0.01s`、`PHYSICS_STEP_S=0.001s`。GUI通过Bullet原生 `setPhysicsEngineParameter(numSubSteps=10)` 使每个UART帧**仅调用一次** `stepSimulation()`，而该调用内部仍积分10个1ms子步；原来的10次跨GUI线程命令成为1次。DIRECT原有10次1ms步进不变。启动预热总物理时间同为0.1秒。调试轨迹显示已独立节流到10Hz。
-- **回归 `602a4b02`**：采用Mock检查两种模式调用步长、子步和启动预热步数。**这项Mock测试不等同于Windows GUI端到端性能通过。**
-- **后续验收**：先执行仅GUI无鼠标的三段闭环并检查 `uart_batch_delay` 是否消失、`target_frames-feedback_acks` 是否不再持续增长、`result.json.passed`。不合格时再排查原生OpenGL2、UART实时协调，不可宣称拖拽恢复通过。
-
-
-### 2026-10-28 S5-013 第三轮数据与反馈信用流控（端到端验证中）
-
-- **GUI 原生子步优化仍不足**：Windows p.GUI 未拖拽，30秒限时 `segments_settled=1/3`，`target_frames=2847`, `feedback_acks=2584`, `uart_rx_dropped_bytes=0`（历史快照）；批量处理由241帧/1.359s渐增到**481帧/2.781s**，说明虽降低了单帧 PyBullet 成本，输入仍持续超过可消费吞吐。用户另观察到明显、较大幅度非指令运动，**该 GUI 模式不具备安全验收资格**。
-- **结构性原因**：仿真固件 `ProtocolTX` 每10ms独立发送新的命令，即使 Python 同一线程尚在调用 GUI 物理引擎、无法及时返回真实测量值；未设反馈信用会累积过时目标，从而使物理演算逐帧追赶过去而非实时执行 C 控制。旧版 GUI 单纯调整超时/轨迹绘制频率/子步批处理均未阻止串口命令债务。
-- **最小修复 `9a4bca1c`**：仅当编译宏 `ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION` 开启时，`task_protocol_tx()` 才按现有 `motor_state_observation_t.feedback.sample_sequence` 的真实被接受反馈变化发给 GUI **最多一个**新 UART 目标帧；没有新反馈时仍保持10ms调度，但不重复发目标；如完整 UART 目标帧无法入 TX Ring Buffer，不消耗该次信用，下一周期重试。无需新增全局状态、协议命令、PID或限位常量；真实固件路径原样。**这不代表无限等待或禁用安全门禁。**
-- **自动压测 `19ae5318`、`5e5b5296`**：在 DIRECT 下主动模拟每帧18ms额外工作耗时，保持 PyBullet 真实10个1ms物理步进和实际 QEMU/FreeRTOS/UART反馈，用于测试生产者不会因慢消费者而积攒历史命令。Windows/Linux workflow 在原有 3段 DIRECT 验收后再运行压测并保留产物。需确认真实 CI 结果；与 `p.GUI --opengl2` Windows 鼠标交互不可划等号。
-- **仍待验证**：校验新固件 DIRECT 基准及慢消费者压测，之后才应由用户本机执行单次 **GUI 无拖拽** 复验；大扰动抓取与回位必须单独验收，不能通过增加 GUI 超时宣称问题解决。旧版 `0.07°` 终点误差仅为修改流控前的 DIRECT 基线。
-
-
-#### 2026-10-28 验证进度更新
-- <https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40538029092> Linux CI：C固件编译、三段 DIRECT 闭环、`--headless-step-delay-ms 18` 慢消费端压力测试均 **success**；UART流控至少在此环境没有破坏正常闭环，且压力条件下可以完结。
-- 同一 Linux CI 中原有三次 PyBullet 外部转矩注入/回位断言为 **failure**。历史记录证明该测试的外力未产生预期位移（`peak_displacement_deg` 过小），不可将它视为大幅拖拽回位验收。完整 workflow 结论因此仍为 failure，不隐瞒。
-- 同轮 Windows CI 安装/运行步骤尚未得到最终结果；Windows 原生 `p.GUI` 鼠标拾取、大扰动、实际回位不属于 CI DIRECT 验证范围，必须另行确认。
-
-
-### 2026-10-28 S5-013 时间同步缺陷：模拟已到位不等于闭环动态合格
-
-- **新本机现象**：Windows GUI 无拖拽仍大幅逐渐摆动，流控版无法稳定完成三段。暂停 Windows GUI 验收，禁止将其标记为已修复。
-- **核验的原始 Linux native-GUI 产物**：Actions [#40539424716](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40539424716) 的 `stage5-gui-nodrag-xvfb` 附件 `result.json` 显示 `passed=true`、`segments_settled=3`、196帧×10ms=**1.96s PyBullet物理时间**，而 `trajectory_samples=362`×20ms=**7.24s 固件轨迹任务名义运行时间**，比值 **3.69**；真实墙钟 8.36s。终点误差 0.06° 不能掩盖时间失配。该CI绿色是**错误验收标准下的假阳性**。
-- **流控自身的回归**：Actions [#40538029092](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40538029092) Linux `result.json` 中原有DIRECT亦仅196帧/1.96s，而 `trajectory_samples=388`×20ms=7.76s（时间比值3.96）；慢消费者DIRECT 196帧/1.96s、`trajectory_samples=380`×20ms=7.60s（3.88）。因此 `9a4bca1c` 的反馈信用流控**阻止目标队列膨胀的同时破坏时间对应关系**，并非可交付修复。
-- **撤回流控**：`72b03aee` 在唯一生产 `firmware/freertos_demo/application/protocol_tasks.c` 中精确恢复流控前源码，不改变PID与URDF。
-- **验收加固**：`c38a971c`、`96453585` 添加每次 C `trajectory_samples` × JSON唯一参数源中的20ms 与 PyBullet物理时间比值，默认差异超过25%就记录 `clock_alignment_failed` 和 `passed=false`；这一量只是任务样本数对应的**名义时间估计**，并非高精度硬件计时，但足以揭示上面的3～4倍明显错位。旧版 DIRECT 用户实测 319样本×20ms=6.38s 与6.40s物理时间匹配。
-- **当前结论**：最强实证是**GUI/QEMU异步时间轴不对齐导致闭环动态不能被现有终点误差证明**；Windows大幅振荡的每关节时域根因仍须用用户失败的`joint_trace.csv`查证。解决方向需让QEMU虚拟控制时钟与实际物理步进一致、或明确拆分可验证的DIRECT控制物理与异步GUI交互；不能再用目标帧背压或视觉帧节流代替正确的同步设计。
-
-
-### 2026-10-28 S5-013 修复候选：QMP 暂停虚拟时钟期间执行物理批次
-
-- **修复分支**：`fix/stage5-qmp-physics-clock-gate-20261028`，基于 `2dfb19e`；源分支和备份均未直接更改。
-- **修改范围**：`simulation/pybullet_ur5/src/qemu_clock_gate.py` 新增标准 QMP 控制接口，`stage5_qemu_uart_visual_demo.py` 在消费 UART 目标帧对应的 PyBullet 物理批次前调用 `stop`，确认 `query-status=paused`，批次结束后 `cont` 并确认运行。即使 Python 物理回调抛错也尝试恢复运行；故障会使本次测试失败。仅限 Stage5 QEMU 仿真平台，不改 PID、轨迹规划、URDF、数据源或真实电机的调度路径。
-- **设计边界**：这是针对“物理引擎阻塞时固件虚拟时钟继续推进”的时间门控，不是声称 QEMU 与 PyBullet 已获得精确硬实时锁步。QMP 交互发生在已收到 UART 帧之后，不能消除停机前已排队的旧数据；因此继续保留最终时间比值、故障计数与慢消费端测试，不得仅凭终点误差验收。
-- **回归**：`tools/tests/test_stage5_visual_demo.py` 新增 QMP 停/启与物理异常时恢复的模拟测试；现有 Actions `stage5-live-gui.yml` 对新分支运行 Linux/Windows 单元测试、固件回归、原生 GUI 无拖拽、真实 QEMU/UART 三段闭环及 18ms 处理延迟。首轮 CI：<https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809>。应逐项查看测试步骤；外部力扰动仍为独立问题，Windows 本机原生鼠标拖拽回位仍需独立验收。
-
-- **首次实证（Linux）**：同轮 Actions `native-gui-no-drag-xvfb` 成功；`genuine-qemu-uart-live-observer (ubuntu-latest)` 中三段 DIRECT 和 18ms 慢消费者测试均成功。慢消费者 `result.json` 的物理时间 7.14s、规划任务名义时间 6.78s，比值 0.9496，时钟验收通过、三段到位、`passed=true`。随后执行的外部转矩扰动回位步骤仍失败，使整项 Job 标红；不能以此宣称物理拖拽恢复通过。Windows 集成和本机原生 GUI 交互未在此证据覆盖。
-
-
-### 2026-10-28 S5-012 / S5-013 扰动回位回归的真实物理缺陷与修复证据
-
-- **失败证据（旧夹具）**：[Actions #40604154809](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40604154809) Linux/Windows DIRECT 的三段关节运动、时钟门控和慢消费者均正常，外部转矩恢复却判失败。Linux 工件 `disturbance-recovery/result.json` 的实测峰值仅 **0.06°**、`hold_recoveries=0`、故障计数0。检查发现 PyBullet DIRECT 每个 UART 反馈间隔有 **10次1ms stepSimulation()**，原 `on_physics` 只在这10次积分前施加 **一次** `applyExternalTorque`，不能把一次外力视为10ms内持续生效。
-- **修正物理输入**：`stage5_qemu_uart_visual_demo.py` 在 DIRECT 每个物理子步前调用可选外部扰动回调；GUI仍为每帧单次原生10子步调用。未改变JSON控制周期、PID、URDF或生产固件。Linux中未经幅度限制的300 N·m连续扰动把J2转到321°并触发`int16`反馈越界报错，**明确失败，不截断、重映射或伪造反馈**。
-- **边界限制与逐轮验收**：`stage5_qemu_uart_live_gui.py` 仅在headless测试夹具中观察**被施力J2的真实关节状态**，实际偏离请求终点达到3°即停止当前轮外部力矩；同轮不会重复激励。保留至少2°真实偏移门槛；新增各轮外部转矩子步计数和J2峰值，全部轮次均须至少施力一次、超过偏移门槛，并确认C侧HOLD回位次数达到要求。这不是由Python直接复位关节的作弊。
-- **首轮实际通过（Linux）**：[Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) 的 `stage5-live-qemu-measured-state-evidence-Linux` 中：`disturbance_regression.passed=true`，J2三次峰值 **9.25° / 9.23° / 9.21°**，外力子步 **42 / 42 / 42**，`hold_recoveries=3`，`hold_rearms=3`、每次ACK成功，原三段及三次恢复共6次C运动请求，固件fault计数和UART RX dropped均为0。PyBullet 39.37s对固件规划名义39.12s，时钟比0.99365，HOLD最终误差0.02°。该实例的 `passed=true` 经工件JSON和轨迹核查。
-- **仍未覆盖**：上述为Linux **DIRECT+实际外部转矩** 回归，`hold_rearms=3` 明确包含固件侧重规划，不能冒充“PID不重规划被动HOLD也恢复”；Windows PyBullet原生 GUI 鼠标抓取与释放仍须单独验收，不能把DIRECT外力与GUI鼠标操作视为完全等价。Windows版本的相同CI按独立结果更新，不以 Linux 代替。
-
-
-### 2026-10-28 最终跨平台自动化复验（提交 7c28958）
-
-- [Stage5 全量 Actions #40609288843](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/40609288843) **6/6 job success**：Linux+Windows 单元回归，C原生固件回归，Linux原生GUI无拖拽，Linux+Windows真QEMU/FreeRTOS/UART/PyBullet DIRECT基本闭环、18ms慢消费者与三次实际外力扰动回位。原版同一外力测试曾失败，本轮真实修复路径通过；未修改 PID、IK、URDF 和生产C运动调度。
-- **Windows工件实证** `stage5-live-qemu-measured-state-evidence-Windows/disturbance-recovery/result.json`：三轮施力42/42/42物理子步，J2实测峰值9.25°/9.21°/9.21°，三次回位3/3、重规划请求ACK 3/3；固件轨迹名义65.66s、PyBullet65.68s，比例**0.999695**；HOLD末误差0.02°，所有固件fault、UART RX dropped、checksum错误均为0；`passed=true`。同平台18ms慢消费者时间比**0.995334**，`passed=true`。
-- **Linux工件实证**：三轮J2峰值9.25°/9.23°/9.21°，恢复3/3，时钟比0.993650，HOLD末误差0.02°，所有固件fault和UART RX dropped均0；`passed=true`。
-- **边界/交付判定**：S5-013原本反复出现的 **自动化 DIRECT/慢消费者与Linux无拖拽GUI** 现已按当前门限验证通过；这不等于精确硬实时锁步。S5-012的 **原生Windows GUI鼠标大扰动**、不重规划的被动PID恢复、真实电机安全联锁、整臂障碍碰撞、长时WCET不在上述结果中，仍不得标记通过。继续保留PR草稿直到本机原生GUI的最终独立验收。
+5.1~5.4 的阶段报告、ARM Map/FreeRTOS CPU/抖动/栈水位数据与 PR/CI 链接详见第 15 号文档。第六阶段的完整工业搬运、长时连续运行和交付资料独立验收。

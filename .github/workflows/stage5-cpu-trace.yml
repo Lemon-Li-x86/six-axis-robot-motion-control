@@ -1,0 +1,54 @@
+name: Stage5 FreeRTOS task CPU measurement
+
+on:
+  push:
+    branches: [feat/stage5-cpu-trace-main-20261029]
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'tools/ci_stage5_cpu_trace_qemu.sh'
+      - 'tools/analyze_stage5_cpu_trace.py'
+      - 'tools/analyze_stage5_task_timing.py'
+      - 'tools/tests/test_stage5_task_timing.py'
+      - '.github/workflows/stage5-cpu-trace.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'tools/ci_stage5_cpu_trace_qemu.sh'
+      - 'tools/analyze_stage5_cpu_trace.py'
+      - 'tools/analyze_stage5_task_timing.py'
+      - 'tools/tests/test_stage5_task_timing.py'
+      - '.github/workflows/stage5-cpu-trace.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  task-cpu-measurement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM toolchain and QEMU GDB
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm gdb-multiarch ninja-build
+      - name: Unit-test GDB task timing analysis, including malformed snapshots
+        run: python -m unittest discover -s tools/tests -p 'test_stage5_task_timing.py' -v
+      - name: Build QEMU FreeRTOS task trace
+        run: |
+          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON
+          cmake --build build/stage5-cpu-trace --target freertos_demo
+      - name: Read and validate actual task runtime from GDB
+        run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-trace/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-trace/observed
+      - name: Preserve complete CPU trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-freeRTOS-cpu-trace
+          path: |
+            build/stage5-cpu-trace/observed.log
+            build/stage5-cpu-trace/observed.json
+            build/stage5-cpu-trace/observed-timing.json
+          if-no-files-found: ignore

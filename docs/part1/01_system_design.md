@@ -39,7 +39,27 @@ flowchart LR
     G -. "形成控制-反馈闭环" .-> A
 ```
 
-第1阶段搭建了上述固件、UART和仿真链路。后续阶段已在这套基础上增加运动请求接入、轨迹、IK和PID任务；当前完整的单关节QEMU串口闭环以 `docs/part5/03_uart_qemu_pybullet_contract.md` 与本机整改记录为准。TCP仅是QEMU UART的主机侧后端。
+当前第1阶段已经建立以下最小闭环：
+
+```mermaid
+flowchart LR
+    A["Cortex-M4 / FreeRTOS\n控制任务"] -->|"目标关节角\n0x01"| B["UART 二进制协议"]
+    B --> C["QEMU UART"]
+    C --> D["TCP Serial Backend"]
+    D --> E["Python 通信桥"]
+    E --> F["PyBullet / UR5\n机器人仿真执行"]
+
+    F -->|"实际关节状态\n0x81"| E
+    E --> D
+    D --> C
+    C --> B
+    B --> G["Cortex-M4 / FreeRTOS\n状态解析"]
+
+    G -->|"ACK\n0x82"| B
+    G -. "形成控制-反馈闭环" .-> A
+```
+
+其中 TCP 仅作为 QEMU UART 在主机侧的后端传输方式，不改变嵌入式端的 UART 通信模型。
 
 ---
 
@@ -54,8 +74,8 @@ flowchart LR
 - 系统时钟；
 - GPIO；
 - UART；
-- Timer；
-- 仿真电机驱动接口。
+- 后续阶段扩展的 Timer；
+- 后续实际机器人平台中的电机驱动接口。
 
 当前工程中已经建立：
 
@@ -77,7 +97,7 @@ uart_read_byte()
 
 GPIO 部分在当前仿真平台主要完成工程接口和寄存器访问模板，用于保证 BSP 层结构完整；后续迁移实际 MCU 时，可在不修改上层接口的情况下替换底层实现。
 
-第2阶段已为 UART、Timer、GPIO 和仿真电机驱动建立统一接口；实际平台迁移仍须实现并验证对应BSP。
+后续第2阶段将进一步完成 UART、Timer、GPIO 的标准化驱动封装。
 
 ---
 
@@ -97,23 +117,22 @@ GPIO 部分在当前仿真平台主要完成工程接口和寄存器访问模板
 
 通信层不直接操作机器人电机，也不负责运动学或轨迹规划。
 
-当前通信接口由 `firmware/freertos_demo/communications/protocol.h` 定义，使用状态机逐字节处理可变长度Payload的帧：
+当前嵌入式侧主要接口为：
 
 ```c
-robot_status_t protocol_build_joint_target_frame(
-    const robot_joint_angles_t *joints,
-    uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
+void protocol_build_joint_target_frame(
+    const int16_t joints[6],
+    uint8_t frame[17]
 );
 
-uint8_t protocol_parser_process_byte(
-    protocol_parser_t *parser,
-    uint8_t byte,
-    protocol_frame_t *output_frame
+uint8_t protocol_parse_joint_state_frame(
+    const uint8_t frame[17],
+    int16_t joints[6]
 );
 
-robot_status_t protocol_parse_joint_state(
-    const protocol_frame_t *frame,
-    robot_joint_angles_t *joints
+void protocol_build_joint_state_ack_frame(
+    const int16_t joints[6],
+    uint8_t frame[17]
 );
 ```
 
@@ -125,17 +144,14 @@ Python 端提供对应的数据帧构造、提取和解析逻辑。
 
 应用层负责组织 FreeRTOS 任务，并协调通信层、驱动层及后续算法层。
 
-当前应用层有通信任务和编译门控的运动任务：
+当前第1阶段主要包含两个任务：
 
 | 任务 | 功能 | 当前周期 |
 |---|---|---:|
-| `ProtocolTX` | 周期发送目标/状态帧 | 配置默认1000 ms；运动测试构建按仿真需求配置 |
-| `ProtocolRX` | UART中断唤醒，读取环形缓存并解析 | 事件驱动；残帧超时由JSON参数配置 |
-| `Trajectory` | 关节及Cartesian轨迹采样 | 20 ms，Stage4门控 |
-| `Control` | 反馈采样、PID及命令限幅 | 10 ms，Stage4门控 |
-| `Monitor` | 故障、任务状态和栈水位监测 | 100 ms，Stage4门控 |
+| `ProtocolTX` | 周期发送六轴目标角 | 1000 ms |
+| `ProtocolRX` | 接收并解析仿真端状态 | 1 ms轮询 |
 
-ProtocolTX和ProtocolRX均由FreeRTOS创建。Trajectory、Control和Monitor仅在`ROBOT_ENABLE_STAGE4_TASKS`打开时创建。
+两个任务当前均运行在 FreeRTOS 调度器中。
 
 `ProtocolTX` 的基本流程：
 
@@ -161,7 +177,7 @@ UART接收字节
 返回状态确认帧
 ```
 
-第4阶段已在应用层实现：
+后续阶段将在应用层进一步增加：
 
 - 轨迹规划任务；
 - PID闭环控制任务；
@@ -174,7 +190,7 @@ UART接收字节
 
 算法层负责机器人运动控制相关计算，与底层硬件和通信方式解耦。
 
-当前算法层包括：
+根据项目后续阶段要求，该层计划包括：
 
 ```text
 算法层
@@ -186,9 +202,9 @@ UART接收字节
 └── PID位置闭环控制
 ```
 
-纯算法与应用任务分层编译；数学模块不依赖FreeRTOS。运动任务只有通过显式CMake门控才会进入测试固件。
+第1阶段不提前实现上述算法，只确定模块边界。
 
-第3、4阶段已实现上述运动学、选解、关节/Cartesian轨迹和PID模块。算法通过公共关节、位姿和错误码类型与应用层交互，不直接访问UART、GPIO等底层资源。
+后续算法模块应通过标准化关节位置、速度和机器人位姿数据结构与应用层交互，而不直接访问 UART、GPIO 等底层资源。
 
 ---
 
@@ -428,7 +444,7 @@ checksum =
 
 该校验方式用于第1阶段基础连通性验证。
 
-当前通信继续使用协议定义的8位累加校验；更强校验算法须通过协议版本兼容和错误注入测试后再变更。
+后续通信模块开发阶段可根据可靠性要求升级为 CRC16 等更强的数据完整性校验方式。
 
 ---
 

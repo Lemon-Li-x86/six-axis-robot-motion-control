@@ -5,6 +5,7 @@ on:
     branches:
       - review/stage4-closure-evidence-20261027
       - candidate/stage4-pid-20261027
+      - release/stage4-simulation-rc-20261028
     paths:
       - '.github/workflows/stage4-closure-evidence.yml'
       - 'firmware/freertos_demo/tests/simulation/**'
@@ -15,6 +16,8 @@ on:
       - 'tools/tests/test_stage4_pid_gain_sweep.py'
       - 'tools/tests/test_stage4_pid_study.py'
       - 'firmware/freertos_demo/config/**'
+      - 'docs/part4/**'
+      - 'README.md'
   workflow_dispatch:
 
 permissions:

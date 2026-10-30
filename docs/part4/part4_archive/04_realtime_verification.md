@@ -1,6 +1,6 @@
 # 第4阶段 FreeRTOS 实时性与联调验证模板
 
-> **当前验收状态（2026-10-27）**：本页早期“待测”条目保留作历史台账；最新短时与60秒QEMU数据、单位和限制见 [`08_stage4_qemu_timing_and_stack_2026-10-27.md`](08_stage4_qemu_timing_and_stack_2026-10-27.md)。Host、ARM/QEMU运动学和任务回归的最新本机结果记于 [`phase1-4_acceptance_status_2026-10-27.md`](../phase1-4_acceptance_status_2026-10-27.md)。
+> **封版候选状态（2026-10-28）**：本页为历史实时性验证记录，早期“待测”条目保留原始过程；已完成的短时和60秒 QEMU 实测统一以 [`08_stage4_qemu_timing_and_stack_2026-10-27.md`](08_stage4_qemu_timing_and_stack_2026-10-27.md) 为依据，最终签收门槛见 [`12_stage4_release_candidate_2026-10-28.md`](12_stage4_release_candidate_2026-10-28.md)。任务 CPU 独占占比、实体 MCU WCET 与30分钟满载仍未测得，不应将 QEMU 数据扩展为硬件性能保证。
 
 已测得周期偏差、任务处理经过时间、栈水位和测试ELF内存段；没有FreeRTOS任务CPU占比/独占执行时间数据，短时值也不是WCET。已完成60秒静止反馈QEMU健康运行，30分钟高负载和UART持续干扰长稳尚未测试。
 

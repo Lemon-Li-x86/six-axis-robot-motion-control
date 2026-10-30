@@ -1,0 +1,70 @@
+name: Stage5 comparable ARM memory baseline and post-integration audit
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/freertos_demo/**'
+      - 'tools/stage5_memory_map.py'
+      - 'docs/part5/**'
+      - '.github/workflows/stage5-final-memory-comparison.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identical-config-map-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install ARM toolchain and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build
+      - name: Use previous tested code revision for true before-after source comparison
+        run: |
+          git cat-file -e d2ca58f799ab5213a84fa8c2d32c4f110077b121^{commit}
+          git worktree add --detach build/stage5-map-before-src d2ca58f799ab5213a84fa8c2d32c4f110077b121
+          echo 'BEFORE_SHA=d2ca58f799ab5213a84fa8c2d32c4f110077b121' >> "$GITHUB_ENV"
+      - name: Compile both real ARM firmwares with identical runtime and compiler flags
+        run: |
+          set -eu
+          common_flags=(
+            -G Ninja
+            -DROBOT_ENABLE_STAGE4_TASKS=ON
+            -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF
+            -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=OFF
+            -DROBOT_ENABLE_STAGE5_LINK_MAP=ON
+          )
+          cmake -S build/stage5-map-before-src -B build/stage5-map-before \
+            "-DCMAKE_TOOLCHAIN_FILE=$PWD/build/stage5-map-before-src/cmake/arm-none-eabi-gcc.cmake" "${common_flags[@]}"
+          cmake --build build/stage5-map-before --target freertos_demo
+          cmake -S . -B build/stage5-map-after \
+            "-DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/arm-none-eabi-gcc.cmake" "${common_flags[@]}"
+          cmake --build build/stage5-map-after --target freertos_demo
+      - name: Validate actual .map deltas and retain negative increases
+        run: |
+          python tools/stage5_memory_map.py \
+            build/stage5-map-after/firmware/freertos_demo/stage5_firmware.map \
+            --before build/stage5-map-before/firmware/freertos_demo/stage5_firmware.map \
+            --output build/stage5-map-after/compared.json
+          python - <<'PY'
+          import json
+          d=json.load(open('build/stage5-map-after/compared.json'))
+          assert 'current' in d and 'before' in d
+          print('Actual old/new ARM FLASH/RAM from same configuration:', d['current']['flash_allocated_bytes'], d['current']['ram_allocated_bytes'])
+          PY
+          python -m unittest discover -s tools/tests -p 'test_stage5_memory_map.py' -v
+      - name: Persist both raw maps, ARM ELF and comparison for Stage5 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-identical-config-map-before-after
+          path: |
+            build/stage5-map-before/firmware/freertos_demo/stage5_firmware.map
+            build/stage5-map-before/firmware/freertos_demo/freertos_demo.elf
+            build/stage5-map-after/firmware/freertos_demo/stage5_firmware.map
+            build/stage5-map-after/firmware/freertos_demo/freertos_demo.elf
+            build/stage5-map-after/compared.json
+          if-no-files-found: ignore

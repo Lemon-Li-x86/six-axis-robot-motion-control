@@ -1,6 +1,6 @@
 # 第4阶段 PID 调优与轨迹性能记录
 
-> **当前结论（2026-10-27）**：正式仿真默认 `Kp/Ki/Kd=0.2/0/0`，来源为单一 Stage4 配置。已完成四档P增益的单轴及六轴小步对照、Stage4修复后Host/QEMU回归，以及本机统一验收中的PyBullet两种场景。该证据支持初始仿真调参，不支持多负载或实机全范围整定。以下“待测”表格记录的是早期试验字段；最新数值以本节之后的正式运行记录为准。
+> **封版候选状态（2026-10-28）**：本 RC 的唯一参数源 `firmware/freertos_demo/config/robot_defaults.json` 现为六轴 `Kp/Ki/Kd=0.25/0/0.025`；本页以下 `0.2/0/0`、`0.8/0/0` 等数值与“待测”列为**历史调优与模板记录**，不表示 RC 当前配置。候选选择、独立保留工况和 QEMU 回归见 [11_stage4_pid_candidate_verification_2026-10-27.md](11_stage4_pid_candidate_verification_2026-10-27.md)；最终签收状态以 [12_stage4_release_candidate_2026-10-28.md](12_stage4_release_candidate_2026-10-28.md) 为准。现有仿真证据不代表实物或全工作空间整定。
 
 ## 记录状态
 
