@@ -1,0 +1,142 @@
+name: Stage5 live QEMU PyBullet observer
+
+on:
+  push:
+    branches:
+      - feat/stage5-live-qemu-pybullet-gui-20261027
+      - fix/stage5-native-pybullet-interaction-20261027
+      - fix/stage5-qmp-physics-clock-gate-20261028
+      - feat/stage5-native-gui-clean-20261030
+    paths:
+      - '.github/workflows/stage5-live-gui.yml'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py'
+      - 'simulation/pybullet_ur5/src/qemu_clock_gate.py'
+      - 'tools/tests/test_stage5_live_gui.py'
+      - 'tools/tests/test_stage5_visual_demo.py'
+      - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
+      - 'tools/run_stage5_live_windows.ps1'
+      - 'CMakePresets.json'
+      - 'firmware/freertos_demo/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-ipc-unit-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test nonblocking live-frame delivery and measurement validation
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_live_gui.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
+
+  genuine-qemu-uart-live-observer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU and PyBullet
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build gdb-multiarch
+          python -m pip install numpy pybullet
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+        if: runner.os == 'Windows'
+      - name: Install Windows QEMU and PyBullet
+        if: runner.os == 'Windows'
+        run: |
+          choco install qemu --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+          python -m pip install numpy pybullet
+      - name: Build real Cortex-M4 FreeRTOS UART firmware
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+      - name: Observe measured joint movement DURING QEMU UART feedback
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --scenario six_axis --output-dir build/stage5-live-evidence
+      - name: Slow PyBullet consumer without GUI must not accumulate virtual UART frames
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_visual_demo.py --headless --headless-step-delay-ms 18 --no-hold --timeout-s 120 --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --scenario six_axis --output-dir build/stage5-live-evidence/slow-consumer
+      - name: Native PyBullet external-torque disturbance and hold recovery
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py --headless-observer --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --test-disturbance-recovery --disturbance-cycles 3 --hold-seconds 65 --timeout-s 60 --no-hold --output-dir build/stage5-live-evidence/disturbance-recovery
+      - name: FreeRTOS scheduling and stale-feedback regression
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build/stage5-task-regression -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON
+          cmake --build build/stage5-task-regression --target freertos_demo
+          bash tools/ci_stage4_rtos_qemu.sh build/stage5-task-regression/firmware/freertos_demo/freertos_demo.elf build/stage5-live-evidence/rtos-regression.log
+      - name: Preserve physical trace and protocol diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-live-qemu-measured-state-evidence-${{ runner.os }}
+          path: build/stage5-live-evidence/*
+          if-no-files-found: ignore
+
+  native-gui-no-drag-xvfb:
+    # Real p.GUI stepping (not DIRECT), software-rendered under Xvfb.
+    # Separate from the known-unreliable external-torque disturbance check.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, Bullet and virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Compile virtual-only firmware for UART loop
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+      - name: Run full three-segment native GUI without mouse input
+        run: |
+          timeout 120s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis --opengl2 --no-hold --timeout-s 60 \
+            --output-dir build/stage5-ci-gui-nodrag
+      - name: Preserve GUI physical motion and latency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-nodrag-xvfb
+          path: build/stage5-ci-gui-nodrag/*
+          if-no-files-found: ignore
+
+  native-firmware-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run existing C algorithm regressions
+        run: |
+          cmake -S firmware/freertos_demo/tests/host -B build/stage5-native-regression -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-native-regression --parallel 2
+          ctest --test-dir build/stage5-native-regression --output-on-failure
