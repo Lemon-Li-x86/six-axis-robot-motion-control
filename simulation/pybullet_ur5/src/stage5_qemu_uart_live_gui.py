@@ -24,6 +24,7 @@ from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint
 from stage5_qemu_uart_visual_demo import (
     DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
     GUI_JOINT_TRAVEL_MODES, DEFAULT_GUI_JOINT_TRAVEL_MODE,
+    SETTLE_TOLERANCE_DEG,
 )
 
 # Observer polling never changes the physics timestep or UART pacing.
@@ -232,7 +233,13 @@ def capture_worker(
 class LiveMeasurements:
     """Incremental diagnostics based only on sampled *actual* joint angles."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_segments: int | None = None) -> None:
+        # No fixed three-segment assumption: APF uses the scene's existing
+        # waypoint_capacity; regular demo keeps its scenario's exact count.
+        if (max_segments is not None and
+                (type(max_segments) is not int or max_segments < 1)):
+            raise ValueError("Invalid motion segment capacity")
+        self.max_segments = max_segments
         self.frames_received = 0
         self.frames_while_worker_alive = 0
         self.segments: set[int] = set()
@@ -243,10 +250,14 @@ class LiveMeasurements:
     def observe(self, frame: RawFrame, worker_alive: bool) -> None:
         stamp, segment, raw = frame
         if (not math.isfinite(stamp) or stamp < 0 or
-                not 0 <= segment <= len(SCENARIOS["six_axis"]) or
+                type(segment) is not int or segment < 0 or
+                (self.max_segments is not None and segment > self.max_segments) or
                 len(raw) != len(JOINT_NAMES) or
                 any(type(v) is not int for v in raw)):
-            raise ValueError("Invalid live measurement from worker")
+            raise ValueError(
+                "Invalid live measurement from worker: "
+                f"segment={segment}, allowed=0..{self.max_segments}, "
+                f"sample_time={stamp}, actual_joint_count={len(raw)}")
         self.frames_received += 1
         if worker_alive:
             self.frames_while_worker_alive += 1
@@ -267,6 +278,28 @@ class LiveMeasurements:
             (high - low) / wire.JOINT_ANGLE_SCALE
             for low, high in zip(self.minimum, self.maximum)
         )
+
+
+def required_motion_axes(
+    scenario: str, avoidance_preflight: dict | None,
+) -> list[int]:
+    """Use the actual planned C APF/IK joint route, not demo's three goals."""
+    if avoidance_preflight is None:
+        return [i for i in range(len(JOINT_NAMES))
+                if any(goal[i] != START_RAW[i] for goal in SCENARIOS[scenario])]
+    waypoints = avoidance_preflight.get("joint_waypoints_rad")
+    if (not isinstance(waypoints, (list, tuple)) or len(waypoints) < 2 or
+            any(not isinstance(pose, (list, tuple)) or
+                len(pose) != len(JOINT_NAMES) or
+                any(type(v) not in (int, float) or not math.isfinite(v)
+                    for v in pose) for pose in waypoints)):
+        raise ValueError("Malformed C APF/IK joint_waypoints_rad in worker report")
+    return [
+        axis for axis in range(len(JOINT_NAMES))
+        if math.degrees(max(pose[axis] for pose in waypoints) -
+                        min(pose[axis] for pose in waypoints))
+        >= MIN_OBSERVED_MOTION_DEG + 2.0 * SETTLE_TOLERANCE_DEG
+    ]
 
 
 def run_live(
@@ -314,6 +347,17 @@ def run_live(
         raise ValueError("Invalid GUI joint travel policy")
     if c_apf_library is not None and not c_apf_library.is_file():
         raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
+    if c_apf_library is not None and test_disturbance:
+        raise ValueError("Headless disturbance fixture only supports the fixed demo goal")
+
+    # Read route capacity from its single versioned scene fixture. The worker
+    # later provides the *actual* requested/settled count in result.json.
+    if c_apf_library is None:
+        maximum_segments = len(SCENARIOS[scenario])
+    else:
+        from stage5_avoidance_uart_gate import load_scene
+        scene, _ = load_scene(route_case)
+        maximum_segments = scene["waypoint_capacity"]
 
     context = mp.get_context("spawn")
     channel = LatestMailbox(context)
@@ -331,7 +375,7 @@ def run_live(
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
-    measurements = LiveMeasurements()
+    measurements = LiveMeasurements(max_segments=maximum_segments)
     last_segment = 0
     last_report_at = 0.0
     hold_announced = False
@@ -458,16 +502,22 @@ def run_live(
             and result.get("bad_checksum_frames") == 0
             and result.get("fault_counters")
             and all(value == 0 for value in result["fault_counters"].values()))
-        if (result.get("segments_settled") != len(SCENARIOS[scenario])
-                or (result.get("passed") is not True and not clean_observation)):
-            raise RuntimeError("QEMU/FreeRTOS closed-loop acceptance failed")
+        requested = result.get("segments_requested")
+        settled = result.get("segments_settled")
+        if (type(requested) is not int or
+                not 1 <= requested <= maximum_segments or
+                settled != requested or
+                any(segment > requested for segment in measurements.segments) or
+                (result.get("passed") is not True and not clean_observation)):
+            raise RuntimeError(
+                "QEMU/FreeRTOS closed-loop acceptance failed: "
+                f"requested={requested}, settled={settled}, "
+                f"observed_segments={sorted(measurements.segments)}")
 
         motion = measurements.ranges_deg()
-        required_axes = [
-            i for i in range(len(JOINT_NAMES))
-            if any(goal[i] != START_RAW[i] for goal in SCENARIOS[scenario])
-        ]
-        if (not motion
+        required_axes = required_motion_axes(
+            scenario, result.get("avoidance_preflight"))
+        if (not motion or not required_axes
                 or any(motion[i] < MIN_OBSERVED_MOTION_DEG for i in required_axes)
                 or measurements.frames_received < 10
                 or measurements.frames_while_worker_alive == 0):
@@ -481,6 +531,8 @@ def run_live(
                 + int(channel.skipped.value),
             frames_during_control=measurements.frames_while_worker_alive,
             joint_ranges_deg=motion, headless_observer=headless_observer,
+            required_motion_axes=[JOINT_NAMES[i] for i in required_axes],
+            segments_requested=requested, segments_settled=settled,
             note="PyBullet GUI renders the authoritative physics directly",
         )
         (output_dir / "observer_result.json").write_text(
