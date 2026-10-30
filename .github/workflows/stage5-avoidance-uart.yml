@@ -34,49 +34,6 @@ jobs:
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
-      - name: Diagnose blocked-route final link clearance and neighboring fixture geometry
-        run: |
-          python - <<'PY'
-          import math, sys
-          from pathlib import Path
-          sys.path.insert(0, 'simulation/pybullet_ur5/src')
-          import pybullet as p
-          from stage4_dynamic_closed_loop import URDF, START_RAW, joint_indices
-          from stage5_qemu_uart_visual_demo import configure_physics_stepping, joint_motor_efforts_from_urdf, set_joint_position_motors
-          from stage5_avoidance_uart_gate import make_avoidance_preflight
-          lib = Path('build/stage5-avoidance/libstage5_apf_bridge.so')
-          cid=p.connect(p.DIRECT)
-          try:
-              p.setGravity(0,0,-9.81)
-              steps,warm=configure_physics_stepping(p,True)
-              robot=p.loadURDF(str(URDF),useFixedBase=True)
-              joints=joint_indices(p,robot)
-              for joint,raw in zip(joints,START_RAW): p.resetJointState(robot,joint,math.radians(raw/100))
-              targets=[math.radians(raw/100) for raw in START_RAW]
-              set_joint_position_motors(p,robot,joints,targets,joint_motor_efforts_from_urdf(p,robot,joints),None)
-              for _ in range(warm): p.stepSimulation()
-              plan=make_avoidance_preflight(lib,'blocked')(p,robot,joints,cid)
-              obstacle=plan['obstacle_ids'][0]
-              original=plan['obstacle_center_m']
-              print('PROBE PREPARED',len(plan['joint_waypoints_rad'])-1,plan['sampled_full_arm_states'],'center',original,flush=True)
-              for joint,q in zip(joints,plan['joint_waypoints_rad'][-1]):
-                  p.resetJointState(robot,joint,q)
-              p.performCollisionDetection()
-              ranked=[]
-              for dx in (-.015, 0, .015):
-                for dy in (-.012,0,.012):
-                  for dz in (-.008,0,.008):
-                    center=[original[0]+dx,original[1]+dy,original[2]+dz]
-                    p.resetBasePositionAndOrientation(obstacle,center,[0,0,0,1])
-                    p.performCollisionDetection()
-                    values=[]
-                    for link in range(-1,p.getNumJoints(robot)):
-                        values += [(min(c[8] for c in points),link) for points in [p.getClosestPoints(robot,obstacle,.1,linkIndexA=link,linkIndexB=-1)] if points]
-                    ranked.append((round(min(values)[0]*1000,3) if values else 100.0,tuple(round(v*1000) for v in (dx,dy,dz)),min(values)[1] if values else None))
-              print('PROBE FINAL planned_min_distance_mm + xyz_offset_mm + link:', sorted(ranked, reverse=True),flush=True)
-          finally:
-              p.disconnect(cid)
-          PY
       - name: Verify original three-segment UART and short-duration timebase regression
         run: python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
       - name: Execute C planned, C IK converted, whole-arm preflighted route via QEMU UART
