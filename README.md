@@ -2,7 +2,7 @@
 
 基于 **ARM Cortex-M4、FreeRTOS、QEMU 和 PyBullet** 的 UR5 六轴机器人运动控制项目。使用 C 实现运动学、轨迹规划和 PID 控制，通过 QEMU 运行嵌入式固件，并在 PyBullet 中完成运动仿真与反馈验证。
 
-**当前进度：Stage 1–4 已验收；Stage 5 的 QEMU/FreeRTOS/UART ↔ PyBullet 静态避障核心闭环已通过 CI，原生 Windows GUI 与最终范围签收尚待完成。Stage 6 综合搬运任务未开发完毕。** 项目以软件仿真为目标，不使用实体机器人。
+**当前进度：Stage 1–4 已验收；Stage 5 的 QEMU/FreeRTOS/UART ↔ PyBullet 静态避障核心闭环已通过 CI，原生 GUI 代码已合入主线且 Linux 原生窗口、Windows/Linux 无头云端测试通过；Windows 本机窗口与鼠标交互仍待签收。Stage 6 综合搬运任务未开发完毕。** 项目以软件仿真为目标，不使用实体机器人。
 
 ## 项目进度
 
@@ -12,10 +12,10 @@
 | Stage 2 · 驱动与协议 | UART / Timer / GPIO 驱动、Ring Buffer、协议解析、六轴电机状态抽象 | 已完成 |
 | Stage 3 · 运动学 | UR5 正逆运动学、IK 选解、连续角处理、关节限位 | 已完成 |
 | Stage 4 · 运动控制 | 三次/五次多项式、梯形速度、笛卡尔直线/圆弧轨迹、六轴增量式 PID、FreeRTOS 控制任务 | 核心验收通过，封版候选 |
-| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计；GUI 尚需独立验收 | 无头核心通过；阶段全项未签收 |
+| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计；GUI 已通过 Linux 原生窗口和 Windows 无头测试，待 Windows 本机交互验收 | 软件仿真核心通过；本机窗口待签收 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
-详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)与 [Stage 5 结项证据/尚存限制](docs/part5/15_stage5_exit_review_2026-10-30.md)。
+详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 结项证据/尚存限制](docs/part5/15_stage5_exit_review_2026-10-30.md) 与 [Windows 原生 GUI 一次性验收](docs/part5/16_stage5_native_gui_windows_acceptance.md)。
 
 ## 系统架构
 
@@ -112,6 +112,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 - [Stage 4：历史封版记录](docs/part4_archive/12_stage4_release_candidate_2026-10-28.md)
 - [Stage 5：集成问题记录](docs/part5/02_integration_issue_log.md)
 - [Stage 5：完整闭环、性能和 GDB 验收报告](docs/part5/15_stage5_exit_review_2026-10-30.md)
+- [Stage 5：Windows 原生 GUI 验收记录与操作](docs/part5/16_stage5_native_gui_windows_acceptance.md)
 - [Stage 6：未来任务编排和边界约束](docs/part6/00_stage6_interface_and_acceptance_contract.md)
 
-Stage4 验收备份保持独立不变。Stage5 无头闭环和时序竞争修复分别见已合并的 [PR #25](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/25) 与 [PR #26](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/26)。原生 GUI 实验 [PR #15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/15) 尚未通过完整验收，不应和主线成功的 PyBullet DIRECT 测试混淆。
+Stage4 验收备份保持独立不变。Stage5 无头闭环和时序竞争修复分别见已合并的 [PR #25](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/25) 与 [PR #26](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/26)。原生 GUI 已从旧 [PR #15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/15) 整理并通过 [PR #28](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/28) 合入主线：Linux Xvfb 真实 p.GUI 三段运动与 Windows/Linux 无头 QEMU 观察器已通过；但 Windows 本机图形窗口和鼠标操作仍待人工验收。
