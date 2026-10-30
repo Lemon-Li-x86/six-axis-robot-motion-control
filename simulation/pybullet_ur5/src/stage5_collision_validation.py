@@ -145,7 +145,9 @@ def validate_joint_path(
             "passed": True,
             "sampled_states": sampled,
             "collision": None,
-            "minimum_measured_clearance_m": minimum_measured_clearance_m,
+            "minimum_measured_clearance_m": (
+                minimum_measured_clearance_m if math.isfinite(minimum_measured_clearance_m)
+                else None),
             "nearest_link_index": nearest_link_index,
             "clearance_search_radius_m": measurement_radius_m,
             "scope": "discrete_full_link_static_obstacle_clearance",
