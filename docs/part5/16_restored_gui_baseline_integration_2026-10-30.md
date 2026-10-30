@@ -44,3 +44,28 @@
 5. Windows 本机原生 GUI：三段自动运动 → 鼠标拖拽 J1/J2/J3 → 松开 → **C 固件输出继续且最终实际关节回到该次 HOLD 合法连续目标**；记录 worker.log、joint_trace.csv、result.json 中的目标和实测、规划错误计数。不得用单纯 ACK、单元测试、回放或 `passed=true` 代替物理松手验收。
 
 在完成并复核上述门禁前保留 **Draft PR**，不合并 `main`；任何失败都应定位实测证据，不降低原阈值、不改变 Stage4 参数或在 GUI 外添加假回位。
+
+## 5. 2026-10-30 兼容修复与人工测试入口
+
+本分支最初的 `2e7a1a3` 合并提交包含 7307984 GUI 的字节级原版。**请不要把该事实误写成此集成分支后续文件始终完全相同**：为了补上第五阶段功能，本分支随后通过增量补丁修改了 `stage5_qemu_uart_visual_demo.py`、`stage5_qemu_uart_live_gui.py` 和 Windows 启动脚本；历史 7307984 原版仍可在备份分支直接按 blob SHA 校验，未动。原来已验证的连续角度解绕、关节限位、HOLD 触发与重规划函数未改。
+
+追加的变更及验收：
+- 为原 GUI worker 添加**可选** `--stage5-c-apf-library`、`--stage5-route-case`、`--stage5-raw-route`，采用原主线经历史 CI 验证的 C APF + C IK 路线预检与物理整臂逐帧碰撞门禁，缺省不改原六轴三段工作流；
+- APF 短路径用 `monitoring_ticks` 检查全程时钟对应，普通三段运动仍用 `trajectory_samples`；
+- 新增 Windows DLL 导出保护（`WINDOWS_EXPORT_ALL_SYMBOLS`），无第二份 C 避障算法。Windows 启动脚本 `-Stage5RouteCase blocked` 会生成 DLL、运行 CTest，然后启动真实原生 GUI；
+- PyBullet 窗口被按 X 断开时仍返回 NOT PASS，且不再双重 disconnect。人工验收时**按 Q 正常退出**，不要在测量结束前关闭窗口。
+- Linux/Windows 新增 CLI 单元测试；完整跨平台 CI 和 Windows 人工拖拽验收仍是门禁。
+
+在 Windows 仓库根目录、切到当前 PR 最新 HEAD 后执行：
+
+```powershell
+# 原已初步验证的六轴 3 段运动 + 原生 GUI HOLD
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -DiagnosticsTimeoutSeconds 30 -OutputDir build/stage5-gui-hold-check
+
+# 真实 C APF/IK 带阻挡长方体的静态避障 + UART/FreeRTOS/GUI HOLD
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -DiagnosticsTimeoutSeconds 30 -Stage5RouteCase blocked -OutputDir build/stage5-gui-blocked-check
+```
+
+人工验收按：自动运动完成 → 进入 HOLD → 使用原生鼠标拾取慢慢拉开且松开 → 等固件回到合法连续目标 → 按 Q 退出 → 查看各自目录 `result.json`、`worker.log`、`uart_live.jsonl`、`joint_trace.csv`。如关节逼近 URDF 极限，缓慢松开，不以故障停机假冒成功。
+
+这是**Windows 本机 PyBullet/QEMU 仿真实验**，不是实体工业机器人安全认证。
