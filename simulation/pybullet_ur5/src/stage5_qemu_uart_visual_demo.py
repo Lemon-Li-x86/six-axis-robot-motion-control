@@ -730,7 +730,7 @@ def preserve_gui_after_physics_fault(
           flush=True)
     try:
         bullet.addUserDebugText(
-            "PHYSICAL FEEDBACK FAULT / PHYSICS STOPPED / PRESS Q TO EXIT",
+            "PHYSICAL SAFETY STOP / PHYSICS STOPPED / PRESS Q TO EXIT",
             [-0.7, 0.0, 0.85], textColorRGB=[1.0, 0.1, 0.1],
             textSize=1.35, lifeTime=0,
         )
@@ -859,6 +859,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     next_diagnostic = 0.0
     final_diagnostics = False
     hold_started = None
+    settled_ee_xyz_m = None
+    settled_ee_goal_error_mm = None
     ending = False
     motor_target_rebase_pending = True
     hold_request_sequence = None
@@ -1043,6 +1045,26 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         "closing X before the final sample is not a PASS.")
                 if sequencer.done and hold_started is None:
                     hold_started = now
+                    if avoidance_report is not None:
+                        settled_ee_xyz_m = list(p.getLinkState(
+                            arm, p.getNumJoints(arm) - 1,
+                            computeForwardKinematics=True)[4])
+                        expected_ee = avoidance_report["cartesian_goal_m"]
+                        settled_ee_goal_error_mm = (
+                            1000.0 * math.dist(settled_ee_xyz_m, expected_ee))
+                        print(
+                            "[APF PHYSICAL EE] actual_m="
+                            f"{[round(v, 4) for v in settled_ee_xyz_m]}, "
+                            "goal_m="
+                            f"{[round(v, 4) for v in expected_ee]}, "
+                            f"error_mm={settled_ee_goal_error_mm:.3f}",
+                            flush=True)
+                        audit.write(json.dumps(dict(
+                            event="apf_physical_ee_at_hold_entry",
+                            actual_ee_xyz_m=settled_ee_xyz_m,
+                            goal_ee_xyz_m=expected_ee,
+                            physical_ee_goal_error_mm=settled_ee_goal_error_mm,
+                            segments_settled=sequencer.completed)) + "\n")
                     if options.interactive_hold:
                         print("[HOLD] PyBullet native mouse picking is active; controller holds the final goal", flush=True)
                 if stop_requested is not None and stop_requested():
@@ -1524,6 +1546,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "headless": options.headless,
                 "motor_commands": "virtual_serial_only",
                 "avoidance_preflight": avoidance_report,
+                "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
+                "physical_ee_goal_error_at_hold_entry_mm":
+                    settled_ee_goal_error_mm,
                 "runtime_collision_scans": collision_scans,
                 "runtime_full_link_collision_free": (
                     bool(collision_scans) if prepare_motion is not None else None),
@@ -1599,6 +1624,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         failure = dict(passed=False, error=repr(error),
             target_frames=target_frames, feedback_acks=feedback_acks,
             segments_settled=sequencer.completed, diagnostics=diagnostic_values,
+            physical_ee_at_hold_entry_m=settled_ee_xyz_m,
+            physical_ee_goal_error_at_hold_entry_mm=settled_ee_goal_error_mm,
             gui_joint_stop_corrections=gui_joint_stop_corrections,
             gui_joint_stop_last=gui_joint_stop_last)
         if isinstance(error, Stage5RuntimeClearanceError):
