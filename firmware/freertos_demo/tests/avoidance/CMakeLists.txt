@@ -53,6 +53,9 @@ target_include_directories(stage5_apf_bridge PRIVATE
 )
 set_target_properties(stage5_apf_bridge PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+    # No C APF-specific dllexport macros in production headers.
+    # Export the production C symbols for host ctypes on Windows only.
+    WINDOWS_EXPORT_ALL_SYMBOLS YES
 )
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(stage5_apf_bridge PRIVATE
