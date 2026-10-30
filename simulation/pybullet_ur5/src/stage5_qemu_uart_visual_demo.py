@@ -659,7 +659,7 @@ def enforce_runtime_obstacle_clearance(
     bullet, arm: int, obstacles: Sequence[int],
     required_m: float, phase: str,
     measurement_radius_m: float | None = None,
-) -> tuple[float, int | None]:
+) -> tuple[float | None, int | None]:
     """Fail closed on actual PyBullet link geometry in BOTH motion and HOLD.
 
     Positive distances below required_m are clearance faults, not contact.
@@ -691,7 +691,7 @@ def enforce_runtime_obstacle_clearance(
                 if distance < required_m:
                     raise Stage5RuntimeClearanceError(
                         link, obstacle, distance, required_m, phase)
-    return closest, closest_link
+    return (closest if math.isfinite(closest) else None), closest_link
 
 
 def draw_avoidance_gui_evidence(bullet, preflight: dict) -> None:
@@ -1085,7 +1085,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         print(
                             "[APF HOLD GEOMETRY] planned_route_min_m="
                             f"{avoidance_report.get('minimum_planned_full_link_clearance_m')}; "
-                            f"hold_entry_min_m={hold_entry_clearance_m:.6f}, "
+                            f"hold_entry_min_m={hold_entry_clearance_m}, "
                             f"closest_link={hold_entry_closest_link}; "
                             f"actual_joint_deg={hold_entry_actual_joint_deg}",
                             flush=True)
