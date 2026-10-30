@@ -86,6 +86,10 @@ GUI_JOINT_STOP_FORCE_MULTIPLIER = 20.0
 # Numerical penetration allowance for the native Bullet joint-limit solver.
 # This is NOT extra authorized travel and is not fed to the C firmware as a limit.
 GUI_JOINT_STOP_NUMERICAL_SLOP_DEG = 0.10
+# Simulation GUI picking policy only, NOT a substitute for UR5 URDF/C travel.
+# Firmware and DIRECT validation retain the full manufacturer-model range.
+GUI_JOINT_TRAVEL_MODES = ("single-turn", "urdf")
+DEFAULT_GUI_JOINT_TRAVEL_MODE = "single-turn"
 TRACE_HEADER = (
     "simulated_time_s", "segment", "tool_x_m", "tool_y_m", "tool_z_m",
     *(f"command_{name}_deg" for name in JOINT_NAMES),
@@ -109,6 +113,7 @@ class DemoOptions:
     opengl2: bool = False  # Native PyBullet GUI renderer option; DIRECT is unchanged.
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
     hold_observe_only: bool = False  # Passive PID observation, no replan requests.
+    gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE
 
 
 def hold_replan_allowed(
@@ -176,6 +181,7 @@ def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
 
 def configure_native_urdf_joint_stops(
     bullet, arm: int, joints: Sequence[int],
+    travel_mode: str = "urdf",
 ) -> tuple[tuple[float, float], ...]:
     """Reinforce Bullet's own URDF revolute limit constraints for native picking.
 
@@ -188,6 +194,8 @@ def configure_native_urdf_joint_stops(
     """
     if len(joints) != wire.JOINT_COUNT:
         raise ValueError("URDF stop setup requires six actuated joints")
+    if travel_mode not in GUI_JOINT_TRAVEL_MODES:
+        raise ValueError("Unknown GUI joint travel policy")
     limits = []
     for name, index in zip(JOINT_NAMES, joints):
         info = bullet.getJointInfo(arm, index)
@@ -198,6 +206,14 @@ def configure_native_urdf_joint_stops(
         effort = float(info[10])
         if not math.isfinite(effort) or effort <= 0:
             raise ValueError(f"{name} lacks positive URDF joint effort")
+        if travel_mode == "single-turn":
+            # The UART wire angle is canonical to a 360deg turn, but the
+            # URDF mechanical model legitimately permits wider travel.
+            # Limit only this *interactive GUI experiment* to +/-180deg.
+            # Intersect with URDF, never extend an actual model stop.
+            low, high = max(low, -math.pi), min(high, math.pi)
+            if low >= high:
+                raise ValueError(f"{name} has no single-turn GUI travel")
         bullet.changeDynamics(
             arm, index, jointLowerLimit=low, jointUpperLimit=high,
             jointLimitForce=effort * GUI_JOINT_STOP_FORCE_MULTIPLIER,
@@ -723,6 +739,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError("Diagnostics timeout must be between 5 and 60 seconds")
     if options.hold_observe_only and not options.interactive_hold:
         raise ValueError("Passive HOLD observation requires interactive HOLD")
+    if options.gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
+        raise ValueError("Unknown GUI joint travel policy")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -805,6 +823,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         pybullet_api_version=p.getAPIVersion(),
         physics_mode="DIRECT" if options.headless else "GUI",
         native_gui_picking=not options.headless,
+        gui_joint_travel=(options.gui_joint_travel if not options.headless
+                          else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
         physics_clock_gate="QMP stop/cont per UART target batch",
         feedback_step_s=FEEDBACK_STEP_S, physics_step_s=PHYSICS_STEP_S,
@@ -858,7 +878,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 motor_velocity_caps_rad_s if not options.headless else None)
             if not options.headless:
                 joint_limits_rad = configure_native_urdf_joint_stops(
-                    p, arm, joints)
+                    p, arm, joints, travel_mode=options.gui_joint_travel)
+                print(
+                    "[GUI JOINT LIMITS] " + options.gui_joint_travel + ": "
+                    + ", ".join(
+                        f"J{i + 1} [{math.degrees(low):.1f}, {math.degrees(high):.1f}]deg"
+                        for i, (low, high) in enumerate(joint_limits_rad)),
+                    flush=True)
             else:
                 joint_limits_rad = tuple(
                     (p.getJointInfo(arm, index)[8], p.getJointInfo(arm, index)[9])
@@ -1568,6 +1594,9 @@ def main() -> int:
                         default="clear")
     parser.add_argument("--stage5-raw-route", action="store_true",
                         help="Keep all original C APF waypoints (no compaction)")
+    parser.add_argument("--gui-joint-travel", choices=GUI_JOINT_TRAVEL_MODES,
+                        default=DEFAULT_GUI_JOINT_TRAVEL_MODE,
+                        help="GUI-only physical picking range; DIRECT always keeps URDF")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-visual-demo")
     parser.add_argument("--headless", action="store_true",
@@ -1594,6 +1623,7 @@ def main() -> int:
                        else args.frame_delay_ms) / 1000.0,
         timeout_s=args.timeout_s,
         hold_window=not args.no_hold,
+        gui_joint_travel=args.gui_joint_travel,
     )
     prepare_motion = None
     if args.stage5_c_apf_library is not None:
