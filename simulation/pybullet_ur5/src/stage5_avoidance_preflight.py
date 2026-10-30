@@ -281,6 +281,9 @@ def preflight_joint_avoidance(
         "joint_waypoints_rad": path,
         "segment_duration_s": durations,
         "sampled_full_arm_states": gate["sampled_states"],
+        "minimum_planned_full_link_clearance_m":
+            gate["minimum_measured_clearance_m"],
+        "nearest_planned_link_index": gate["nearest_link_index"],
         "total_minimum_rest_to_rest_duration_s": sum(durations),
         "static_collision_clearance_m": minimum_full_link_clearance_m,
         "cartesian_point_clearance_m": apf_config.clearance_mm/1000,
