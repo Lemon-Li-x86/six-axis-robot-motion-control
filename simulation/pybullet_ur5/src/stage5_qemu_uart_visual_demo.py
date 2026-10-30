@@ -930,6 +930,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             last_frame_wall = start_wall
             while True:
                 now = time.monotonic()
+                if not options.headless and not p.isConnected(client):
+                    raise RuntimeError(
+                        "PyBullet GUI window disconnected. For a measured HOLD "
+                        "verdict keep the window open and press Q to exit; "
+                        "closing X before the final sample is not a PASS.")
                 if sequencer.done and hold_started is None:
                     hold_started = now
                     if options.interactive_hold:
@@ -1533,14 +1538,17 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             except subprocess.TimeoutExpired:
                 qemu.kill()
                 qemu.communicate()
-        if client >= 0:
+        if client >= 0 and p.isConnected(client):
             if not options.headless and options.hold_window:
                 try:
                     status = "成功完成" if completed_successfully else "中断或失败"
                     input(f"[GUI] 演示{status}，按 Enter 关闭窗口...")
                 except EOFError:
                     pass
-            p.disconnect(client)
+            # Native window X may already have disconnected Bullet. Do not
+            # overwrite the original failure with a second disconnect error.
+            if p.isConnected(client):
+                p.disconnect(client)
         # 异常中途退出也留存已接收的轨迹，用于诊断。
         audit.close()
         live_trace.close()
