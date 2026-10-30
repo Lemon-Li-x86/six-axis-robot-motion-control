@@ -112,6 +112,46 @@ class RealUrdfGuiTravelTests(unittest.TestCase):
         finally:
             p.disconnect(client)
 
+    def test_real_bullet_single_turn_stop_under_repeated_torque_then_release(self):
+        try:
+            import pybullet as p
+        except ImportError:
+            self.skipTest("PyBullet not installed")
+        client = p.connect(p.DIRECT)
+        self.assertGreaterEqual(client, 0)
+        try:
+            p.setGravity(0, 0, 0)
+            p.setTimeStep(0.001)
+            p.setPhysicsEngineParameter(numSolverIterations=80)
+            arm = p.loadURDF(str(URDF), useFixedBase=True)
+            joints = joint_indices(p, arm)
+            bounds = configure_native_urdf_joint_stops(
+                p, arm, joints, travel_mode="single-turn")
+            high = bounds[0][1]
+            p.resetJointState(arm, joints[0], high - math.radians(1))
+            for joint in joints[1:]:
+                p.resetJointState(arm, joint, 0.0)
+            p.setJointMotorControlArray(
+                arm, joints, p.VELOCITY_CONTROL, forces=[0.0]*6)
+            maximum = float("-inf")
+            for _ in range(450):
+                p.setJointMotorControl2(
+                    arm, joints[0], p.TORQUE_CONTROL, force=150.0)
+                p.stepSimulation()
+                enforce_gui_joint_hard_stops(p, arm, joints, bounds)
+                maximum = max(maximum, p.getJointState(arm, joints[0])[0])
+            self.assertLessEqual(maximum, high + 1e-7)
+            held = p.getJointState(arm, joints[0])[0]
+            for _ in range(150):
+                p.setJointMotorControl2(
+                    arm, joints[0], p.TORQUE_CONTROL, force=-40.0)
+                p.stepSimulation()
+                enforce_gui_joint_hard_stops(p, arm, joints, bounds)
+            released = p.getJointState(arm, joints[0])[0]
+            self.assertLess(released, held - math.radians(0.1))
+        finally:
+            p.disconnect(client)
+
 
 if __name__ == "__main__":
     unittest.main()
