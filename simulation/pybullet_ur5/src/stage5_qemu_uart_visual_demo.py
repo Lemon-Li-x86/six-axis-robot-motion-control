@@ -1311,10 +1311,34 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 if stop_requested is not None and stop_requested():
                     if not sequencer.done or not options.interactive_hold:
                         raise InterruptedError("Observer requested live control shutdown")
+                    if (safe_gui_jog is not None and safe_gui_jog.applied == 0
+                            and not safe_gui_jog.cancel_requested):
+                        safe_gui_jog.cancel_requested = True
+                        audit.write(json.dumps(dict(
+                            event="safe_gui_jog_cancel_accepted",
+                            source="external_stop",
+                            reason="no_guarded_jog_requested",
+                            target_frames=target_frames)) + "\n")
                     ending = True
                 if options.interactive_hold and hold_started is not None:
-                    if options.hold_duration_s is not None and now-hold_started >= options.hold_duration_s:
-                        ending = True
+                    if (options.hold_duration_s is not None and
+                            now-hold_started >= options.hold_duration_s):
+                        if safe_gui_jog is not None and safe_gui_jog.applied == 0:
+                            if not safe_gui_jog.cancel_requested:
+                                safe_gui_jog.cancel_requested = True
+                                audit.write(json.dumps(dict(
+                                    event="safe_gui_jog_cancel_accepted",
+                                    source="hold_duration_limit",
+                                    reason="no_guarded_jog_requested",
+                                    target_frames=target_frames)) + "\n")
+                            ending = True
+                        elif (safe_gui_jog is not None and
+                              safe_gui_jog.applied > safe_gui_jog.completed):
+                            # Let an in-flight validated C recovery finish.
+                            # The independent observer has a finite grace period.
+                            pass
+                        else:
+                            ending = True
                 elif now-start_wall >= options.timeout_s:
                     raise TimeoutError(f"Demo timed out; completed {sequencer.completed}/{len(sequencer.goals)} segments")
                 if hold_request_sequence is not None and now-hold_request_at > 8.0:
