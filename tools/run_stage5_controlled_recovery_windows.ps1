@@ -3,7 +3,8 @@
 param(
     [string]$Python = "$PSScriptRoot/../.venv/Scripts/python.exe",
     [string]$Qemu = "qemu-system-arm",
-    [string]$OutputDir = "build/stage5-controlled-recovery-windows"
+    [string]$OutputDir = "build/stage5-controlled-recovery-windows",
+    [ValidateSet(1, 2)][int]$Cycles = 1
 )
 $ErrorActionPreference = "Stop"
 Push-Location (Join-Path $PSScriptRoot "..")
@@ -47,7 +48,8 @@ try {
         "--elf", $elf,
         "--library", $dll.FullName,
         "--qemu", $Qemu,
-        "--output-dir", $OutputDir
+        "--output-dir", $OutputDir,
+        "--cycles", "$Cycles"
     )
     & $Python @pyArgs
     $exitCode = $LASTEXITCODE
