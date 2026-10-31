@@ -15,6 +15,9 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     Stage5RuntimeClearanceError,
     enforce_runtime_obstacle_clearance,
     draw_avoidance_gui_evidence,
+    apf_hold_mouse_picking_allowed,
+    enforce_collision_aware_hold_policy,
+    Stage5UnvalidatedHoldRecoveryError,
 )
 
 
@@ -50,6 +53,27 @@ class EvidenceDrawing:
 
 
 class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
+    def test_obstacle_scene_disables_native_mouse_drag_in_gui(self):
+        self.assertFalse(apf_hold_mouse_picking_allowed(False, True))
+        self.assertFalse(apf_hold_mouse_picking_allowed(True, True))
+        self.assertFalse(apf_hold_mouse_picking_allowed(True, False))
+        # Existing unblocked native GUI manual HOLD remains unchanged.
+        self.assertTrue(apf_hold_mouse_picking_allowed(False, False))
+
+    def test_collision_aware_hold_policy_refuses_blind_rearm_before_uart(self):
+        measured = (3245, -4250, 5290, -6229, 4002, 6833)
+        goal = (4065, -6701, 9383, -1569, 1502, 1415)
+        with self.assertRaises(Stage5UnvalidatedHoldRecoveryError) as caught:
+            enforce_collision_aware_hold_policy(True, measured, goal)
+        error = caught.exception
+        self.assertEqual(error.fault_type, "stage5_unvalidated_hold_recovery_blocked")
+        self.assertEqual(error.measured_raw, measured)
+        self.assertEqual(error.goal_raw, goal)
+        self.assertGreater(error.deviation_deg, 50.0)
+        self.assertIn("NOT sent", str(error))
+        # The legacy no-obstacle HOLD policy must not regress.
+        self.assertIsNone(enforce_collision_aware_hold_policy(False, measured, goal))
+
     def test_hold_drag_clearance_violation_remains_fatal_with_actual_distance(self):
         physics = FakePhysics(0.009787)
         with self.assertRaises(Stage5RuntimeClearanceError) as caught:
