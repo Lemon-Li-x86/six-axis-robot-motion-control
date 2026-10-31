@@ -96,6 +96,19 @@ jobs:
           name: stage5-blocked-apf-direct-hold-geometry
           path: build/stage5-observer-blocked-hold/*
           if-no-files-found: ignore
+      - name: Execute controlled disturbance and newly validated C APF recovery via actual QEMU UART
+        run: |
+          python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --output-dir build/stage5-controlled-hold-recovery
+      - name: Archive controlled C APF recovery evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-controlled-C-APF-hold-recovery
+          path: build/stage5-controlled-hold-recovery/*
+          if-no-files-found: ignore
       - name: Preserve blocked APF observer evidence
         if: always()
         uses: actions/upload-artifact@v4
