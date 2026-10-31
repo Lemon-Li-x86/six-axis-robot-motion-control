@@ -14,6 +14,7 @@ import math
 import multiprocessing as mp
 import os
 import queue
+import subprocess
 import sys
 import time
 import traceback
@@ -126,6 +127,29 @@ def next_gui_hung_streak(previous: int, status: dict[str, int] | None) -> int:
     if status is None or status.get("visible", 0) < 1 or status.get("hung", 0) < 1:
         return 0
     return previous + 1
+
+
+def terminate_stuck_worker(worker, *, platform_name: str | None = None) -> None:
+    """Kill worker + its QEMU child on Windows, not unrelated processes.
+
+    Multiprocessing terminate() on Windows kills only the Python worker and
+    leaves child QEMU alive. Only use taskkill /T for an already stuck worker;
+    normal worker shutdown owns its own QEMU cleanup.
+    """
+    if not worker.is_alive():
+        return
+    system = os.name if platform_name is None else platform_name
+    if system == "nt" and worker.pid is not None:
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(worker.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False)
+            if result.returncode == 0:
+                return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    worker.terminate()
 
 
 def console_abort_pressed() -> bool:
@@ -752,7 +776,7 @@ def run_live(
         if worker.is_alive():
             worker.join(timeout=5.0)
         if worker.is_alive():
-            worker.terminate()
+            terminate_stuck_worker(worker)
         if worker.pid is not None:
             worker.join(timeout=5.0)
         audit.close()
