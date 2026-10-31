@@ -12,6 +12,7 @@ dragging; resetJointState is a deterministic simulation-only test actuator.
 from __future__ import annotations
 
 import math
+import time
 from typing import Callable, Sequence
 
 from stage5_collision_validation import InvalidPath, validate_joint_path
@@ -117,6 +118,8 @@ class SafeGuiJog:
         if not (lower <= candidate[axis] <= upper):
             return {"event": "safe_gui_jog_rejected", "reason": "GUI_joint_limit", **base}
         required = self.minimum_clearance_m + JOG_EXTRA_CLEARANCE_M
+        print("[SAFE GUI JOG PHASE] outbound_collision_preflight_started", flush=True)
+        preflight_started = time.monotonic()
         try:
             gate = validate_joint_path(
                 p, self.robot, self.obstacles, self.joints, [current, candidate],
@@ -130,6 +133,10 @@ class SafeGuiJog:
         if not gate["passed"]:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "full_arm_clearance", "collision": gate["collision"], **base}
+        print(
+            "[SAFE GUI JOG PHASE] outbound_collision_preflight_finished "
+            f"wall_s={time.monotonic()-preflight_started:.3f}",
+            flush=True)
 
         # The preview C recovery planner reads the *current* robot pose.
         # Temporarily present the proposed state to the planner, and restore
@@ -139,7 +146,13 @@ class SafeGuiJog:
                 p.resetJointState(
                     self.robot, j, targetValue=q, targetVelocity=0,
                     physicsClientId=self.client)
+            print("[SAFE GUI JOG PHASE] c_return_preview_started", flush=True)
+            preview_started = time.monotonic()
             preview = self.preview_return()
+            print(
+                "[SAFE GUI JOG PHASE] c_return_preview_finished "
+                f"wall_s={time.monotonic()-preview_started:.3f}",
+                flush=True)
         except (ValueError, RuntimeError) as exc:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "recovery_preflight_failed",
