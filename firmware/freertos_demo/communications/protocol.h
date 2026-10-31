@@ -40,6 +40,8 @@
 #define CMD_SET_PARAMETER            0x02U
 /* PyBullet -> firmware: command admission, NOT an actuator target. */
 #define CMD_REQUEST_JOINT_MOVE       0x03U
+/* QEMU simulation ONLY: non-actuating embedded C APF preview. */
+#define CMD_REQUEST_APF_STEP         0x04U
 
 #define CMD_JOINT_STATE              0x81U
 #define CMD_JOINT_STATE_ACK          0x82U
@@ -48,6 +50,7 @@
 #define CMD_PARAMETER_ACK            0x85U
 /* Firmware -> PyBullet: sequenced request admission status. */
 #define CMD_JOINT_MOVE_ACK           0x86U
+#define CMD_APF_STEP_RESPONSE        0x87U
 
 
 /* =========================================================
@@ -65,6 +68,16 @@
 #define PROTOCOL_MOVE_REQUEST_PAYLOAD_LEN (1U + PROTOCOL_JOINT_PAYLOAD_LEN)
 #define PROTOCOL_MOVE_ACK_PAYLOAD_LEN 2U
 #define PROTOCOL_MOVE_ACK_FRAME_LEN (2U + 1U + 1U + PROTOCOL_MOVE_ACK_PAYLOAD_LEN + 1U)
+
+/* QEMU-only APF preview request: seq | goal offset (3*i16 mm) |
+ * AABB min/max relative to current measured EE (6*i16 mm) |
+ * caller-provided APF parameters (6*IEEE754 float32 little-endian).
+ * No default obstacle/parameters, no actuation, one obstacle per request.
+ * Firmware owns the current starting pose (fresh joint feedback + C FK).
+ */
+#define PROTOCOL_APF_STEP_REQUEST_PAYLOAD_LEN (1U + 9U*2U + 6U*4U)
+#define PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN (2U + 3U*4U)
+#define PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN (2U + 1U + 1U + PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN + 1U)
 
 
 /* =========================================================
@@ -485,5 +498,26 @@ robot_status_t protocol_build_joint_move_ack_frame(
     robot_status_t status,
     uint8_t frame[PROTOCOL_MOVE_ACK_FRAME_LEN]);
 
+/* Wire structure only, no algorithm data or duplicated strategy defaults. */
+typedef struct {
+    uint8_t sequence;
+    int16_t goal_offset_mm[3];
+    int16_t obstacle_min_offset_mm[3];
+    int16_t obstacle_max_offset_mm[3];
+    float apf_parameters[6];
+} protocol_apf_step_request_t;
+
+/* Parsing is transactional: on reject, out is unchanged. */
+robot_status_t protocol_parse_apf_step_request(
+    const protocol_frame_t *frame,
+    protocol_apf_step_request_t *out);
+
+/* Reply carries absolute base-link EE coordinates in millimetres,
+ * not permission for motion. On failure coordinates are all zero.
+ * The actual servo target is NEVER modified by this API. */
+robot_status_t protocol_build_apf_step_response(
+    uint8_t sequence, robot_status_t status,
+    const float next_mm[3],
+    uint8_t frame[PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN]);
 
 #endif
