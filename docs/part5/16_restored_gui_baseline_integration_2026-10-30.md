@@ -183,3 +183,25 @@ Get-Content .\build\stage5-safe-gui-jog-local-1\worker.log -Tail 80
 验收必须同时满足：`passed=true`、`safe_gui_jog_applied=1`、`native_gui_picking=false`、`obstacle_recovery_preflight.passed=true`、`obstacle_recovery_segments_settled>=1`、`hold_recoveries>=1`、最终误差<=0.15°，无 runtime clearance breach 和固件 fault。**没有按按钮就正常退出不得算点动通过**；按钮撞到拒绝区域不会擅自调整障碍物或者降低阈值。失败结果同样保留完整日志；由于这一版本尚需 Windows GUI 鼠标点击验收，不能将 Python 单元测试等同为 GUI 人工验收。
 
 留意模式区别：`--safe-gui-jog` 是受控 GUI 按钮操作，不是 `--test-obstacle-hold-recovery` 的 DIRECT 无窗口注入，也不是以前曾经导致接触的原生 drag picking。真实硬件不在本项目目前验证范围内。
+
+## 12. 六轴可选小步点动、回程预检和有限多轮恢复（2026-10-31）
+
+Stage5 手动 GUI 安全点动按键的旧 J1+2° 单轮模式已在 Windows 本机验收成功，原报告: `safe_gui_jog_applied=1`, `obstacle_recovery_segments_settled=2`, `hold_recoveries=1`, `hold_final_error_deg=0.02`, `runtime_full_link_collision_free=true`。本节是**后续新版本**，不同于已经通过的旧实验，需重新手工验收，不得移用旧 PASS。
+
+保留 `-SafeJog` GUI 入口（不重新开放无约束 mouse picking），将按钮改为左侧 GUI 调试面板的两个滑块和正反按钮：
+
+1. `SAFE JOG: selected joint J1..J6`，将滑块调到关节编号 1 至 6（内部向最近的整数取整；超界或非有限值拒绝）。
+2. `SAFE JOG: step deg (0.5,1,1.5,2)`，将步长调为0.5、1、1.5或2度（最大2度）。
+3. `SAFE APF JOG: selected J + step` 或 `... - step`。只在自动避障及上一轮恢复全部真实 ACK / 物理结算完成之后允许操作，按键不能提前排队；**每次运行最多三次成功点动回位**，其它按键拒绝并在 result.json记录原因。
+
+每个按钮均先读取同一 PyBullet URDF/GUI 实际六轴关节位置、速度；按所选轴的**当前**连续角计算候选新状态，不使用固定 J1 零点。检查 GUI 关节限位；用真实全连杆 Bullet 碰撞检测以**最多0.25°采样间隔**检查当前姿态→候选姿态，在原10mm安全距离之外预留交互额外2mm裕量（即 12mm）；**额外预检完整的 C APF/IK 回程到原六轴目标**，也要求12mm。回程预检期间只在同一仿真世界暂时设为候选姿态，且必须还原每轴原始位置及速度，不对 UART 下发动作。任一检查失败即拒绝点动，不改变实际模拟关节位置。通过后才在当前模拟机器人上施加受限关节状态偏移，交由已经验证过的真实 FreeRTOS/UART C APF/IK 回程流程执行，再次以12mm检查返回路线、运行时10mm检测不变。
+
+**多轮回位状态约束：** 仅当所有 C APF 回程段均收到固件 ACK、并分别经过15帧实测到位，才将按钮解锁；回程 UART 序列号从前一轮最后一个序列号的下一值继续分配，避免每轮从45重新开始；`obstacle_recovery_routes` 记录各轮 `first_sequence`、规划段数和 `completed`。最终验收要求 `safe_gui_jog_applied == safe_gui_jog_completed == hold_recoveries` 且至少1，未完成任何一轮即 `passed=false`；`safe_gui_jog_refused` 允许非零，但拒绝期间不允许关节姿态突变或触发新 UART 请求。
+
+PowerShell 命令沿用：
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Stage5RouteCase blocked -SafeJog -GuiJointTravel single-turn -DiagnosticsTimeoutSeconds 30 -OutputDir build/stage5-gui-sixaxis-jog-1
+```
+第一次手工验收建议只选择 J1、+2°，验证旧路径没有回归；第二轮在上一轮全部回位后选择另一轴（可先 J6 ±0.5°），确认新按钮状态、动作是否经 C APF/IK 重新规划且结果安全。**并非所有轴/方向/位移都保证可达，预检失败时拒绝点动才是正确行为。** 交互选项只供仿真；无连续扫掠形式化证明，无真实接触/力矩/伺服硬件安全认证。
+
+自动化新增 `tools/tests/run_stage5_controlled_apf_hold_recovery.py --cycles 2`，在 PyBullet DIRECT 上安排两次不同符号的有界 J1 偏移，验证各轮重新规划、UART 序列不重复、物理到位及严格碰撞检测。Windows 一键脚本 `tools/run_stage5_controlled_recovery_windows.ps1 -Cycles 2` 可离线再现。此功能与真实 GUI 人工按钮是两种验收，不应混为一谈。
