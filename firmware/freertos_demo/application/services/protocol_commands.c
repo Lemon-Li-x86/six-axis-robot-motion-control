@@ -30,6 +30,9 @@
 #include "motion_pipeline.h"
 #include "motion_limits.h"
 #include "stage4_motion_config.h"
+#include "kinematics.h"
+#include "angle_utils.h"
+#include "potential_field.h"
 #endif
 
 
@@ -492,6 +495,84 @@ static void handle_simulated_joint_move(
        ==ROBOT_STATUS_OK)
         (void)uart_tx_manager_send_frame(ack,PROTOCOL_MOVE_ACK_FRAME_LEN);
 }
+/* Explicit QEMU-only APF step executed by the ARM firmware, not a Python
+ * potential-field replica. No motor command, queue admission or implicit
+ * path execution. The host MUST still validate C IK and actual full links
+ * before a separate CMD_REQUEST_JOINT_MOVE may be sent. */
+static void handle_simulated_apf_step(
+    const protocol_frame_t *frame, uint32_t now_tick, uint32_t tick_rate_hz)
+{
+    protocol_apf_step_request_t request={0};
+    motor_state_observation_t feedback={0};
+    robot_joint_angles_t canonical={{0}};
+    robot_transform_t transform={{{0}}};
+    robot_apf_point_t current={{0}}, goal={{0}}, next={{0}};
+    robot_apf_aabb_t obstacle={0};
+    robot_apf_config_t config={0};
+    robot_apf_step_info_t info={0};
+    const motion_stage4_config_t *motion=stage4_motion_default_config();
+    uint8_t sequence=0U;
+    uint8_t response[PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN];
+    robot_status_t status;
+    uint64_t max_age;
+    float coordinates_mm[3]={0.0F,0.0F,0.0F};
+    size_t axis;
+
+    if(frame==NULL || frame->length<1U)
+        return;
+    sequence=frame->payload[0];
+    status=protocol_parse_apf_step_request(frame,&request);
+    if(status==ROBOT_STATUS_OK) {
+        if(tick_rate_hz==0U)
+            status=ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+        else {
+            max_age=((uint64_t)motion->feedback_timeout_ms*
+                     (uint64_t)tick_rate_hz)/1000U;
+            if(max_age==0U || max_age>0x7FFFFFFFU)
+                status=ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            else {
+                status=motor_state_get_feedback(&feedback);
+                if(status==ROBOT_STATUS_OK &&
+                   !motor_state_feedback_is_fresh(
+                      &feedback,now_tick,(uint32_t)max_age))
+                    status=ROBOT_STATUS_ERROR_NOT_READY;
+            }
+        }
+    }
+    if(status==ROBOT_STATUS_OK)
+        status=robot_angles_canonicalize(
+            &feedback.feedback.unwrapped_positions,&canonical);
+    if(status==ROBOT_STATUS_OK)
+        status=kinematics_forward(&canonical,&transform);
+    if(status==ROBOT_STATUS_OK) {
+        config.attraction_gain=(double)request.apf_parameters[0];
+        config.repulsion_gain=(double)request.apf_parameters[1];
+        config.influence_distance_mm=(double)request.apf_parameters[2];
+        config.clearance_mm=(double)request.apf_parameters[3];
+        config.maximum_step_mm=(double)request.apf_parameters[4];
+        config.goal_tolerance_mm=(double)request.apf_parameters[5];
+        for(axis=0U;axis<3U;axis++) {
+            current.mm[axis]=(double)transform.matrix[axis][3];
+            goal.mm[axis]=current.mm[axis]+
+                (double)request.goal_offset_mm[axis];
+            obstacle.min_corner.mm[axis]=current.mm[axis]+
+                (double)request.obstacle_min_offset_mm[axis];
+            obstacle.max_corner.mm[axis]=current.mm[axis]+
+                (double)request.obstacle_max_offset_mm[axis];
+        }
+        status=robot_apf_step(
+            &current,&goal,&obstacle,1U,&config,&next,&info);
+        if(status==ROBOT_STATUS_OK) {
+            for(axis=0U;axis<3U;axis++)
+                coordinates_mm[axis]=(float)next.mm[axis];
+        }
+    }
+    if(protocol_build_apf_step_response(sequence,status,
+           status==ROBOT_STATUS_OK ? coordinates_mm : NULL,
+           response)==ROBOT_STATUS_OK)
+        (void)uart_tx_manager_send_frame(
+            response,PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN);
+}
 #endif
 
 /* =========================================================
@@ -532,6 +613,9 @@ void protocol_commands_dispatch_frame(
 #if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
         case CMD_REQUEST_JOINT_MOVE:
             handle_simulated_joint_move(frame,current_tick,tick_rate_hz);
+            break;
+        case CMD_REQUEST_APF_STEP:
+            handle_simulated_apf_step(frame,current_tick,tick_rate_hz);
             break;
 #endif
 
