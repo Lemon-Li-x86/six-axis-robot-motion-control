@@ -114,6 +114,9 @@ class DemoOptions:
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S
     hold_observe_only: bool = False  # Passive PID observation, no replan requests.
     gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE
+    # Internal DIRECT/QEMU synthetic disturbance regression ONLY.
+    # Explicitly not enabled for unrestricted human GUI mouse dragging.
+    test_obstacle_hold_recovery: bool = False
 
 
 class Stage5UnvalidatedHoldRecoveryError(ValueError):
@@ -419,7 +422,11 @@ def advance_physics_step_batch(
 class MotionSequencer:
     """按真实反馈到位情况依次发出关节请求，不覆盖未完成的请求。"""
 
-    def __init__(self, goals: Sequence[Sequence[int]]) -> None:
+    def __init__(self, goals: Sequence[Sequence[int]],
+                 *, first_sequence: int = 41) -> None:
+        if type(first_sequence) is not int or not 0 <= first_sequence <= 255:
+            raise ValueError("Invalid motion UART sequence base")
+        self.first_sequence = first_sequence
         self.goals = validate_goals(goals)
         self.index = -1
         self.sequence = -1
@@ -445,7 +452,7 @@ class MotionSequencer:
         if self.index + 1 >= len(self.goals):
             raise RuntimeError("No remaining motion segment")
         self.index += 1
-        self.sequence = (41 + self.index) & 0xFF
+        self.sequence = (self.first_sequence + self.index) & 0xFF
         self.requested_at = now
         self.ack_pending = True
         self.settled_frames = 0
@@ -869,6 +876,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError("Passive HOLD observation requires interactive HOLD")
     if options.gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
         raise ValueError("Unknown GUI joint travel policy")
+    if options.test_obstacle_hold_recovery and (
+            not options.headless or not options.interactive_hold or
+            options.hold_observe_only or prepare_motion is None or
+            on_physics is None):
+        raise ValueError(
+            "C obstacle recovery experiment requires DIRECT, active HOLD, "
+            "real C APF preflight and an explicitly supplied disturbance")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -887,6 +901,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     safety_clearance_m = 0.0
     collision_scans = 0
     avoidance_report: dict | None = None
+    recovery_plan_report: dict | None = None
+    recovery_sequencer: MotionSequencer | None = None
+    recovery_attempted = False
+    recovery_segments_settled = 0
     firmware_max_velocity_deg_s = tuple(
         firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
@@ -959,7 +977,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         physics_mode="DIRECT" if options.headless else "GUI",
         native_gui_picking=native_picking_allowed,
         avoidance_hold_recovery_policy=(
-            "refuse_unvalidated_return_and_disable_manual_picking"
+            "DIRECT_controlled_disturbance_requires_validated_C_route"
+            if options.test_obstacle_hold_recovery
+            else "refuse_unvalidated_return_and_disable_manual_picking"
             if prepare_motion is not None else "original_unobstructed_hold"),
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
@@ -1172,6 +1192,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     raise TimeoutError(f"Demo timed out; completed {sequencer.completed}/{len(sequencer.goals)} segments")
                 if hold_request_sequence is not None and now-hold_request_at > 8.0:
                     raise TimeoutError("Hold recovery movement ACK timeout")
+                if (recovery_sequencer is not None and
+                        recovery_sequencer.ack_pending and
+                        now - recovery_sequencer.requested_at > 8.0):
+                    raise TimeoutError("Validated C recovery segment ACK timeout")
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
                 if time.monotonic() - last_frame_wall > 8.0:
@@ -1223,7 +1247,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     "<" + str(wire.JOINT_COUNT) + "h", payload)
                                 # 仅在运动请求已被接受后执行固件位置目标；启动
                                 # 时始终保持首次实测姿态，不能执行历史演示角度。
-                                if sequencer.accepted or (sequencer.done and options.interactive_hold):
+                                if (sequencer.accepted or
+                                        (sequencer.done and options.interactive_hold
+                                         and (recovery_sequencer is None or
+                                              recovery_sequencer.accepted))):
                                     physical_motor_targets_rad = continuous_firmware_servo_targets(
                                         targets, last_measured,
                                         physical_motor_targets_rad, joint_limits_rad,
@@ -1296,13 +1323,60 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                     for a,b in zip(measured, hold_goal_raw))
                                     if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
-                                        # Manual/external displacement invalidates
-                                        # the preflight's original start pose.
-                                        # Fail closed BEFORE proposing a direct
-                                        # firmware move back through an obstacle.
-                                        enforce_collision_aware_hold_policy(
-                                            bool(safety_obstacles),
-                                            measured, hold_goal_raw)
+                                        if safety_obstacles:
+                                            # The arbitrary GUI picking case remains
+                                            # blocked. Only a controlled DIRECT test
+                                            # can authorize a new complete C route.
+                                            if not options.test_obstacle_hold_recovery:
+                                                enforce_collision_aware_hold_policy(
+                                                    True, measured, hold_goal_raw)
+                                            if recovery_attempted:
+                                                enforce_collision_aware_hold_policy(
+                                                    True, measured, hold_goal_raw)
+                                            recovery_attempted = True
+                                            # Hold the displaced pose while C APF/
+                                            # IK and all-link gates inspect this same
+                                            # physical world with QMP clock paused.
+                                            current_position_rad = tuple(
+                                                math.radians(v / wire.JOINT_ANGLE_SCALE)
+                                                for v in measured)
+                                            set_joint_position_motors(
+                                                p, arm, joints,
+                                                current_position_rad,
+                                                motor_forces_nm,
+                                                gui_motor_velocity_caps)
+                                            if not hasattr(prepare_motion, "plan_hold_recovery"):
+                                                raise RuntimeError("C APF recovery planner unavailable")
+                                            recovery_plan_report = (
+                                                prepare_motion.plan_hold_recovery(
+                                                    p, arm, joints, client, plan))
+                                            recovery_goals = [
+                                                tuple(round(math.degrees(v) *
+                                                            wire.JOINT_ANGLE_SCALE)
+                                                      for v in waypoint)
+                                                for waypoint in recovery_plan_report[
+                                                    "joint_waypoints_rad"][1:]]
+                                            recovery_sequencer = MotionSequencer(
+                                                recovery_goals,
+                                                first_sequence=(
+                                                    sequencer.sequence + 1) & 0xff)
+                                            recovery_attempts += 1
+                                            audit.write(json.dumps(dict(
+                                                event="hold_C_apf_recovery_preflight",
+                                                passed=True,
+                                                from_measured_raw=list(measured),
+                                                planned_segments=len(recovery_goals),
+                                                min_full_link_clearance_m=
+                                                    recovery_plan_report[
+                                                        "minimum_measured_full_link_clearance_m"],
+                                            )) + "\n")
+                                            sock.sendall(recovery_sequencer.next_request(
+                                                time.monotonic()))
+                                            print(
+                                                "[HOLD C APF] Accepted new measured-pose "
+                                                f"preflight: {len(recovery_goals)} "
+                                                "collision-checked segments",
+                                                flush=True)
                                         recovery_stalled_reported = False
                                         recovering = True
                                         recovery_attempts = 0
@@ -1314,7 +1388,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         recovery_previous_motor_targets = None
                                         audit.write(json.dumps(dict(event="hold_deviation",
                                             error_deg=deviation)) + "\n")
-                                if recovering and not ending:
+                                if recovering and recovery_sequencer is None and not ending:
                                     error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE for a,b in zip(measured, hold_goal_raw))
                                     recovery_settled = recovery_settled+1 if error <= SETTLE_TOLERANCE_DEG else 0
                                     quiet = recovery_previous is not None and max(abs(a-b) for a,b in zip(measured, recovery_previous)) <= 1
@@ -1496,6 +1570,22 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     last_audit = wall
                                     live_trace.flush()
 
+                                if recovery_sequencer is not None and recovery_sequencer.observe(measured):
+                                    recovery_segments_settled += 1
+                                    audit.write(json.dumps(dict(
+                                        event="hold_C_apf_segment_settled",
+                                        index=recovery_segments_settled,
+                                        total=len(recovery_sequencer.goals))) + "\n")
+                                    if recovery_sequencer.done:
+                                        recovery_sequencer = None
+                                        recovery_settled = SETTLE_FRAME_COUNT
+                                        recovering = False
+                                        hold_recoveries += 1
+                                        print("[HOLD C APF] All validated recovery "
+                                              "segments settled", flush=True)
+                                    else:
+                                        sock.sendall(recovery_sequencer.next_request(
+                                            time.monotonic()))
                                 if sequencer.observe(measured):
                                     print(f"[SETTLED] Segment {sequencer.completed}/"
                                           f"{len(sequencer.goals)}")
@@ -1511,6 +1601,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             elif command == wire.CMD_JOINT_MOVE_ACK:
                                 if len(payload) != wire.MOVE_ACK_PAYLOAD_LEN:
                                     bad_acks += 1
+                                    continue
+                                if (recovery_sequencer is not None and
+                                        recovery_sequencer.ack_pending):
+                                    recovery_sequencer.acknowledge(payload)
+                                    motor_target_rebase_pending = True
+                                    print(
+                                        "[HOLD C APF ACCEPTED] Recovery segment "
+                                        f"{recovery_sequencer.index+1}/"
+                                        f"{len(recovery_sequencer.goals)}",
+                                        flush=True)
                                     continue
                                 if hold_request_sequence is not None:
                                     seq, status = struct.unpack("<Bb", payload)
@@ -1639,6 +1739,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 and bad_acks == 0
                 and hold_rearms == hold_rearm_acks
                 and not recovering
+                and recovery_sequencer is None
                 and (not options.interactive_hold or max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                     for a,b in zip(last_measured, hold_goal_raw)) <= SETTLE_TOLERANCE_DEG)
                 and parser.bad_checksum == 0
@@ -1654,6 +1755,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "headless": options.headless,
                 "motor_commands": "virtual_serial_only",
                 "avoidance_preflight": avoidance_report,
+                "obstacle_recovery_preflight": recovery_plan_report,
+                "obstacle_recovery_segments_settled": recovery_segments_settled,
                 "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
                 "physical_ee_goal_error_at_hold_entry_mm":
                     settled_ee_goal_error_mm,
@@ -1749,6 +1852,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             gui_joint_stop_corrections=gui_joint_stop_corrections,
             gui_joint_stop_last=gui_joint_stop_last,
             segments_requested=len(sequencer.goals),
+            obstacle_recovery_preflight=recovery_plan_report,
+            obstacle_recovery_segments_settled=recovery_segments_settled,
             hold_recoveries=hold_recoveries,
             hold_rearms=hold_rearms,
             hold_rearm_acks=hold_rearm_acks,
