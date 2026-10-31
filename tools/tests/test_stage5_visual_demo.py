@@ -74,6 +74,16 @@ class SafeGuiJogHoldBridgeTests(unittest.TestCase):
         self.assertFalse(hold_recovery_requested(0.5, False, None))
         self.assertTrue(hold_recovery_requested(0.51, False, None))
 
+    def test_ci_scripted_bridge_refuses_injection_outside_hold(self):
+        class Dummy:
+            applied = 0
+            def __call__(self, *args):
+                pass
+        with self.assertRaisesRegex(RuntimeError, "outside idle HOLD"):
+            execute_guarded_gui_jog(
+                Dummy(), None, 0, range(6), 0.0, False, False,
+                [1.0] * 6, [1.0] * 6, ci_scripted_trigger=True)
+
     def test_authorized_jog_changes_bullet_servo_target_only_on_success(self):
         class Bullet:
             POSITION_CONTROL = 2
