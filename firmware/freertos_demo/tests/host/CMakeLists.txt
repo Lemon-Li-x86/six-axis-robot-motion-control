@@ -183,3 +183,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 add_test(NAME protocol_stream_fault_host COMMAND protocol_stream_fault_host_test)
+
+# QEMU-only APF preview command: parse and reply are real C protocol code,
+# tested on the host without enabling any physical motor output.
+add_executable(stage5_apf_wire_host_test
+    stage5_apf_wire_test.c
+    ${FIRMWARE_ROOT}/communications/protocol.c
+)
+target_include_directories(stage5_apf_wire_host_test PRIVATE
+    ${FIRMWARE_ROOT}/common
+    ${FIRMWARE_ROOT}/communications
+)
+target_compile_definitions(stage5_apf_wire_host_test PRIVATE
+    ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=1
+)
+set_target_properties(stage5_apf_wire_host_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(stage5_apf_wire_host_test PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+endif()
+if(NOT MSVC)
+    target_link_libraries(stage5_apf_wire_host_test PRIVATE m)
+endif()
+add_test(NAME stage5_apf_wire_host COMMAND stage5_apf_wire_host_test)
