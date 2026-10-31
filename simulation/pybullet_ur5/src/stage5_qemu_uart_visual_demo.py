@@ -77,6 +77,7 @@ HOLD_TRACE_LIFETIME_S = 10.0
 UART_BATCH_WARNING_FRAMES = 24
 UART_BATCH_WARNING_S = 0.15
 DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
+UART_SILENCE_TIMEOUT_S = 8.0  # Existing live QEMU UART watchdog window.
 # Acceptance criterion for physically meaningful temporal correspondence.
 # Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
@@ -1283,7 +1284,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     raise TimeoutError("Validated C recovery segment ACK timeout")
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
-                if time.monotonic() - last_frame_wall > 8.0:
+                if time.monotonic() - last_frame_wall > UART_SILENCE_TIMEOUT_S:
                     raise TimeoutError(
                         "No UART frames from QEMU for 8 seconds; "
                         f"targets={target_frames}, feedback_acks={feedback_acks}, "
@@ -1443,12 +1444,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 gui_motor_velocity_caps)
                                             if not hasattr(prepare_motion, "plan_hold_recovery"):
                                                 raise RuntimeError("C APF recovery planner unavailable")
+                                            print(
+                                                "[HOLD C APF PHASE] runtime_recovery_planning_started",
+                                                flush=True)
+                                            audit.write(json.dumps(dict(
+                                                event="hold_C_apf_recovery_planning_started",
+                                                target_frames=target_frames,
+                                                measured_raw=list(measured))) + "\n")
+                                            audit.flush()
+                                            recovery_plan_started = time.monotonic()
                                             recovery_plan_report = (
                                                 prepare_motion.plan_hold_recovery(
                                                     p, arm, joints, client, plan,
                                                     minimum_extra_clearance_m=(
                                                         safe_gui_jog.extra_clearance_m
                                                         if options.gui_safe_jog else 0.0)))
+                                            print(
+                                                "[HOLD C APF PHASE] runtime_recovery_planning_finished "
+                                                f"wall_s={time.monotonic()-recovery_plan_started:.3f}",
+                                                flush=True)
                                             recovery_goals = [
                                                 tuple(round(math.degrees(v) *
                                                             wire.JOINT_ANGLE_SCALE)
