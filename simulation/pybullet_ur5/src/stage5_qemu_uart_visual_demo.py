@@ -1104,7 +1104,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     draw_avoidance_gui_evidence(p, avoidance_report)
                 if options.gui_safe_jog:
                     from stage5_avoidance_uart_gate import load_scene
-                    from stage5_safe_gui_jog import SafeGuiJog
+                    from stage5_safe_gui_jog import SafeGuiJog, JOG_EXTRA_CLEARANCE_M
                     scene, collision_policy = load_scene(plan["route_case"])
                     safe_gui_jog = SafeGuiJog(
                         p, arm, joints, safety_obstacles, client,
@@ -1115,7 +1115,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         maximum_samples=collision_policy["max_collision_samples"],
                         preview_return=lambda: prepare_motion.plan_hold_recovery(
                             p, arm, joints, client, plan,
-                            minimum_extra_clearance_m=0.002))
+                            minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M))
                     previous_on_physics = on_physics
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
                         if previous_on_physics is not None:
