@@ -436,8 +436,13 @@ def run_live(
             now = time.monotonic()
             if ready.is_set() and not hold_announced:
                 if not headless_observer:
-                    print("[HOLD] Native PyBullet: left-drag a link and release; "
-                          "press Q or Ctrl+C to exit", flush=True)
+                    if gui_safe_jog:
+                        print("[HOLD] SAFE GUI JOG: use +/- while holding, "
+                              "then click SAFE JOG FINISH after C recovery; "
+                              "do not close the PyBullet window X", flush=True)
+                    else:
+                        print("[HOLD] Native PyBullet: left-drag a link and release; "
+                              "press Q or Ctrl+C to exit", flush=True)
                 else:
                     print("[HOLD] Headless disturbance observation started", flush=True)
                 hold_announced = True
