@@ -102,6 +102,19 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --library build/stage5-avoidance/libstage5_apf_bridge.so \
             --output-dir build/stage5-controlled-hold-recovery
+      - name: Real C APF QEMU UART multi-return sequence regression
+        run: |
+          python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --cycles 2 --output-dir build/stage5-controlled-hold-recovery-twice
+      - name: Archive repeated recovery evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-controlled-C-APF-hold-recovery-twice
+          path: build/stage5-controlled-hold-recovery-twice/*
+          if-no-files-found: ignore
       - name: Archive controlled C APF recovery evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
