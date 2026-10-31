@@ -121,3 +121,19 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Di
 - 旧 GUI/HOLD 备份、main、Stage4、C APF 与 C PID 参数均不改变，10mm 物理安全限距保持不变。
 
 重新允许障碍环境拖拽必须实现从**实测连续六轴姿态**出发的碰撞感知路径重规划，并考虑交互期间的约束/失效保护、每个实际控制步的安全检查与动态执行偏差。不能只调用已有直返原关节目标 API。
+
+## 9. 2026-10-31 受控仿真扰动后的 C APF/IK 回位（实验性）
+
+新模块 `stage5_obstacle_hold_recovery.py` 从当前真实 PyBullet 六轴关节测量和原障碍物对象出发，使用**生产 C APF + C IK**计算新的笛卡尔/关节路径。由于 C IK 以当前姿态朝向为参考，附加到原始六轴最终目标的**关节返回段**也必须完整通过原有 `validate_joint_path` 的全连杆离散采样，避免把仅“末端位置回到了”的路线伪装成恢复成功。预检完成后必须把原物理状态复原，不允许预检自动执行。
+
+集成中的**受控 DIRECT/QEMU 实验**由 `DemoOptions.test_obstacle_hold_recovery=True` 显式启用，且只能在 DIRECT、真实 QEMU FreeRTOS UART、`interactive_hold=True`、提供 `on_physics` 扰动和 C APF/IK 库时使用。进入 HOLD 后用可重现的 +2° J1 关节位置扰动模拟安全测试起点，任何预检失败均直接 FAIL，**绝不退回旧的直返最后六轴目标命令**。只有整条新路径的预检通过后才逐段发 `CMD_REQUEST_JOINT_MOVE`，每段真实 UART ACK + 15帧实测关节到位后发送下一段；最后必须返回原六轴目标并保留严格 10 mm 的物理检测和故障停机。新旧序列号分开，确保不覆盖原始待处理请求。
+
+**重要限制：** 这个实验性功能没有对外打开 `PyBullet COV_ENABLE_MOUSE_PICKING`；原生 GUI 任意鼠标拖动的约束不是预规划关节运动，而是物理系统实时施力，即使返回路线安全，也无法证明手指拖动时不会早已碰到障碍。受控扰动使用模拟位置重置，不能代替真实力矩或工业硬件动态响应，更不能称作实体机器人部署。直到主动限速/接触预测/完整人机交互约束完成前，APF 场景鼠标拖拽**仍然关闭**。CI 要验证端到端真 QEMU/UART 结果，未通过前不得把实验标记 PASS。
+
+```bash
+# CI 上先构建原 C APF/IK bridge 与 QEMU 固件，再运行下列受控实验
+python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
+  --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+  --library build/stage5-avoidance/libstage5_apf_bridge.so \
+  --output-dir build/stage5-controlled-hold-recovery
+```
