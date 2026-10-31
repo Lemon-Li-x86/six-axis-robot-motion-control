@@ -116,6 +116,43 @@ class DemoOptions:
     gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE
 
 
+class Stage5UnvalidatedHoldRecoveryError(ValueError):
+    """Obstacle-aware recovery route unavailable; refuse blind C joint rearm."""
+
+    fault_type = "stage5_unvalidated_hold_recovery_blocked"
+
+    def __init__(self, measured_raw: Sequence[int], goal_raw: Sequence[int]):
+        self.measured_raw = tuple(measured_raw)
+        self.goal_raw = tuple(goal_raw)
+        self.deviation_deg = max(
+            abs(actual - goal) / wire.JOINT_ANGLE_SCALE
+            for actual, goal in zip(self.measured_raw, self.goal_raw))
+        super().__init__(
+            "Stage5 obstacle HOLD recovery refused: measured deviation "
+            f"{self.deviation_deg:.2f}deg. No collision-validated return route "
+            "exists from the dragged pose. Firmware rearm NOT sent.")
+
+
+def apf_hold_mouse_picking_allowed(
+    headless: bool, has_avoidance_plan: bool,
+) -> bool:
+    """Never expose raw GUI mouse constraints next to Stage5 obstacles."""
+    return not headless and not has_avoidance_plan
+
+
+def enforce_collision_aware_hold_policy(
+    has_obstacles: bool, measured_raw: Sequence[int],
+    goal_raw: Sequence[int],
+) -> None:
+    """Fail *before* any blind straight joint-space recovery is queued.
+
+    The initial C APF route is certified only from its original start pose;
+    manual displacement changes its start and invalidates that certification.
+    """
+    if has_obstacles:
+        raise Stage5UnvalidatedHoldRecoveryError(measured_raw, goal_raw)
+
+
 def hold_replan_allowed(
     measured_quiet_frames: int,
     command_quiet_frames: int,
@@ -911,6 +948,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     qmp_port = integration.vacant_tcp_port()
     while qmp_port == port:
         qmp_port = integration.vacant_tcp_port()
+    native_picking_allowed = apf_hold_mouse_picking_allowed(
+        options.headless, prepare_motion is not None)
     metadata = dict(elf=str(elf.resolve()),
         elf_sha256=hashlib.sha256(elf.read_bytes()).hexdigest(),
         config_sha256=hashlib.sha256(DEFAULT_JSON.read_bytes()).hexdigest(),
@@ -918,7 +957,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         python=sys.version, platform=sys.platform, qemu_executable=qemu_executable,
         pybullet_api_version=p.getAPIVersion(),
         physics_mode="DIRECT" if options.headless else "GUI",
-        native_gui_picking=not options.headless,
+        native_gui_picking=native_picking_allowed,
+        avoidance_hold_recovery_policy=(
+            "refuse_unvalidated_return_and_disable_manual_picking"
+            if prepare_motion is not None else "original_unobstructed_hold"),
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -953,7 +995,16 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 raise RuntimeError("PyBullet connection failed")
             p.setRealTimeSimulation(0)
             if not options.headless:
-                p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
+                p.configureDebugVisualizer(
+                    p.COV_ENABLE_MOUSE_PICKING,
+                    1 if native_picking_allowed else 0)
+                if not native_picking_allowed:
+                    print(
+                        "[APF HOLD SAFETY] Native mouse dragging DISABLED: "
+                        "C APF plan covers its original start pose only; "
+                        "no collision-aware return planner for dragged poses. "
+                        "Unverified HOLD replans are forbidden.",
+                        flush=True)
                 # Keep native debug controls visible. Hiding them made the
                 # sole physical GUI look like an empty rendering viewport.
                 p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
@@ -1101,7 +1152,15 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             hold_entry_actual_joint_deg=hold_entry_actual_joint_deg,
                             segments_settled=sequencer.completed)) + "\n")
                     if options.interactive_hold:
-                        print("[HOLD] PyBullet native mouse picking is active; controller holds the final goal", flush=True)
+                        if native_picking_allowed:
+                            print(
+                                "[HOLD] Native mouse picking active; "
+                                "holding the final goal", flush=True)
+                        else:
+                            print(
+                                "[HOLD] Static obstacle scene: mouse picking "
+                                "disabled; unvalidated recovery rearm forbidden.",
+                                flush=True)
                 if stop_requested is not None and stop_requested():
                     if not sequencer.done or not options.interactive_hold:
                         raise InterruptedError("Observer requested live control shutdown")
@@ -1237,6 +1296,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                     for a,b in zip(measured, hold_goal_raw))
                                     if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
+                                        # Manual/external displacement invalidates
+                                        # the preflight's original start pose.
+                                        # Fail closed BEFORE proposing a direct
+                                        # firmware move back through an obstacle.
+                                        enforce_collision_aware_hold_policy(
+                                            bool(safety_obstacles),
+                                            measured, hold_goal_raw)
                                         recovery_stalled_reported = False
                                         recovering = True
                                         recovery_attempts = 0
@@ -1323,6 +1389,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 flush=True)
                                             recovery_stalled_reported = True
                                 if hold_replan_needed and hold_request_sequence is None and not ending:
+                                    # Belt-and-suspenders: never send C direct
+                                    # joint rearm without a validated obstacle-
+                                    # aware path even if the deviation check
+                                    # or state flags change in later edits.
+                                    enforce_collision_aware_hold_policy(
+                                        bool(safety_obstacles), measured,
+                                        hold_goal_raw)
                                     # Replan from measured pose using the original
                                     # C controller and identical final goal.
                                     hold_rearms += 1
@@ -1619,6 +1692,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "qmp_physics_pauses": clock_gate.pauses,
                 "wall_duration_s": time.monotonic()-start_wall,
                 "interactive_hold": options.interactive_hold,
+                "native_gui_picking": native_picking_allowed,
+                "avoidance_hold_recovery_policy": metadata[
+                    "avoidance_hold_recovery_policy"],
                 "hold_observe_only": options.hold_observe_only,
                 "diagnostics_timeout_s": options.diagnostics_timeout_s,
                 "hold_final_error_deg": max(abs(a-b)/wire.JOINT_ANGLE_SCALE
@@ -1671,7 +1747,34 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             hold_entry_closest_link_index=hold_entry_closest_link,
             hold_entry_actual_joint_deg=hold_entry_actual_joint_deg,
             gui_joint_stop_corrections=gui_joint_stop_corrections,
-            gui_joint_stop_last=gui_joint_stop_last)
+            gui_joint_stop_last=gui_joint_stop_last,
+            segments_requested=len(sequencer.goals),
+            hold_recoveries=hold_recoveries,
+            hold_rearms=hold_rearms,
+            hold_rearm_acks=hold_rearm_acks,
+            hold_final_error_deg=max(
+                abs(a - b) / wire.JOINT_ANGLE_SCALE
+                for a, b in zip(last_measured, hold_goal_raw)),
+            native_gui_picking=native_picking_allowed,
+            avoidance_hold_recovery_policy=metadata[
+                "avoidance_hold_recovery_policy"])
+        if isinstance(error, Stage5UnvalidatedHoldRecoveryError):
+            failure.update(
+                fault_type=error.fault_type,
+                fault_phase="interactive_hold",
+                unsafe_return_rearm_sent=False,
+                deviation_deg=error.deviation_deg,
+                measured_raw=list(error.measured_raw),
+                goal_raw=list(error.goal_raw),
+            )
+            audit.write(json.dumps(dict(
+                event="hold_unvalidated_recovery_blocked",
+                error_deg=error.deviation_deg,
+                measured_raw=list(error.measured_raw),
+                goal_raw=list(error.goal_raw),
+                target_frames=target_frames,
+                unvalidated_rearm_sent=False,
+            )) + "\n")
         if isinstance(error, Stage5RuntimeClearanceError):
             failure.update(
                 fault_type=error.fault_type,
@@ -1717,7 +1820,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
         if (isinstance(error, (
                 JointFeedbackRangeError, JointPhysicalSafetyError,
-                Stage5RuntimeClearanceError))
+                Stage5RuntimeClearanceError,
+                Stage5UnvalidatedHoldRecoveryError))
                 and not options.headless and client >= 0):
             try:
                 preserve_gui_after_physics_fault(
