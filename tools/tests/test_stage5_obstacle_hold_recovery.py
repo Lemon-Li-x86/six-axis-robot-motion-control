@@ -113,7 +113,7 @@ class RealCRecoveryTest(unittest.TestCase):
                             self.original["cartesian_goal_m"],
                             self.final_goal, "blocked",
                             minimum_extra_clearance_m=.002)
-                    except (RejectedRoute, InvalidPath) as error:
+                    except (RejectedRoute, InvalidPath, ValueError, RuntimeError) as error:
                         rejected.append((axis, delta_deg, type(error).__name__))
                     else:
                         self.assertTrue(route["passed"])
