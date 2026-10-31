@@ -1,5 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+#include <math.h>
 
 #include "protocol.h"
 
@@ -388,6 +390,75 @@ robot_status_t protocol_build_joint_move_ack_frame(
     payload[1]=(uint8_t)((int8_t)status);
     return protocol_build_frame(CMD_JOINT_MOVE_ACK,payload,
         PROTOCOL_MOVE_ACK_PAYLOAD_LEN,frame);
+}
+
+/* QEMU Stage5 preview wire encoding. Use the existing frame builder and
+ * enforce finite IEEE754 little-endian floats. This is NOT an actuator path.
+ * No copy of C APF behavior, obstacles or tuning constants lives here. */
+robot_status_t protocol_parse_apf_step_request(
+    const protocol_frame_t *frame, protocol_apf_step_request_t *out)
+{
+    protocol_apf_step_request_t next={0};
+    int16_t *fields[3]={next.goal_offset_mm,
+        next.obstacle_min_offset_mm,next.obstacle_max_offset_mm};
+    size_t i;
+    _Static_assert(sizeof(float)==4U, "APF preview wire needs IEEE754 float32");
+    if(frame==NULL || out==NULL)
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(frame->command!=CMD_REQUEST_APF_STEP)
+        return ROBOT_STATUS_ERROR_INVALID_COMMAND;
+    if(frame->length!=PROTOCOL_APF_STEP_REQUEST_PAYLOAD_LEN)
+        return ROBOT_STATUS_ERROR_INVALID_LENGTH;
+    next.sequence=frame->payload[0];
+    for(i=0U;i<9U;i++) {
+        size_t pos=1U+2U*i;
+        uint16_t raw=(uint16_t)frame->payload[pos] |
+            ((uint16_t)frame->payload[pos+1U]<<8U);
+        fields[i/3U][i%3U]=(int16_t)raw;
+    }
+    for(i=0U;i<6U;i++) {
+        size_t pos=19U+4U*i;
+        uint32_t raw=(uint32_t)frame->payload[pos] |
+            ((uint32_t)frame->payload[pos+1U]<<8U) |
+            ((uint32_t)frame->payload[pos+2U]<<16U) |
+            ((uint32_t)frame->payload[pos+3U]<<24U);
+        memcpy(&next.apf_parameters[i],&raw,sizeof(raw));
+        if(!isfinite(next.apf_parameters[i]))
+            return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    }
+    *out=next;
+    return ROBOT_STATUS_OK;
+}
+
+robot_status_t protocol_build_apf_step_response(
+    uint8_t sequence, robot_status_t status,
+    const float next_mm[3],
+    uint8_t frame[PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN])
+{
+    uint8_t payload[PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN]={0};
+    size_t i;
+    _Static_assert(sizeof(float)==4U, "APF preview wire needs IEEE754 float32");
+    if(frame==NULL || (status==ROBOT_STATUS_OK && next_mm==NULL))
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(status<INT8_MIN || status>INT8_MAX)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    payload[0]=sequence;
+    payload[1]=(uint8_t)((int8_t)status);
+    if(status==ROBOT_STATUS_OK) {
+        for(i=0U;i<3U;i++) {
+            uint32_t raw;
+            size_t pos=2U+4U*i;
+            if(!isfinite(next_mm[i]))
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            memcpy(&raw,&next_mm[i],sizeof(raw));
+            payload[pos]=(uint8_t)raw;
+            payload[pos+1U]=(uint8_t)(raw>>8U);
+            payload[pos+2U]=(uint8_t)(raw>>16U);
+            payload[pos+3U]=(uint8_t)(raw>>24U);
+        }
+    }
+    return protocol_build_frame(CMD_APF_STEP_RESPONSE,payload,
+        PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN,frame);
 }
 
 /* =========================================================
