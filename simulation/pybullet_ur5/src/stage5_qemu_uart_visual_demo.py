@@ -1033,10 +1033,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     1 if native_picking_allowed else 0)
                 if not native_picking_allowed:
                     print(
-                        "[APF HOLD SAFETY] Native mouse dragging DISABLED: "
-                        "C APF plan covers its original start pose only; "
-                        "no collision-aware return planner for dragged poses. "
-                        "Unverified HOLD replans are forbidden.",
+                        "[APF HOLD SAFETY] Native mouse dragging DISABLED. "
+                        + ("Guarded GUI jog buttons use a separate full-arm "
+                           "preview before any pose change."
+                           if options.gui_safe_jog else
+                           "Unvalidated manual recovery replans forbidden."),
                         flush=True)
                 # Keep native debug controls visible. Hiding them made the
                 # sole physical GUI look like an empty rendering viewport.
@@ -1371,6 +1372,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                             # can authorize a new complete C route.
                                             if not (options.test_obstacle_hold_recovery
                                                     or options.gui_safe_jog):
+                                                enforce_collision_aware_hold_policy(
+                                                    True, measured, hold_goal_raw)
+                                            if (options.gui_safe_jog and
+                                                    (safe_gui_jog is None or
+                                                     safe_gui_jog.applied != 1)):
+                                                # Guarded mode cannot be used as a
+                                                # backdoor to replan arbitrary
+                                                # unvalidated external motion.
                                                 enforce_collision_aware_hold_policy(
                                                     True, measured, hold_goal_raw)
                                             if recovery_attempted:
