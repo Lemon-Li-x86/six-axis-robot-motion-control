@@ -122,6 +122,12 @@ class DemoOptions:
     gui_safe_jog: bool = False
 
 
+class Stage5GuiDisconnectedError(RuntimeError):
+    """Native PyBullet client went away before a final measured verdict."""
+
+    fault_type = "stage5_gui_disconnected"
+
+
 class Stage5UnvalidatedHoldRecoveryError(ValueError):
     """Obstacle-aware recovery route unavailable; refuse blind C joint rearm."""
 
@@ -1207,7 +1213,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             while True:
                 now = time.monotonic()
                 if not options.headless and not p.isConnected(client):
-                    raise RuntimeError(
+                    raise Stage5GuiDisconnectedError(
                         "PyBullet GUI window disconnected. For a measured HOLD "
                         "verdict keep the window open and press Q to exit; "
                         "closing X before the final sample is not a PASS.")
@@ -1261,12 +1267,30 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             print(
                                 "[HOLD] SAFE GUI JOG buttons armed; native mouse "
                                 "dragging OFF. Click one +/-2deg button. "
-                                "Guarded C APF/IK recovery follows.", flush=True)
+                                "Guarded C APF/IK recovery follows. "
+                        "After recovery, press SAFE JOG FINISH to validate "
+                        "and exit; do not close the window with X.", flush=True)
                         else:
                             print(
                                 "[HOLD] Static obstacle scene: mouse picking "
                                 "disabled; unvalidated recovery rearm forbidden.",
                                 flush=True)
+                if (safe_gui_jog is not None and safe_gui_jog.finish_requested
+                        and not ending):
+                    if (not sequencer.done or recovering or
+                            recovery_sequencer is not None or
+                            safe_gui_jog.applied < 1 or
+                            safe_gui_jog.completed != safe_gui_jog.applied or
+                            hold_recoveries != safe_gui_jog.completed):
+                        raise RuntimeError(
+                            "SAFE GUI JOG finish attempted before validated C recovery")
+                    ending = True
+                    audit.write(json.dumps(dict(
+                        event="safe_gui_jog_finish_accepted",
+                        completed_recoveries=safe_gui_jog.completed,
+                        target_frames=target_frames)) + "\n")
+                    print("[SAFE GUI JOG FINISH] All requested C recoveries "
+                          "settled; collecting final UART diagnostics", flush=True)
                 if stop_requested is not None and stop_requested():
                     if not sequencer.done or not options.interactive_hold:
                         raise InterruptedError("Observer requested live control shutdown")
@@ -2020,6 +2044,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 safe_gui_jog.completed if safe_gui_jog is not None else 0),
             avoidance_hold_recovery_policy=metadata[
                 "avoidance_hold_recovery_policy"])
+        if (not options.headless and client >= 0 and
+                (isinstance(error, Stage5GuiDisconnectedError) or
+                 (isinstance(error, p.error) and not p.isConnected(client)))):
+            failure.update(
+                fault_type=Stage5GuiDisconnectedError.fault_type,
+                fault_phase="native_gui_disconnected_before_verdict",
+                gui_finish_requested=bool(
+                    safe_gui_jog is not None and safe_gui_jog.finish_requested),
+                completed_recoveries=hold_recoveries,
+                note="Motion completion is retained as evidence; "
+                     "unexpected GUI disconnect is never PASS.")
+            audit.write(json.dumps(dict(
+                event=Stage5GuiDisconnectedError.fault_type,
+                target_frames=target_frames,
+                completed_recoveries=hold_recoveries)) + "\n")
         if isinstance(error, Stage5UnvalidatedHoldRecoveryError):
             failure.update(
                 fault_type=error.fault_type,
