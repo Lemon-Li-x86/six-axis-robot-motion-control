@@ -20,6 +20,8 @@ from stage5_qemu_uart_closed_loop import BufferedUART
 from stage5_qemu_uart_live_gui import (  # noqa: E402
     LiveMeasurements, LatestMailbox, capture_worker, required_motion_axes,
     clean_safe_jog_cancellation,
+    next_gui_hung_streak,
+    windows_gui_health,
     gui_safe_jog_worker_stalled,
 )
 
@@ -27,6 +29,23 @@ from stage5_qemu_uart_live_gui import (  # noqa: E402
 def produce_without_reader(channel):
     for i in range(10000):
         channel.publish(i / 100, 1, (i,) * 6, (0,) * 6, i, 0)
+
+
+class NativeGuiResponsivenessTests(unittest.TestCase):
+    def test_consecutive_windows_hung_checks_not_uart_samples(self):
+        streak = next_gui_hung_streak(0, {"visible": 1, "hung": 1})
+        self.assertEqual(streak, 1)
+        streak = next_gui_hung_streak(streak, {"visible": 2, "hung": 1})
+        self.assertEqual(streak, 2)
+        self.assertEqual(next_gui_hung_streak(streak, None), 0)
+        self.assertEqual(next_gui_hung_streak(streak, {"visible": 1, "hung": 0}), 0)
+        self.assertEqual(next_gui_hung_streak(streak, {"visible": 0, "hung": 0}), 0)
+
+    def test_windows_probe_is_not_a_false_positive_off_windows(self):
+        import os
+        if os.name != "nt":
+            self.assertIsNone(windows_gui_health(12345))
+        self.assertIsNone(windows_gui_health(None))
 
 
 class SafeGuiJogCancelVerdictTests(unittest.TestCase):
