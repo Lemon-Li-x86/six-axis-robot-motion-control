@@ -19,12 +19,31 @@ sys.path.insert(0, str(ROOT / "simulation/pybullet_ur5/src"))
 from stage5_qemu_uart_closed_loop import BufferedUART
 from stage5_qemu_uart_live_gui import (  # noqa: E402
     LiveMeasurements, LatestMailbox, capture_worker, required_motion_axes,
+    gui_safe_jog_worker_stalled,
 )
 
 
 def produce_without_reader(channel):
     for i in range(10000):
         channel.publish(i / 100, 1, (i,) * 6, (0,) * 6, i, 0)
+
+
+class GuiSafeJogWorkerWatchdogTests(unittest.TestCase):
+    def test_interactive_idle_hold_does_not_timeout_while_frames_continue(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            102.0, 101.9, 30.0, ready=True, gui_safe_jog=True))
+
+    def test_missing_samples_has_bounded_parent_failure(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            137.9, 100.0, 30.0, ready=True, gui_safe_jog=True))
+        self.assertTrue(gui_safe_jog_worker_stalled(
+            138.1, 100.0, 30.0, ready=True, gui_safe_jog=True))
+
+    def test_non_jog_modes_and_startup_do_not_change(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            999.0, 0.0, 30.0, ready=True, gui_safe_jog=False))
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            999.0, 0.0, 30.0, ready=False, gui_safe_jog=True))
 
 
 class LiveTransportTests(unittest.TestCase):
