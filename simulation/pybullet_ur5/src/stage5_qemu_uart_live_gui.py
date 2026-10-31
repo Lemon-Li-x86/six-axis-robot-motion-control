@@ -8,6 +8,7 @@ pauses simulation. No mirrored robot, mouse IPC or Python PID is required.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
 import multiprocessing as mp
@@ -29,6 +30,9 @@ from stage5_qemu_uart_visual_demo import (
 
 # Observer polling never changes the physics timestep or UART pacing.
 REFRESH_HZ = 30.0
+# Windows GUI message-loop probe lives in the observer, never in PyBullet worker.
+GUI_HEALTH_POLL_S = 1.0
+GUI_HUNG_CONFIRM_POLLS = 3
 MIN_OBSERVED_MOTION_DEG = 2.0
 # Test fixture only. Physical motor limits remain in firmware config.
 TEST_TORQUE_NM = 300.0
@@ -75,6 +79,64 @@ def gui_safe_jog_worker_stalled(
         ready and gui_safe_jog
         and now - last_sample_at > diagnostics_timeout_s + UART_SILENCE_TIMEOUT_S
     )
+
+
+
+def windows_gui_health(worker_pid: int | None) -> dict[str, int] | None:
+    """Query native Windows responsiveness without calling into hung PyBullet.
+
+    None means no usable native window/probe. It is NOT evidence of a hang.
+    All platform-specific calls stay in the independent observer process.
+    """
+    if os.name != "nt" or not worker_pid:
+        return None
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        window_proc = ctypes.WINFUNCTYPE(
+            ctypes.c_int, ctypes.c_void_p, ctypes.c_ssize_t)
+        user32.EnumWindows.argtypes = (window_proc, ctypes.c_ssize_t)
+        user32.EnumWindows.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        user32.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+        user32.IsWindowVisible.restype = ctypes.c_int
+        user32.IsHungAppWindow.argtypes = (ctypes.c_void_p,)
+        user32.IsHungAppWindow.restype = ctypes.c_int
+        status = {"visible": 0, "hung": 0}
+
+        @window_proc
+        def visit(hwnd, _):
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if (pid.value == worker_pid and user32.IsWindowVisible(hwnd)):
+                status["visible"] += 1
+                status["hung"] += int(bool(user32.IsHungAppWindow(hwnd)))
+            return 1
+
+        if not user32.EnumWindows(visit, 0):
+            return None
+        return status if status["visible"] else None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def next_gui_hung_streak(previous: int, status: dict[str, int] | None) -> int:
+    """Only consecutive positive Windows OS probes count as a hung GUI."""
+    if status is None or status.get("visible", 0) < 1 or status.get("hung", 0) < 1:
+        return 0
+    return previous + 1
+
+
+def console_abort_pressed() -> bool:
+    """Independent Windows-console Q; the PyBullet GUI need not respond."""
+    if os.name != "nt" or sys.stdin is None or not sys.stdin.isatty():
+        return False
+    try:
+        import msvcrt
+        return bool(msvcrt.kbhit() and msvcrt.getwch().lower() == "q")
+    except (OSError, RuntimeError):
+        return False
 
 
 class LatestMailbox:
@@ -385,6 +447,10 @@ def run_live(
         interactive = True
     if headless_observer and interactive and hold_seconds is None:
         raise ValueError("Headless hold requires --hold-seconds")
+    # A native GUI test must never wait forever after its initial C route.
+    # Reuse the caller's existing timeout if no separate HOLD budget is set.
+    if gui_safe_jog and hold_seconds is None:
+        hold_seconds = timeout_s
     if raw_route and c_apf_library is None:
         raise ValueError("Raw APF route requires a C APF shared library")
     if gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
@@ -431,8 +497,12 @@ def run_live(
     last_report_at = 0.0
     hold_announced = False
     hold_wall = None
+    last_gui_health_check = float("-inf")
+    last_gui_health_log = float("-inf")
+    gui_hung_streak = 0
     output_dir.mkdir(parents=True, exist_ok=True)
     for stale in ("result.json", "observer_result.json", "worker_exit.json",
+                  "observer_stall.json", "observer_gui_hung.json",
                   "mouse_events.jsonl", "drag_events.jsonl"):
         (output_dir / stale).unlink(missing_ok=True)
     audit = (output_dir / "observer.jsonl").open(
@@ -463,10 +533,12 @@ def run_live(
             if ready.is_set() and not hold_announced:
                 if not headless_observer:
                     if gui_safe_jog:
-                        print("[HOLD] SAFE GUI JOG: use +/- while holding. "
-                              "FINISH/EXIT validates after recovery, or safely "
-                              "cancels without any jog. Do not close window X.",
-                              flush=True)
+                        print(
+                            "[HOLD] SAFE GUI JOG: +/- to inject, FINISH/EXIT "
+                            "to close after recovery or cancel without a jog. "
+                            "Press Q in this TERMINAL for independent exit; "
+                            f"auto-close budget={hold_seconds:.0f}s. "
+                            "Do not close GUI with X.", flush=True)
                     else:
                         print("[HOLD] Native PyBullet: left-drag a link and release; "
                               "press Q or Ctrl+C to exit", flush=True)
@@ -475,13 +547,64 @@ def run_live(
                 hold_announced = True
                 hold_wall = now
 
+            if (gui_safe_jog and hold_announced and
+                    not stop.is_set() and console_abort_pressed()):
+                stop.set()
+                audit.write(json.dumps(dict(
+                    event="console_gui_safe_jog_abort",
+                    at_wall_s=now-started,
+                    note="Orderly stop request; never overrides C verdict")) + "\n")
+                print("[LIVE] Terminal Q requested stop. "
+                      "Unfinished jog cannot PASS.", flush=True)
+
+            # Native UI responsiveness is independent of UART heartbeat.
+            # The GUI can hang even while 100-Hz motor feedback continues.
+            if (gui_safe_jog and hold_announced and worker.is_alive()
+                    and now - last_gui_health_check >= GUI_HEALTH_POLL_S):
+                last_gui_health_check = now
+                health = windows_gui_health(worker.pid)
+                gui_hung_streak = next_gui_hung_streak(gui_hung_streak, health)
+                if health is not None and (
+                        gui_hung_streak > 0 or
+                        now-last_gui_health_log >= 5 * GUI_HEALTH_POLL_S):
+                    audit.write(json.dumps(dict(
+                        event="native_gui_health",
+                        wall_s=now-started, worker_pid=worker.pid,
+                        **health, consecutive_hung_checks=gui_hung_streak)) + "\n")
+                    last_gui_health_log = now
+                if gui_hung_streak >= GUI_HUNG_CONFIRM_POLLS:
+                    evidence = dict(
+                        passed=False, fault_type="native_gui_message_loop_hung",
+                        worker_pid=worker.pid, window_probe=health,
+                        confirmed_checks=gui_hung_streak,
+                        target_frames_published=channel.seen,
+                        last_sample=measurements.latest,
+                        observed_wall_s=round(now-started, 3),
+                        note="Windows OS reports unresponsive PyBullet window; "
+                             "UART feedback alone cannot certify GUI health")
+                    (output_dir / "observer_gui_hung.json").write_text(
+                        json.dumps(evidence, indent=2), encoding="utf-8")
+                    raise TimeoutError(
+                        "Windows reports native PyBullet GUI unresponsive; "
+                        "observer_gui_hung.json saved; NOT PASS.")
+
             deadline = (hold_wall + hold_seconds + 25.0
                         if hold_wall is not None and hold_seconds is not None
                         else float("inf")
                         if hold_wall is not None and interactive
                         else started + timeout_s + 25.0)
             if now > deadline:
-                raise TimeoutError("Physics worker exceeded deadline; see worker.log")
+                evidence = dict(
+                    passed=False, fault_type="stage5_observer_deadline",
+                    hold_budget_s=hold_seconds,
+                    last_sample=measurements.latest,
+                    target_frames_published=channel.seen,
+                    worker_alive=worker.is_alive())
+                (output_dir / "observer_stall.json").write_text(
+                    json.dumps(evidence, indent=2), encoding="utf-8")
+                raise TimeoutError(
+                    "Physics worker exceeded its finite deadline; "
+                    "observer_stall.json saved; NOT PASS.")
             if (worker.is_alive() and gui_safe_jog_worker_stalled(
                     now, last_worker_sample_at, diagnostics_timeout_s,
                     ready=ready.is_set(), gui_safe_jog=gui_safe_jog)):
@@ -662,7 +785,8 @@ def main() -> int:
     parser.add_argument("--opengl2", action="store_true", help="Compatible Windows GUI renderer")
     parser.add_argument("--interactive", action="store_true", default=None,
                         help="Keep true UART control active after three segments; GUI defaults to this")
-    parser.add_argument("--hold-seconds", type=float, default=None)
+    parser.add_argument("--hold-seconds", type=float, default=None,
+                        help="Maximum active HOLD time; SAFE JOG defaults to timeout-s")
     parser.add_argument("--diagnostics-timeout-s", type=float,
                         default=DIAGNOSTICS_TIMEOUT_S,
                         help="Finite UART diagnostic response timeout, 5..60 seconds")
