@@ -120,6 +120,9 @@ class DemoOptions:
     test_obstacle_hold_recovery: bool = False
     # Explicit native GUI guarded-button trial, never native mouse picking.
     gui_safe_jog: bool = False
+    # CI opt-in only: scripts exactly one guarded J6 minimum-step jog in
+    # native p.GUI; NEVER used by operator runs or on real motors.
+    ci_scripted_safe_jog: bool = False
 
 
 class Stage5GuiDisconnectedError(RuntimeError):
@@ -444,6 +447,7 @@ def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bo
 def execute_guarded_gui_jog(
     jog, bullet, arm, joints, stamp, done, ending,
     motor_forces_nm, gui_motor_velocity_caps,
+    *, ci_scripted_trigger: bool = False,
 ) -> None:
     """Preserve an authorized injected pose until the C UART recovery takes over.
 
@@ -453,6 +457,10 @@ def execute_guarded_gui_jog(
     """
     previous_applied = jog.applied
     jog(bullet, arm, joints, stamp, done, ending)
+    if ci_scripted_trigger:
+        if not done or ending:
+            raise RuntimeError("Scripted CI jog outside idle HOLD")
+        jog.request_ci_scripted_j6_half_degree()
     if jog.applied > previous_applied:
         displaced_rad = tuple(
             bullet.getJointState(arm, joint, physicsClientId=jog.client)[0]
@@ -932,6 +940,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError(
             "Guarded GUI jog requires native GUI, active HOLD and C APF; "
             "unrestricted native picking remains forbidden")
+    if options.ci_scripted_safe_jog and not options.gui_safe_jog:
+        raise ValueError("Scripted native GUI CI fixture requires guarded GUI jog")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -1036,6 +1046,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             else "refuse_unvalidated_return_and_disable_manual_picking"
             if prepare_motion is not None else "original_unobstructed_hold"),
         gui_safe_jog=options.gui_safe_jog,
+        ci_scripted_safe_jog=options.ci_scripted_safe_jog,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1157,13 +1168,32 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             p, arm, joints, client, plan,
                             minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M))
                     previous_on_physics = on_physics
+                    scripted_ci_jog_sent = False
+                    scripted_ci_finish_sent = False
+
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
+                        nonlocal scripted_ci_jog_sent, scripted_ci_finish_sent
                         if previous_on_physics is not None:
                             previous_on_physics(
                                 bullet, body, axes, stamp, done, ending)
+                        ci_inject = bool(
+                            options.ci_scripted_safe_jog
+                            and done and not ending
+                            and not scripted_ci_jog_sent)
+                        # Latch before calling the planner, fail closed if rejected.
+                        if ci_inject:
+                            scripted_ci_jog_sent = True
                         execute_guarded_gui_jog(
                             safe_gui_jog, bullet, body, axes, stamp, done, ending,
-                            motor_forces_nm, gui_motor_velocity_caps)
+                            motor_forces_nm, gui_motor_velocity_caps,
+                            ci_scripted_trigger=ci_inject)
+                        if (options.ci_scripted_safe_jog
+                                and scripted_ci_jog_sent
+                                and not scripted_ci_finish_sent
+                                and safe_gui_jog.applied == 1
+                                and safe_gui_jog.completed == 1):
+                            safe_gui_jog.request_ci_finish()
+                            scripted_ci_finish_sent = True
                     on_physics = guarded_jog_callback
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
@@ -1171,7 +1201,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         "Use during HOLD; 0.5..2.0deg increments, up to 3 "
                         "complete returns per run. Outbound AND return routes "
                         "are checked BEFORE application. "
-                        "Original mouse dragging remains OFF; press Q to finish.",
+                        "Original mouse dragging remains OFF; "
+                        "FINISH/EXIT validates or cancels; console Q can exit.",
                         flush=True)
             if not options.headless:
                 p.resetDebugVisualizerCamera(
