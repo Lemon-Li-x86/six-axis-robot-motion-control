@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
-from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES
+from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES, JOG_MIN_DEG
 
 
 def valid_return():
@@ -92,6 +92,36 @@ class GuardedJogTests(unittest.TestCase):
                     gate.call_args.kwargs["maximum_joint_step_rad"],
                     math.radians(.25))
                 planner.assert_called_once()
+
+    def test_ci_scripted_j6_uses_real_preflight_and_requires_uart_settlement(self):
+        p, ctl, planner = jog()
+        # GUI selection is J1, but CI's explicit scope is J6 at minimum step.
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()) as gate:
+            event = ctl.request_ci_scripted_j6_half_degree()
+        self.assertEqual(event["joint"], 6)
+        self.assertEqual(event["displacement_deg"], JOG_MIN_DEG)
+        self.assertEqual(event["source"], "ci_scripted_native_gui_jog")
+        self.assertEqual(ctl.applied, 1)
+        self.assertEqual(gate.call_args.kwargs["clearance_m"], .012)
+        planner.assert_called_once()
+        with self.assertRaisesRegex(RuntimeError, "completed real C recovery"):
+            ctl.request_ci_finish()
+        ctl.complete_recovery()
+        ctl.request_ci_finish()
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.completed, 1)
+
+    def test_ci_scripted_j6_rejected_when_collision_gate_fails(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value={"passed": False, "collision": {"robot_link_index": 2}}):
+            with self.assertRaisesRegex(RuntimeError, "refused"):
+                ctl.request_ci_scripted_j6_half_degree()
+        self.assertEqual(ctl.applied, 0)
+        self.assertEqual(ctl.refused, 1)
+        planner.assert_not_called()
+        self.assertEqual(ctl.events[-1]["event"], "safe_gui_jog_rejected")
 
     def test_finish_without_jog_is_cancel_not_pass(self):
         p, ctl, planner = jog()
