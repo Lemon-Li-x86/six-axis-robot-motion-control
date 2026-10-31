@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "simulation/pybullet_ur5/src"))
 from stage5_qemu_uart_closed_loop import BufferedUART
 from stage5_qemu_uart_live_gui import (  # noqa: E402
     LiveMeasurements, LatestMailbox, capture_worker, required_motion_axes,
+    clean_safe_jog_cancellation,
     gui_safe_jog_worker_stalled,
 )
 
@@ -26,6 +27,43 @@ from stage5_qemu_uart_live_gui import (  # noqa: E402
 def produce_without_reader(channel):
     for i in range(10000):
         channel.publish(i / 100, 1, (i,) * 6, (0,) * 6, i, 0)
+
+
+class SafeGuiJogCancelVerdictTests(unittest.TestCase):
+    def valid_cancel(self):
+        return dict(
+            passed=False, cancelled=True,
+            cancel_reason="no_guarded_jog_requested",
+            gui_safe_jog=True, safe_gui_jog_applied=0,
+            safe_gui_jog_completed=0, hold_recoveries=0,
+            segments_requested=4, segments_settled=4,
+            bad_checksum_frames=0, clock_alignment_passed=True,
+            fault_counters=dict(controller_faults=0, planner_faults=0,
+                                feedback_stale_count=0),
+        )
+
+    def test_clean_cancel_is_orderly_but_not_pass(self):
+        report = self.valid_cancel()
+        self.assertTrue(clean_safe_jog_cancellation(report, True))
+        self.assertFalse(report["passed"])
+        self.assertFalse(clean_safe_jog_cancellation(report, False))
+
+    def test_active_jog_or_fault_never_masquerades_as_cancel(self):
+        for key, value in (
+            ("safe_gui_jog_applied", 1),
+            ("safe_gui_jog_completed", 1),
+            ("segments_settled", 3),
+            ("bad_checksum_frames", 1),
+            ("clock_alignment_passed", False),
+            ("passed", True),
+        ):
+            with self.subTest(key=key):
+                report = self.valid_cancel()
+                report[key] = value
+                self.assertFalse(clean_safe_jog_cancellation(report, True))
+        report = self.valid_cancel()
+        report["fault_counters"]["controller_faults"] = 1
+        self.assertFalse(clean_safe_jog_cancellation(report, True))
 
 
 class GuiSafeJogWorkerWatchdogTests(unittest.TestCase):
