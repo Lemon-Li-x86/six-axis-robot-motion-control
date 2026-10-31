@@ -7,9 +7,13 @@ param(
     [switch]$NoHold,
     [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
     [switch]$RawRoute,
-    [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn"
+    [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn",
+    [switch]$SafeJog
 )
 $ErrorActionPreference = "Stop"
+if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
+    throw "-SafeJog requires -Stage5RouteCase blocked, active HOLD and no -ObserveHold"
+}
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
     & cmake --preset stage5-live-uart
@@ -41,6 +45,7 @@ try {
     } elseif ($RawRoute) {
         throw "-RawRoute requires -Stage5RouteCase clear or blocked"
     }
+    if ($SafeJog) { $liveArgs += "--safe-gui-jog" }
     if ($NoHold) { $liveArgs += "--no-hold" }
     if ($ObserveHold) { $liveArgs += "--observe-hold" }
     if ($DiagnosticsTimeoutSeconds -ne 0) {
