@@ -146,6 +146,27 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --scenario six_axis --opengl2 --no-hold --timeout-s 60 \
             --output-dir build/stage5-ci-gui-nodrag
+      - name: Build production C APF host library for native GUI integration
+        run: |
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-gui -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-avoidance-gui --parallel 2
+          ctest --test-dir build/stage5-avoidance-gui --output-on-failure
+      - name: Native GUI + real QEMU UART + guarded J6 +0.5deg recovery (scripted CI input)
+        run: |
+          timeout 210s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis --opengl2 --timeout-s 100 --hold-seconds 90 \
+            --stage5-c-apf-library build/stage5-avoidance-gui/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --safe-gui-jog --ci-scripted-safe-jog \
+            --output-dir build/stage5-ci-gui-scripted-j6
+      - name: Preserve native GUI scripted C APF/UART acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-scripted-j6-xvfb
+          path: build/stage5-ci-gui-scripted-j6/*
+          if-no-files-found: ignore
       - name: Preserve GUI physical motion and latency evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -175,7 +196,9 @@ jobs:
       - name: Compile production C APF/IK host bridge as a Windows DLL
         shell: pwsh
         run: |
-          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-win -G "Visual Studio 17 2022" -A x64
+          # Prefer the runner's installed MSVC toolset, not VS 2022 specifically.
+          # Mirrors the tested tools/run_stage5_controlled_recovery_windows.ps1.
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-win
           if ($LASTEXITCODE -ne 0) { throw "C APF configure failed" }
           cmake --build build/stage5-avoidance-win --config Debug
           if ($LASTEXITCODE -ne 0) { throw "C APF build failed" }
