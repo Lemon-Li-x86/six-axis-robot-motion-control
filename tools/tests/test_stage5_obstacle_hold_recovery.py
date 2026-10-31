@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
@@ -13,7 +14,7 @@ sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
 from stage4_dynamic_closed_loop import URDF, START_RAW, joint_indices
 from stage5_avoidance_uart_gate import make_avoidance_preflight
 from stage5_obstacle_hold_recovery import plan_obstacle_hold_recovery
-from stage5_avoidance_preflight import RejectedRoute
+from stage5_avoidance_preflight import RejectedRoute, CartesianGoalAlreadyReached
 from stage5_collision_validation import validate_joint_path
 
 
@@ -137,6 +138,66 @@ class RealCRecoveryTest(unittest.TestCase):
         self.assertEqual(len(permitted) + len(rejected), 12)
         # J1 is known reachable; the other eleven are not assumed reachable.
         self.assertTrue(permitted, "No six-axis GUI jog candidate was feasible")
+
+    def test_zero_C_cartesian_waypoints_can_return_subdegree_J6_only_after_full_link_gate(self):
+        """J6 may rotate without displacing EE beyond production C tolerance."""
+        p = self.p
+        for joint, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, joint, angle, physicsClientId=self.client)
+        displaced = self.final_goal[5] + math.radians(0.5)
+        p.resetJointState(self.arm, self.joints[5], displaced,
+                          physicsClientId=self.client)
+        before = tuple(p.getJointState(
+            self.arm, joint, physicsClientId=self.client)[0]
+            for joint in self.joints)
+        with patch("stage5_obstacle_hold_recovery.preflight_joint_avoidance",
+                   side_effect=CartesianGoalAlreadyReached("C APF goal already reached")):
+            route = plan_obstacle_hold_recovery(
+                self.dll, p, self.arm, self.joints, self.obstacles,
+                self.client, self.original["cartesian_goal_m"],
+                self.final_goal, "blocked", minimum_extra_clearance_m=.002)
+        self.assertTrue(route["passed"])
+        self.assertEqual(route["C_apf_ik_joint_segments"], 0)
+        self.assertTrue(route["exact_final_joint_goal_segment"])
+        self.assertIn("joint_only", route["recovery_strategy"])
+        self.assertEqual(len(route["joint_waypoints_rad"]), 2)
+        self.assertGreaterEqual(route["sampled_full_arm_states"], 3)
+        self.assertGreaterEqual(route["minimum_measured_full_link_clearance_m"], .012)
+        self.assertEqual(tuple(route["joint_waypoints_rad"][-1]),
+                         tuple(self.final_goal))
+        self.assertEqual(before, tuple(p.getJointState(
+            self.arm, joint, physicsClientId=self.client)[0]
+            for joint in self.joints))
+
+    def test_zero_C_cartesian_waypoints_cannot_excuse_large_joint_jump(self):
+        p = self.p
+        for joint, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, joint, angle, physicsClientId=self.client)
+        p.resetJointState(self.arm, self.joints[5],
+                          self.final_goal[5] + math.radians(3),
+                          physicsClientId=self.client)
+        with patch("stage5_obstacle_hold_recovery.preflight_joint_avoidance",
+                   side_effect=CartesianGoalAlreadyReached("C APF goal already reached")):
+            with self.assertRaisesRegex(RejectedRoute, "too far in joint space"):
+                plan_obstacle_hold_recovery(
+                    self.dll, p, self.arm, self.joints, self.obstacles,
+                    self.client, self.original["cartesian_goal_m"],
+                    self.final_goal, "blocked", minimum_extra_clearance_m=.002)
+
+    def test_other_C_APF_failure_never_uses_direct_joint_fallback(self):
+        p = self.p
+        for joint, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, joint, angle, physicsClientId=self.client)
+        p.resetJointState(self.arm, self.joints[5],
+                          self.final_goal[5] + math.radians(.5),
+                          physicsClientId=self.client)
+        with patch("stage5_obstacle_hold_recovery.preflight_joint_avoidance",
+                   side_effect=RejectedRoute("C APF blocked")):
+            with self.assertRaisesRegex(RejectedRoute, "C APF blocked"):
+                plan_obstacle_hold_recovery(
+                    self.dll, p, self.arm, self.joints, self.obstacles,
+                    self.client, self.original["cartesian_goal_m"],
+                    self.final_goal, "blocked", minimum_extra_clearance_m=.002)
 
     def test_unsafe_current_pose_or_goal_cannot_be_authorized(self):
         p=self.p
