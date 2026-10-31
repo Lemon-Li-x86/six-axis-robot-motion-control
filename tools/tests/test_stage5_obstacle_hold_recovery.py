@@ -77,6 +77,67 @@ class RealCRecoveryTest(unittest.TestCase):
                   for joint in self.joints]
         self.assertEqual(actual, start)
 
+    def test_each_joint_outbound_and_C_return_are_attempted_in_real_Bullet(self):
+        """An axis can be refused by C IK; refusal is not fake acceptance."""
+        from stage5_avoidance_uart_gate import load_scene
+        from stage5_collision_validation import InvalidPath
+        p = self.p
+        scene, policy = load_scene("blocked")
+        permitted = []
+        rejected = []
+        for axis in range(6):
+            for delta_deg in (-0.5, +0.5):
+                for j, q in zip(self.joints, self.final_goal):
+                    p.resetJointState(self.arm, j, q,
+                                      physicsClientId=self.client)
+                target = list(self.final_goal)
+                target[axis] += math.radians(delta_deg)
+                try:
+                    outgoing = validate_joint_path(
+                        p, self.arm, self.obstacles, self.joints,
+                        [self.final_goal, target],
+                        maximum_joint_step_rad=math.radians(.25),
+                        clearance_m=.012,
+                        maximum_samples=policy["max_collision_samples"],
+                        physics_client_id=self.client)
+                    if not outgoing["passed"]:
+                        rejected.append((axis, delta_deg, "outbound_clearance"))
+                        continue
+                    for j, q in zip(self.joints, target):
+                        p.resetJointState(self.arm, j, q,
+                                          physicsClientId=self.client)
+                    try:
+                        route = plan_obstacle_hold_recovery(
+                            self.dll, p, self.arm, self.joints,
+                            self.obstacles, self.client,
+                            self.original["cartesian_goal_m"],
+                            self.final_goal, "blocked",
+                            minimum_extra_clearance_m=.002)
+                    except (RejectedRoute, InvalidPath) as error:
+                        rejected.append((axis, delta_deg, type(error).__name__))
+                    else:
+                        self.assertTrue(route["passed"])
+                        self.assertGreaterEqual(
+                            route["minimum_measured_full_link_clearance_m"], .012)
+                        self.assertEqual(
+                            tuple(route["joint_waypoints_rad"][-1]),
+                            tuple(self.final_goal))
+                        permitted.append((axis, delta_deg))
+                finally:
+                    # Entire test is authorization only, never actuation.
+                    for j, q in zip(self.joints, self.final_goal):
+                        p.resetJointState(self.arm, j, q,
+                                          physicsClientId=self.client)
+                actual = tuple(p.getJointState(
+                    self.arm, j, physicsClientId=self.client)[0]
+                    for j in self.joints)
+                self.assertEqual(actual, tuple(self.final_goal))
+        print("REAL C APF six-axis 0.5deg candidate feasibility:",
+              "permitted", permitted, "rejected", rejected, flush=True)
+        self.assertEqual(len(permitted) + len(rejected), 12)
+        # J1 is known reachable; the other eleven are not assumed reachable.
+        self.assertTrue(permitted, "No six-axis GUI jog candidate was feasible")
+
     def test_unsafe_current_pose_or_goal_cannot_be_authorized(self):
         p=self.p
         for joint, angle in zip(self.joints, self.final_goal):
