@@ -21,6 +21,12 @@ on:
       - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
+      - 'tools/run_stage5_controlled_recovery_windows.ps1'
+      - 'tools/tests/run_stage5_controlled_apf_hold_recovery.py'
+      - 'tools/tests/test_stage5_obstacle_hold_recovery.py'
+      - 'simulation/pybullet_ur5/src/stage5_obstacle_hold_recovery.py'
+      - 'simulation/pybullet_ur5/src/stage5_avoidance_preflight.py'
+      - 'simulation/pybullet_ur5/src/stage5_avoidance_uart_gate.py'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
   pull_request:
@@ -176,3 +182,37 @@ jobs:
           $env:STAGE5_APF_TEST_DLL = $dll.FullName
           python -c "import ctypes,os; d=ctypes.CDLL(os.environ['STAGE5_APF_TEST_DLL']); [getattr(d,n) for n in ['robot_apf_segment_blocked','stage5_apf_points_to_joint_route','stage5_apf_joint_pose_limits']]; print('C APF/IK Windows DLL exports PASS')"
           if ($LASTEXITCODE -ne 0) { throw "C APF ctypes exports unavailable" }
+
+  windows-controlled-obstacle-recovery:
+    # Same entrypoint provided to the user; actual PC Windows QEMU + C DLL.
+    # No GUI mouse picking, no physical motor hardware and no interaction claim.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+      - name: Install QEMU and PyBullet on Windows
+        shell: pwsh
+        run: |
+          choco install qemu --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+          python -m pip install numpy pybullet
+          if ($LASTEXITCODE -ne 0) { throw "PyBullet installation failed" }
+      - name: Verify one-command production DLL plus C APF UART controlled recovery
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_controlled_recovery_windows.ps1 -Python python -Qemu qemu-system-arm -OutputDir build/stage5-recovery-windows-ci
+          if ($LASTEXITCODE -ne 0) { throw "Windows controlled recovery failed" }
+          $a = Get-Content build/stage5-recovery-windows-ci/controlled_recovery_acceptance.json -Raw | ConvertFrom-Json
+          if ($a.passed -ne $true) { throw "Windows controlled recovery evidence not PASS" }
+      - name: Archive Windows controlled C APF/QEMU recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-windows-controlled-obstacle-recovery
+          path: build/stage5-recovery-windows-ci/*
+          if-no-files-found: ignore
