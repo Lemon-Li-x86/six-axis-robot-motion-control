@@ -973,6 +973,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError("Feedback period must be divisible by the physics step")
 
     sequencer = MotionSequencer(SCENARIOS[options.scenario])
+    endpoint_prev_feedback: tuple[int, ...] | None = None
+    endpoint_stable_frames = 0
+    endpoint_rearm_events: list[dict] = []
     trace = deque(maxlen=6000) if options.interactive_hold else []
     diagnostic_values: dict[str, int] = {}
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
@@ -1842,10 +1845,58 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         sock.sendall(recovery_sequencer.next_request(
                                             time.monotonic()))
                                 if sequencer.observe(measured):
+                                    endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = None
                                     print(f"[SETTLED] Segment {sequencer.completed}/"
                                           f"{len(sequencer.goals)}")
                                     if not sequencer.done:
                                         sock.sendall(sequencer.next_request(time.monotonic()))
+                                elif (not options.headless and prepare_motion is None
+                                      and sequencer.accepted and not sequencer.done
+                                      and sequencer.rearms_current_segment == 0
+                                      and sequencer.goal is not None):
+                                    # A native GUI servo's velocity caps can
+                                    # leave a small, physically stationary
+                                    # endpoint residual. Never waive the
+                                    # original 0.15deg/15-frame acceptance:
+                                    # explicitly ask the *real firmware* to
+                                    # replan from the current measured pose.
+                                    # One attempt only, no obstacle scenario.
+                                    if (endpoint_prev_feedback is not None and
+                                            max(abs(x-y) for x,y in zip(
+                                                endpoint_prev_feedback, measured)) <= 1):
+                                        endpoint_stable_frames += 1
+                                    else:
+                                        endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = tuple(measured)
+                                    endpoint_error = max(abs(x-y) /
+                                        wire.JOINT_ANGLE_SCALE for x,y in zip(
+                                            sequencer.goal, measured))
+                                    if (SETTLE_TOLERANCE_DEG < endpoint_error
+                                            <= HOLD_DEVIATION_TRIGGER_DEG
+                                            and endpoint_stable_frames >= SETTLE_FRAME_COUNT
+                                            and time.monotonic() - sequencer.requested_at
+                                                >= HOLD_RETRY_COOLDOWN_S):
+                                        event = dict(
+                                            event="segment_endpoint_rearm_requested",
+                                            segment=sequencer.index+1,
+                                            measured_error_deg=endpoint_error,
+                                            source="fresh_physical_feedback",
+                                            max_rearms=1)
+                                        endpoint_rearm_events.append(event)
+                                        audit.write(json.dumps(event) + "\n")
+                                        print("[SEGMENT ENDPOINT REARM] "
+                                              f"segment={sequencer.index+1} "
+                                              f"error={endpoint_error:.3f}deg; "
+                                              "new firmware planning request; "
+                                              "not yet settled", flush=True)
+                                        endpoint_stable_frames = 0
+                                        endpoint_prev_feedback = None
+                                        sock.sendall(sequencer.reissue_current_goal_from_feedback(
+                                            time.monotonic()))
+                                else:
+                                    endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = None
                                 if options.frame_delay_s > 0:
                                     time.sleep(options.frame_delay_s)
                             elif (command == wire.CMD_JOINT_STATE_ACK and
@@ -2030,6 +2081,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     bool(collision_scans) if prepare_motion is not None else None),
                 "segments_requested": len(sequencer.goals),
                 "segments_settled": sequencer.completed,
+                "segment_endpoint_rearms": sequencer.endpoint_rearms,
+                "segment_endpoint_rearm_events": endpoint_rearm_events,
                 "segment_final_errors_deg": sequencer.segment_final_errors_deg,
                 "max_final_segment_error_deg": max(
                     sequencer.segment_final_errors_deg, default=None
@@ -2117,7 +2170,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     except BaseException as error:
         failure = dict(passed=False, error=repr(error),
             target_frames=target_frames, feedback_acks=feedback_acks,
-            segments_settled=sequencer.completed, diagnostics=diagnostic_values,
+            segments_settled=sequencer.completed,
+            segment_endpoint_rearms=sequencer.endpoint_rearms,
+            segment_endpoint_rearm_events=endpoint_rearm_events,
+            diagnostics=diagnostic_values,
             physical_ee_at_hold_entry_m=settled_ee_xyz_m,
             physical_ee_goal_error_at_hold_entry_mm=settled_ee_goal_error_mm,
             planned_route_minimum_full_link_clearance_m=(
