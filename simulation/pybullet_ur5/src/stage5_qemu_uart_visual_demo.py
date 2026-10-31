@@ -914,6 +914,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     recovery_sequencer: MotionSequencer | None = None
     recovery_attempted = False
     recovery_segments_settled = 0
+    recovery_sequence_next = None
+    recovery_route_events = []
     safe_gui_jog = None
     firmware_max_velocity_deg_s = tuple(
         firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
@@ -1110,7 +1112,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         maximum_joint_step_rad=collision_policy[
                             "max_joint_step_rad"],
                         minimum_clearance_m=safety_clearance_m,
-                        maximum_samples=collision_policy["max_collision_samples"])
+                        maximum_samples=collision_policy["max_collision_samples"],
+                        preview_return=lambda: prepare_motion.plan_hold_recovery(
+                            p, arm, joints, client, plan))
                     previous_on_physics = on_physics
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
                         if previous_on_physics is not None:
@@ -1120,8 +1124,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     on_physics = guarded_jog_callback
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
-                        "SAFE APF JOG +/-2deg buttons only AFTER HOLD. "
-                        "Each candidate pose is checked BEFORE application. "
+                        "SAFE APF JOG +/- buttons and J1..J6 selector. "
+                        "Use during HOLD; 0.5..2.0deg increments, up to 3 "
+                        "complete returns per run. Outbound AND return routes "
+                        "are checked BEFORE application. "
                         "Original mouse dragging remains OFF; press Q to finish.",
                         flush=True)
             if not options.headless:
@@ -1376,7 +1382,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                     True, measured, hold_goal_raw)
                                             if (options.gui_safe_jog and
                                                     (safe_gui_jog is None or
-                                                     safe_gui_jog.applied != 1)):
+                                                     not (
+                                                 safe_gui_jog.applied >
+                                                 safe_gui_jog.completed and
+                                                 not safe_gui_jog.available))):
                                                 # Guarded mode cannot be used as a
                                                 # backdoor to replan arbitrary
                                                 # unvalidated external motion.
@@ -1408,10 +1417,19 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                       for v in waypoint)
                                                 for waypoint in recovery_plan_report[
                                                     "joint_waypoints_rad"][1:]]
+                                            if recovery_sequence_next is None:
+                                                recovery_sequence_next = (
+                                                    sequencer.sequence + 1) & 0xff
                                             recovery_sequencer = MotionSequencer(
                                                 recovery_goals,
-                                                first_sequence=(
-                                                    sequencer.sequence + 1) & 0xff)
+                                                first_sequence=recovery_sequence_next)
+                                            recovery_route_events.append(dict(
+                                                first_sequence=recovery_sequence_next,
+                                                planned_segments=len(recovery_goals),
+                                                completed=False,
+                                                minimum_planned_clearance_m=
+                                                    recovery_plan_report[
+                                                        "minimum_measured_full_link_clearance_m"]))
                                             recovery_attempts += 1
                                             audit.write(json.dumps(dict(
                                                 event="hold_C_apf_recovery_preflight",
@@ -1629,10 +1647,19 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         index=recovery_segments_settled,
                                         total=len(recovery_sequencer.goals))) + "\n")
                                     if recovery_sequencer.done:
+                                        recovery_sequence_next = (
+                                            recovery_sequencer.sequence + 1) & 0xff
+                                        recovery_route_events[-1]["completed"] = True
                                         recovery_sequencer = None
                                         recovery_settled = SETTLE_FRAME_COUNT
                                         recovering = False
+                                        recovery_attempted = False
                                         hold_recoveries += 1
+                                        if options.gui_safe_jog:
+                                            # Re-enable only after real UART ACK +
+                                            # physical settled frames for every
+                                            # verified recovery segment.
+                                            safe_gui_jog.complete_recovery()
                                         print("[HOLD C APF] All validated recovery "
                                               "segments settled", flush=True)
                                     else:
@@ -1788,9 +1815,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 clock_aligned
                 and (not options.gui_safe_jog or (
                     safe_gui_jog is not None and
-                    safe_gui_jog.applied == 1 and
-                    recovery_segments_settled >= 1 and
-                    hold_recoveries >= 1))
+                    safe_gui_jog.applied >= 1 and
+                    safe_gui_jog.applied == safe_gui_jog.completed ==
+                    hold_recoveries and
+                    recovery_segments_settled >= safe_gui_jog.applied))
                 and sequencer.done
                 and feedback_acks >= 3
                 and bad_acks == 0
@@ -1814,6 +1842,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "avoidance_preflight": avoidance_report,
                 "obstacle_recovery_preflight": recovery_plan_report,
                 "obstacle_recovery_segments_settled": recovery_segments_settled,
+                "obstacle_recovery_routes": recovery_route_events,
                 "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
                 "physical_ee_goal_error_at_hold_entry_mm":
                     settled_ee_goal_error_mm,
@@ -1860,6 +1889,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     safe_gui_jog.applied if safe_gui_jog is not None else 0),
                 "safe_gui_jog_refused": (
                     safe_gui_jog.refused if safe_gui_jog is not None else 0),
+                "safe_gui_jog_completed": (
+                    safe_gui_jog.completed if safe_gui_jog is not None else 0),
                 "avoidance_hold_recovery_policy": metadata[
                     "avoidance_hold_recovery_policy"],
                 "hold_observe_only": options.hold_observe_only,
@@ -1918,6 +1949,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             segments_requested=len(sequencer.goals),
             obstacle_recovery_preflight=recovery_plan_report,
             obstacle_recovery_segments_settled=recovery_segments_settled,
+            obstacle_recovery_routes=recovery_route_events,
             hold_recoveries=hold_recoveries,
             hold_rearms=hold_rearms,
             hold_rearm_acks=hold_rearm_acks,
@@ -1932,6 +1964,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 safe_gui_jog.applied if safe_gui_jog is not None else 0),
             safe_gui_jog_refused=(
                 safe_gui_jog.refused if safe_gui_jog is not None else 0),
+            safe_gui_jog_completed=(
+                safe_gui_jog.completed if safe_gui_jog is not None else 0),
             avoidance_hold_recovery_policy=metadata[
                 "avoidance_hold_recovery_policy"])
         if isinstance(error, Stage5UnvalidatedHoldRecoveryError):
