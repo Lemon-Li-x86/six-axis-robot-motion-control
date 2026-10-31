@@ -444,6 +444,22 @@ def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bo
             or (gui_safe_jog and safe_gui_jog_recovery_pending(jog)))
 
 
+def small_endpoint_rearm_ready(
+    sequencer, measured: Sequence[int], stable_frames: int,
+    now: float,
+) -> bool:
+    """Bounded GUI-only recovery gate; NEVER substitutes for physical settle."""
+    if (not sequencer.accepted or sequencer.done or
+            sequencer.rearms_current_segment != 0 or
+            sequencer.goal is None or
+            stable_frames < SETTLE_FRAME_COUNT or
+            now - sequencer.requested_at < HOLD_RETRY_COOLDOWN_S):
+        return False
+    error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                for a,b in zip(sequencer.goal, measured))
+    return SETTLE_TOLERANCE_DEG < error <= HOLD_DEVIATION_TRIGGER_DEG
+
+
 def execute_guarded_gui_jog(
     jog, bullet, arm, joints, stamp, done, ending,
     motor_forces_nm, gui_motor_velocity_caps,
@@ -1875,11 +1891,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     endpoint_error = max(abs(x-y) /
                                         wire.JOINT_ANGLE_SCALE for x,y in zip(
                                             sequencer.goal, measured))
-                                    if (SETTLE_TOLERANCE_DEG < endpoint_error
-                                            <= HOLD_DEVIATION_TRIGGER_DEG
-                                            and endpoint_stable_frames >= SETTLE_FRAME_COUNT
-                                            and time.monotonic() - sequencer.requested_at
-                                                >= HOLD_RETRY_COOLDOWN_S):
+                                    if small_endpoint_rearm_ready(
+                                            sequencer, measured, endpoint_stable_frames,
+                                            time.monotonic()):
                                         event = dict(
                                             event="segment_endpoint_rearm_requested",
                                             segment=sequencer.index+1,
