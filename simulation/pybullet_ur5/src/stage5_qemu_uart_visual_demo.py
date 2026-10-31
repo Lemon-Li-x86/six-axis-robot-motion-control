@@ -486,6 +486,8 @@ class MotionSequencer:
         self.completed = 0
         self.requested_at = 0.0
         self.segment_final_errors_deg: list[float] = []
+        self.endpoint_rearms = 0
+        self.rearms_current_segment = 0
 
     @property
     def done(self) -> bool:
@@ -506,9 +508,31 @@ class MotionSequencer:
         self.requested_at = now
         self.ack_pending = True
         self.settled_frames = 0
+        self.rearms_current_segment = 0
         payload = bytes((self.sequence,)) + struct.pack(
             "<" + str(wire.JOINT_COUNT) + "h", *self.goals[self.index]
         )
+        return integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload)
+
+    def reissue_current_goal_from_feedback(self, now: float) -> bytes:
+        """One explicit closed-loop correction attempt, never a fake settle.
+
+        The firmware must replan from fresh measured feedback and return a
+        new ACK. This does not advance segment index or relax arrival checks.
+        """
+        if (self.index < 0 or self.done or not self.accepted or
+                self.ack_pending or self.rearms_current_segment >= 1):
+            raise RuntimeError("Current segment cannot be safely reissued")
+        self.sequence = (self.sequence + 1) & 0xFF
+        self.requested_at = now
+        self.ack_pending = True
+        self.accepted = False
+        self.settled_frames = 0
+        self.endpoint_rearms += 1
+        self.rearms_current_segment += 1
+        assert self.goal is not None
+        payload = bytes((self.sequence,)) + struct.pack(
+            "<" + str(wire.JOINT_COUNT) + "h", *self.goal)
         return integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload)
 
     def acknowledge(self, payload: bytes) -> None:
