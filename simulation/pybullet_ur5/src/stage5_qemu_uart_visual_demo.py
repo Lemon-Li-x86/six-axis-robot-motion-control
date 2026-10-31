@@ -503,8 +503,11 @@ class MotionSequencer:
             raise RuntimeError("Previous motion has not settled")
         if self.index + 1 >= len(self.goals):
             raise RuntimeError("No remaining motion segment")
+        # Never reuse a UART sequence consumed by a corrective request.
+        # With no retries this remains first_sequence + segment index.
+        self.sequence = (self.first_sequence if self.index < 0
+                         else (self.sequence + 1) & 0xFF)
         self.index += 1
-        self.sequence = (self.first_sequence + self.index) & 0xFF
         self.requested_at = now
         self.ack_pending = True
         self.settled_frames = 0
