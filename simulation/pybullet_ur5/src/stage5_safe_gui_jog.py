@@ -49,6 +49,7 @@ class SafeGuiJog:
         self.minimum_clearance_m = minimum_clearance_m
         self.maximum_samples = maximum_samples
         self.preview_return = preview_return
+        self.extra_clearance_m = JOG_EXTRA_CLEARANCE_M
         self.events: list[dict] = []
         self.applied = 0
         self.refused = 0
