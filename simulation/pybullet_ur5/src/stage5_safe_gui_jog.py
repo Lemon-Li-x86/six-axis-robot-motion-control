@@ -56,6 +56,7 @@ class SafeGuiJog:
         self.refused = 0
         self.completed = 0
         self.available = True
+        self.finish_requested = False
         self.axis_widget = physics.addUserDebugParameter(
             "SAFE JOG: selected joint J1..J6", 1.0, 6.0, 1.0,
             physicsClientId=client)
@@ -75,6 +76,13 @@ class SafeGuiJog:
                 widget, physicsClientId=client))
             for sign, widget in self.buttons.items()
         }
+        # Dedicated orderly-exit action. Closing the native window X tears
+        # down the physics server before the final UART verdict is recorded.
+        self.finish_widget = physics.addUserDebugParameter(
+            "SAFE JOG FINISH: validate and close (not X)", 1, 0, 0,
+            physicsClientId=client)
+        self.previous_finish_count = int(physics.readUserDebugParameter(
+            self.finish_widget, physicsClientId=client))
 
     def _selection(self):
         raw_axis = float(self.physics.readUserDebugParameter(
@@ -192,7 +200,8 @@ class SafeGuiJog:
             self.previous_counts[sign] = count
             if count <= previous:
                 continue
-            if (not done or ending or not self.available or
+            if (not done or ending or self.finish_requested
+                    or not self.available or
                     self.applied >= JOG_MAX_SUCCESSES):
                 event = {"event": "safe_gui_jog_rejected", "sign": sign,
                          "reason": "not_idle_or_recovery_pending_or_limit"}
@@ -204,5 +213,23 @@ class SafeGuiJog:
                     self.applied += 1
                 else:
                     self.refused += 1
+            self.events.append(event)
+            print("[SAFE GUI JOG] " + str(event), flush=True)
+
+        # Consume and validate the finish-button edge every physics frame,
+        # including clicks during motion. Never queue an early finish.
+        finish_count = int(physics.readUserDebugParameter(
+            self.finish_widget, physicsClientId=self.client))
+        finish_changed = finish_count > self.previous_finish_count
+        self.previous_finish_count = finish_count
+        if finish_changed:
+            if (not done or ending or self.applied == 0 or
+                    self.completed != self.applied):
+                event = {"event": "safe_gui_jog_finish_rejected",
+                         "reason": "requires_completed_uart_recovery"}
+            else:
+                self.finish_requested = True
+                event = {"event": "safe_gui_jog_finish_requested",
+                         "completed_recoveries": self.completed}
             self.events.append(event)
             print("[SAFE GUI JOG] " + str(event), flush=True)
