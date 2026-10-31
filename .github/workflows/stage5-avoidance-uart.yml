@@ -34,6 +34,11 @@ jobs:
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Verify C APF IK displaced-pose obstacle HOLD recovery authorization
+        env:
+          STAGE5_APF_TEST_DLL: build/stage5-avoidance/libstage5_apf_bridge.so
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_obstacle_hold_recovery.py' -v
       - name: Verify original three-segment UART and short-duration timebase regression
         run: python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
       - name: Execute C planned, C IK converted, whole-arm preflighted route via QEMU UART
