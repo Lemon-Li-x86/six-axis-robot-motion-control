@@ -106,3 +106,18 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Di
 ```
 
 先**不拖拽**，观察红色物理箱、红色直线路径、绿色规划路径与蓝色实测轨迹；等 4/4 到位、日志 `[APF PHYSICAL EE]` 显示实际末端误差，再缓慢移动关节。任何 `[SAFE STOP]` 都是故障证据而非通过。安全停机时按 Q 退出后提供 `result.json`、`avoidance_preflight.json` 和 `worker.log`。
+
+## 8. 2026-10-31 交互式 HOLD 安全回退（未完成碰撞感知恢复规划）
+
+本地 Windows 避障后拖动测试确认：自动 C APF/IK 全部 4/4 段到位，用户拖动后 `uart_live.jsonl` 有 `hold_deviation`（首次跨越0.5°）及后续 `hold_replan`（序列45）。`hold_replan` 发送前真实六轴测量 centideg 为 `[3245,-4250,5290,-6229,4002,6833]`，目标为 `[4065,-6701,9383,-1569,1502,1415]`，实际多关节差值高达数十度。最终 `result.json` 为 `passed=false`, `fault_type=stage5_runtime_full_arm_clearance_violation`。目前尚缺失这一次完整故障距离日志，不能判断是拖拽本身还是直返 rearm 期间发生首次违规，也不能将事后 10ms 间距扫描视为预防碰撞的安全控制。
+
+这是架构缺口，不是把 10mm 改小可修复的数值问题。C APF 预检只证明了**原起点**沿当前规划航点的离散全连杆几何。机械臂被拖出轨迹后的**新起点到原终点**需要重新做避障路径规划、C IK 路径转换与 full-link 验证；旧 `hold_replan` 直接请求最终关节目标，不具备上述证明。且鼠标物理约束可能同时拉动多个关节，不能以单关节小拖动认为整臂安全。
+
+本补丁的**明确可见安全回退**：
+- 仅当加载 APF 避障规划时，PyBullet native GUI 用 `COV_ENABLE_MOUSE_PICKING=0`，禁止人为将机械臂拖向障碍物；普通无障碍 GUI 的 picking 保留。
+- 仅当存在 APF 安全障碍物时，若 HOLD 超过原偏移阈值0.5°，立即用 `Stage5UnvalidatedHoldRecoveryError` 拒绝继续未经核实的自动回位，冻结 GUI/终止 QEMU，并将 `fault_type=stage5_unvalidated_hold_recovery_blocked` 和 `unsafe_return_rearm_sent=false` 写入 result.json。发 `CMD_REQUEST_JOINT_MOVE` 的路径前还放置第二道相同的 fail-closed guard。该机制防止**未经验证的重新运动命令**，不宣称能够预防任何外力造成的运动或零延迟停止。
+- `result.json` 对失败运行也明确保存 `hold_recoveries/hold_rearms/hold_rearm_acks/hold_final_error_deg`，避免日志字段空白被误解释为成功。
+- `run_metadata.json` 和 result 记录 `native_gui_picking` 与 `avoidance_hold_recovery_policy`，worker 输出 `[APF HOLD SAFETY]`。避障模式 **4/4 自动闭环及无扰动 HOLD** 仍允许执行，但**不得报告避障场景拖拽回位已通过**。
+- 旧 GUI/HOLD 备份、main、Stage4、C APF 与 C PID 参数均不改变，10mm 物理安全限距保持不变。
+
+重新允许障碍环境拖拽必须实现从**实测连续六轴姿态**出发的碰撞感知路径重规划，并考虑交互期间的约束/失效保护、每个实际控制步的安全检查与动态执行偏差。不能只调用已有直返原关节目标 API。
