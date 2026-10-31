@@ -421,6 +421,39 @@ def advance_physics_step_batch(
         bullet.stepSimulation()
 
 
+
+def safe_gui_jog_recovery_pending(jog) -> bool:
+    """A fully preflighted jog is still pending even if a servo hides its error."""
+    return (jog is not None and jog.applied > jog.completed
+            and not jog.available)
+
+
+def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bool:
+    """Keep the ordinary HOLD threshold, but honor an authorized jog event."""
+    return (deviation_deg > HOLD_DEVIATION_TRIGGER_DEG
+            or (gui_safe_jog and safe_gui_jog_recovery_pending(jog)))
+
+
+def execute_guarded_gui_jog(
+    jog, bullet, arm, joints, stamp, done, ending,
+    motor_forces_nm, gui_motor_velocity_caps,
+) -> None:
+    """Preserve an authorized injected pose until the C UART recovery takes over.
+
+    The original Bullet POSITION_CONTROL target is the final HOLD pose.
+    Without this update a 0.5-degree jog can be erased within one physics
+    frame, before HOLD deviation sampling and any C recovery request.
+    """
+    previous_applied = jog.applied
+    jog(bullet, arm, joints, stamp, done, ending)
+    if jog.applied > previous_applied:
+        displaced_rad = tuple(
+            bullet.getJointState(arm, joint, physicsClientId=jog.client)[0]
+            for joint in joints)
+        set_joint_position_motors(
+            bullet, arm, joints, displaced_rad,
+            motor_forces_nm, gui_motor_velocity_caps)
+
 class MotionSequencer:
     """按真实反馈到位情况依次发出关节请求，不覆盖未完成的请求。"""
 
@@ -1121,7 +1154,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         if previous_on_physics is not None:
                             previous_on_physics(
                                 bullet, body, axes, stamp, done, ending)
-                        safe_gui_jog(bullet, body, axes, stamp, done, ending)
+                        execute_guarded_gui_jog(
+                            safe_gui_jog, bullet, body, axes, stamp, done, ending,
+                            motor_forces_nm, gui_motor_velocity_caps)
                     on_physics = guarded_jog_callback
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
@@ -1372,7 +1407,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 if sequencer.done and options.interactive_hold and not ending:
                                     deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                     for a,b in zip(measured, hold_goal_raw))
-                                    if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
+                                    if (hold_recovery_requested(
+                                            deviation, options.gui_safe_jog,
+                                            safe_gui_jog) and not recovering):
                                         if safety_obstacles:
                                             # The arbitrary GUI picking case remains
                                             # blocked. Only a controlled DIRECT test
@@ -1382,11 +1419,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 enforce_collision_aware_hold_policy(
                                                     True, measured, hold_goal_raw)
                                             if (options.gui_safe_jog and
-                                                    (safe_gui_jog is None or
-                                                     not (
-                                                 safe_gui_jog.applied >
-                                                 safe_gui_jog.completed and
-                                                 not safe_gui_jog.available))):
+                                                    not safe_gui_jog_recovery_pending(
+                                                        safe_gui_jog)):
                                                 # Guarded mode cannot be used as a
                                                 # backdoor to replan arbitrary
                                                 # unvalidated external motion.
