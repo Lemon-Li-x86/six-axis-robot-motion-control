@@ -3,6 +3,7 @@ param(
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-live-windows",
     [double]$DiagnosticsTimeoutSeconds = 0,  # 0 means use the Python default (5 s).
+    [double]$SafeJogHoldSeconds = 90,  # Wall-clock HOLD budget; C recovery may use observer grace.
     [switch]$ObserveHold,
     [switch]$NoHold,
     [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
@@ -45,7 +46,17 @@ try {
     } elseif ($RawRoute) {
         throw "-RawRoute requires -Stage5RouteCase clear or blocked"
     }
-    if ($SafeJog) { $liveArgs += "--safe-gui-jog" }
+    if ($SafeJog) {
+        if ([double]::IsNaN($SafeJogHoldSeconds) -or
+            [double]::IsInfinity($SafeJogHoldSeconds) -or
+            $SafeJogHoldSeconds -le 0) {
+            throw "SafeJogHoldSeconds must be a finite positive number."
+        }
+        $holdBudget = $SafeJogHoldSeconds.ToString(
+            [System.Globalization.CultureInfo]::InvariantCulture)
+        $liveArgs += @("--safe-gui-jog", "--hold-seconds", $holdBudget)
+        Write-Host "[Stage5] SAFE JOG HOLD budget: $holdBudget seconds; console Q aborts independently of GUI."
+    }
     if ($NoHold) { $liveArgs += "--no-hold" }
     if ($ObserveHold) { $liveArgs += "--observe-hold" }
     if ($DiagnosticsTimeoutSeconds -ne 0) {
