@@ -117,6 +117,8 @@ class DemoOptions:
     # Internal DIRECT/QEMU synthetic disturbance regression ONLY.
     # Explicitly not enabled for unrestricted human GUI mouse dragging.
     test_obstacle_hold_recovery: bool = False
+    # Explicit native GUI guarded-button trial, never native mouse picking.
+    gui_safe_jog: bool = False
 
 
 class Stage5UnvalidatedHoldRecoveryError(ValueError):
@@ -879,10 +881,17 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     if options.test_obstacle_hold_recovery and (
             not options.headless or not options.interactive_hold or
             options.hold_observe_only or prepare_motion is None or
-            on_physics is None):
+            on_physics is None or options.gui_safe_jog):
         raise ValueError(
             "C obstacle recovery experiment requires DIRECT, active HOLD, "
             "real C APF preflight and an explicitly supplied disturbance")
+    if options.gui_safe_jog and (
+            options.headless or not options.interactive_hold or
+            options.hold_observe_only or prepare_motion is None or
+            options.test_obstacle_hold_recovery):
+        raise ValueError(
+            "Guarded GUI jog requires native GUI, active HOLD and C APF; "
+            "unrestricted native picking remains forbidden")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -905,6 +914,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     recovery_sequencer: MotionSequencer | None = None
     recovery_attempted = False
     recovery_segments_settled = 0
+    safe_gui_jog = None
     firmware_max_velocity_deg_s = tuple(
         firmware_defaults["stage4_motion"]["max_velocity_deg_s"])
     step_calls_per_feedback = (SIMULATED_STEPS_PER_TARGET if options.headless else 1)
@@ -977,10 +987,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         physics_mode="DIRECT" if options.headless else "GUI",
         native_gui_picking=native_picking_allowed,
         avoidance_hold_recovery_policy=(
-            "DIRECT_controlled_disturbance_requires_validated_C_route"
+            "GUI_guarded_button_jog_requires_full_link_preview_then_C_route"
+            if options.gui_safe_jog
+            else "DIRECT_controlled_disturbance_requires_validated_C_route"
             if options.test_obstacle_hold_recovery
             else "refuse_unvalidated_return_and_disable_manual_picking"
             if prepare_motion is not None else "original_unobstructed_hold"),
+        gui_safe_jog=options.gui_safe_jog,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1086,6 +1099,30 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     json.dumps(avoidance_report, indent=2), encoding="utf-8")
                 if not options.headless:
                     draw_avoidance_gui_evidence(p, avoidance_report)
+                if options.gui_safe_jog:
+                    from stage5_avoidance_uart_gate import load_scene
+                    from stage5_safe_gui_jog import SafeGuiJog
+                    scene, collision_policy = load_scene(plan["route_case"])
+                    safe_gui_jog = SafeGuiJog(
+                        p, arm, joints, safety_obstacles, client,
+                        joint_limits_rad,
+                        maximum_joint_step_rad=collision_policy[
+                            "max_joint_step_rad"],
+                        minimum_clearance_m=safety_clearance_m,
+                        maximum_samples=collision_policy["max_collision_samples"])
+                    previous_on_physics = on_physics
+                    def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
+                        if previous_on_physics is not None:
+                            previous_on_physics(
+                                bullet, body, axes, stamp, done, ending)
+                        safe_gui_jog(bullet, body, axes, stamp, done, ending)
+                    on_physics = guarded_jog_callback
+                    print(
+                        "[SAFE GUI JOG] C APF obstacle scene: use left panel "
+                        "SAFE APF JOG +/-2deg buttons only AFTER HOLD. "
+                        "Each candidate pose is checked BEFORE application. "
+                        "Original mouse dragging remains OFF; press Q to finish.",
+                        flush=True)
             if not options.headless:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=1.05, cameraYaw=50, cameraPitch=-26,
@@ -1176,6 +1213,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             print(
                                 "[HOLD] Native mouse picking active; "
                                 "holding the final goal", flush=True)
+                        elif options.gui_safe_jog:
+                            print(
+                                "[HOLD] SAFE GUI JOG buttons armed; native mouse "
+                                "dragging OFF. Click one +/-2deg button. "
+                                "Guarded C APF/IK recovery follows.", flush=True)
                         else:
                             print(
                                 "[HOLD] Static obstacle scene: mouse picking "
@@ -1327,7 +1369,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                             # The arbitrary GUI picking case remains
                                             # blocked. Only a controlled DIRECT test
                                             # can authorize a new complete C route.
-                                            if not options.test_obstacle_hold_recovery:
+                                            if not (options.test_obstacle_hold_recovery
+                                                    or options.gui_safe_jog):
                                                 enforce_collision_aware_hold_policy(
                                                     True, measured, hold_goal_raw)
                                             if recovery_attempted:
@@ -1734,6 +1777,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "trajectory_samples" if prepare_motion is None else "monitoring_ticks")
             passed = (
                 clock_aligned
+                and (not options.gui_safe_jog or (
+                    safe_gui_jog is not None and
+                    safe_gui_jog.applied == 1 and
+                    recovery_segments_settled >= 1 and
+                    hold_recoveries >= 1))
                 and sequencer.done
                 and feedback_acks >= 3
                 and bad_acks == 0
@@ -1796,6 +1844,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "wall_duration_s": time.monotonic()-start_wall,
                 "interactive_hold": options.interactive_hold,
                 "native_gui_picking": native_picking_allowed,
+                "gui_safe_jog": options.gui_safe_jog,
+                "safe_gui_jog_events": (
+                    safe_gui_jog.events if safe_gui_jog is not None else []),
+                "safe_gui_jog_applied": (
+                    safe_gui_jog.applied if safe_gui_jog is not None else 0),
+                "safe_gui_jog_refused": (
+                    safe_gui_jog.refused if safe_gui_jog is not None else 0),
                 "avoidance_hold_recovery_policy": metadata[
                     "avoidance_hold_recovery_policy"],
                 "hold_observe_only": options.hold_observe_only,
@@ -1861,6 +1916,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 abs(a - b) / wire.JOINT_ANGLE_SCALE
                 for a, b in zip(last_measured, hold_goal_raw)),
             native_gui_picking=native_picking_allowed,
+            gui_safe_jog=options.gui_safe_jog,
+            safe_gui_jog_events=(
+                safe_gui_jog.events if safe_gui_jog is not None else []),
+            safe_gui_jog_applied=(
+                safe_gui_jog.applied if safe_gui_jog is not None else 0),
+            safe_gui_jog_refused=(
+                safe_gui_jog.refused if safe_gui_jog is not None else 0),
             avoidance_hold_recovery_policy=metadata[
                 "avoidance_hold_recovery_policy"])
         if isinstance(error, Stage5UnvalidatedHoldRecoveryError):
