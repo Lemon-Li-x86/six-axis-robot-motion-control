@@ -43,6 +43,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     hold_continuous_goal_raw,
     hold_replan_allowed,
     hold_recovery_requested,
+    small_endpoint_rearm_ready,
     execute_guarded_gui_jog,
     HOLD_STAGNANT_PERIOD_S,
     HOLD_RETRY_COOLDOWN_S,
@@ -271,6 +272,26 @@ class MotionSequencerTests(unittest.TestCase):
             self.assertEqual(runner.completed, index + 1)
         self.assertTrue(runner.done)
         self.assertEqual(len(runner.segment_final_errors_deg), 3)
+
+    def test_small_endpoint_rearm_gate_rejects_early_large_or_settled_cases(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        residual = tuple(v + 24 for v in goal)  # 0.24deg is outside 0.15deg.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 2.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT - 1, 4.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, tuple(v + 60 for v in goal), SETTLE_FRAME_COUNT, 4.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, goal, SETTLE_FRAME_COUNT, 4.0))
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0))
+        runner.reissue_current_goal_from_feedback(now=4.0)
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 7.0))
 
     def test_one_measured_endpoint_rearm_requires_real_second_ack_and_settle(self):
         goal = SCENARIOS["six_axis"][0]
