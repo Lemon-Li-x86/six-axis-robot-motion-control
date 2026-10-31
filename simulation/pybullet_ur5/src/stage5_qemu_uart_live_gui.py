@@ -42,6 +42,26 @@ TEST_FORCE_END_S = 1.8
 RawFrame = tuple[float, int, tuple[int, ...]]
 
 
+def clean_safe_jog_cancellation(report: dict, enabled: bool) -> bool:
+    """Recognize deliberate no-jog cancellation, never motion acceptance."""
+    faults = report.get("fault_counters")
+    return bool(
+        enabled and report.get("passed") is False
+        and report.get("cancelled") is True
+        and report.get("cancel_reason") == "no_guarded_jog_requested"
+        and report.get("gui_safe_jog") is True
+        and report.get("safe_gui_jog_applied") == 0
+        and report.get("safe_gui_jog_completed") == 0
+        and report.get("hold_recoveries") == 0
+        and report.get("segments_requested") == report.get("segments_settled")
+        and report.get("bad_checksum_frames") == 0
+        and report.get("clock_alignment_passed") is True
+        and isinstance(faults, dict)
+        and len(faults) == 3
+        and all(v == 0 for v in faults.values())
+    )
+
+
 def gui_safe_jog_worker_stalled(
     now: float, last_sample_at: float, diagnostics_timeout_s: float,
     *, ready: bool, gui_safe_jog: bool,
@@ -232,12 +252,18 @@ def capture_worker(
             and report.get("bad_checksum_frames") == 0
             and report.get("fault_counters")
             and all(value == 0 for value in report["fault_counters"].values()))
-        if report.get("passed") is not True and not clean_observation:
+        clean_cancel = clean_safe_jog_cancellation(report, gui_safe_jog)
+        if report.get("passed") is not True and not clean_observation and not clean_cancel:
             raise RuntimeError("QEMU/FreeRTOS/UART physics verdict failed")
+        if clean_cancel:
+            print("[SAFE GUI JOG CANCEL] No validated jog. "
+                  "Orderly GUI shutdown; passed=false.", flush=True)
         if clean_observation and report.get("passed") is not True:
             print("[OBSERVE] Finished outside target tolerance; result.json passed=false",
                   flush=True)
-        verdict = "PASS" if report.get("passed") is True else "OBSERVED (NOT PASS)"
+        verdict = ("CANCELLED (NOT PASS)" if clean_cancel else
+                   "PASS" if report.get("passed") is True else
+                   "OBSERVED (NOT PASS)")
         print(f"[LIVE] {verdict} {report['segments_settled']}/"
               f"{report['segments_requested']} segments", flush=True)
     except Exception:
@@ -437,9 +463,10 @@ def run_live(
             if ready.is_set() and not hold_announced:
                 if not headless_observer:
                     if gui_safe_jog:
-                        print("[HOLD] SAFE GUI JOG: use +/- while holding, "
-                              "then click SAFE JOG FINISH after C recovery; "
-                              "do not close the PyBullet window X", flush=True)
+                        print("[HOLD] SAFE GUI JOG: use +/- while holding. "
+                              "FINISH/EXIT validates after recovery, or safely "
+                              "cancels without any jog. Do not close window X.",
+                              flush=True)
                     else:
                         print("[HOLD] Native PyBullet: left-drag a link and release; "
                               "press Q or Ctrl+C to exit", flush=True)
@@ -550,6 +577,7 @@ def run_live(
         result = json.loads(report_file.read_text(encoding="utf-8"))
         # An observation run is allowed to preserve passed=False without
         # claiming convergence. Real firmware/transport errors are still fatal.
+        clean_cancel = clean_safe_jog_cancellation(result, gui_safe_jog)
         clean_observation = (observe_hold
             and result.get("bad_checksum_frames") == 0
             and result.get("fault_counters")
@@ -560,7 +588,8 @@ def run_live(
                 not 1 <= requested <= maximum_segments or
                 settled != requested or
                 any(segment > requested for segment in measurements.segments) or
-                (result.get("passed") is not True and not clean_observation)):
+                (result.get("passed") is not True and
+                 not clean_observation and not clean_cancel)):
             raise RuntimeError(
                 "QEMU/FreeRTOS closed-loop acceptance failed: "
                 f"requested={requested}, settled={settled}, "
@@ -585,6 +614,7 @@ def run_live(
             joint_ranges_deg=motion, headless_observer=headless_observer,
             required_motion_axes=[JOINT_NAMES[i] for i in required_axes],
             segments_requested=requested, segments_settled=settled,
+            cancelled=clean_cancel,
             note="PyBullet GUI renders the authoritative physics directly",
         )
         (output_dir / "observer_result.json").write_text(
