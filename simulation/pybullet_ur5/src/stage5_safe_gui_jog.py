@@ -57,6 +57,7 @@ class SafeGuiJog:
         self.completed = 0
         self.available = True
         self.finish_requested = False
+        self.cancel_requested = False
         self.axis_widget = physics.addUserDebugParameter(
             "SAFE JOG: selected joint J1..J6", 1.0, 6.0, 1.0,
             physicsClientId=client)
@@ -79,7 +80,7 @@ class SafeGuiJog:
         # Dedicated orderly-exit action. Closing the native window X tears
         # down the physics server before the final UART verdict is recorded.
         self.finish_widget = physics.addUserDebugParameter(
-            "SAFE JOG FINISH: validate and close (not X)", 1, 0, 0,
+            "SAFE JOG FINISH/EXIT: PASS after JOG, CANCEL otherwise", 1, 0, 0,
             physicsClientId=client)
         self.previous_finish_count = int(physics.readUserDebugParameter(
             self.finish_widget, physicsClientId=client))
@@ -201,7 +202,7 @@ class SafeGuiJog:
             if count <= previous:
                 continue
             if (not done or ending or self.finish_requested
-                    or not self.available or
+                    or self.cancel_requested or not self.available or
                     self.applied >= JOG_MAX_SUCCESSES):
                 event = {"event": "safe_gui_jog_rejected", "sign": sign,
                          "reason": "not_idle_or_recovery_pending_or_limit"}
@@ -223,10 +224,16 @@ class SafeGuiJog:
         finish_changed = finish_count > self.previous_finish_count
         self.previous_finish_count = finish_count
         if finish_changed:
-            if (not done or ending or self.applied == 0 or
-                    self.completed != self.applied):
+            if (not done or ending or self.finish_requested or
+                    self.cancel_requested or self.completed != self.applied):
                 event = {"event": "safe_gui_jog_finish_rejected",
-                         "reason": "requires_completed_uart_recovery"}
+                         "reason": "recovery_pending_or_not_idle"}
+            elif self.applied == 0:
+                # A test with no jog must have an exit path. Record an
+                # explicit cancellation, never a successful recovery.
+                self.cancel_requested = True
+                event = {"event": "safe_gui_jog_cancel_requested",
+                         "reason": "no_guarded_jog_requested"}
             else:
                 self.finish_requested = True
                 event = {"event": "safe_gui_jog_finish_requested",
