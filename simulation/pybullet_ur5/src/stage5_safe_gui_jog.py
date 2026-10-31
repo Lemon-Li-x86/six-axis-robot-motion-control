@@ -108,11 +108,15 @@ class SafeGuiJog:
         self.completed += 1
         self.available = self.applied < JOG_MAX_SUCCESSES
 
-    def _authorize(self, sign: int) -> dict:
+    def _authorize(self, sign: int, *, selection: tuple[int, float] | None = None) -> dict:
         """Authorize outgoing and return legs BEFORE the single pose injection."""
         p = self.physics
         try:
-            axis, step_deg = self._selection()
+            axis, step_deg = (
+                self._selection() if selection is None else selection)
+            if selection is not None and not (
+                    axis == len(self.joints) - 1 and step_deg == JOG_MIN_DEG):
+                raise ValueError("CI scripted jog permits only final joint at minimum step")
         except (ValueError, TypeError) as error:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "invalid_selection", "detail": str(error), "sign": sign}
@@ -190,6 +194,44 @@ class SafeGuiJog:
             "return_segments": len(preview["joint_waypoints_rad"]) - 1,
             "sampled_states": gate["sampled_states"],
         }
+
+    def request_ci_scripted_j6_half_degree(self) -> dict:
+        """Opt-in integration fixture: identical collision/C preview as GUI click.
+
+        No UART request, motor bypass, fake feedback or alternate planner.
+        Deliberately not called in the ordinary GUI user path.
+        """
+        if (self.applied != 0 or not self.available or
+                self.finish_requested or self.cancel_requested):
+            raise RuntimeError("CI jog may only be injected once from idle HOLD")
+        event = self._authorize(
+            1, selection=(len(self.joints) - 1, JOG_MIN_DEG))
+        if event["event"] == "safe_gui_jog_applied":
+            self.applied += 1
+            self.available = False
+        else:
+            self.refused += 1
+        event["source"] = "ci_scripted_native_gui_jog"
+        self.events.append(event)
+        print("[SAFE GUI JOG CI] " + str(event), flush=True)
+        if event["event"] != "safe_gui_jog_applied":
+            raise RuntimeError(
+                "CI native GUI J6 jog refused by real collision/C planner gates: "
+                + str(event))
+        return event
+
+    def request_ci_finish(self):
+        """Require a settled real C/UART recovery before ending CI GUI HOLD."""
+        if (self.applied != 1 or self.completed != 1
+                or self.available is False or self.finish_requested
+                or self.cancel_requested):
+            raise RuntimeError("CI finish requires one completed real C recovery")
+        self.finish_requested = True
+        event = {"event": "safe_gui_jog_finish_requested",
+                 "source": "ci_scripted_native_gui_jog",
+                 "completed_recoveries": self.completed}
+        self.events.append(event)
+        print("[SAFE GUI JOG CI] " + str(event), flush=True)
 
     def __call__(self, physics, robot, joints, sim_time, done, ending):
         # Always consume button events immediately. No early click can queue
