@@ -93,15 +93,23 @@ class GuardedJogTests(unittest.TestCase):
                     math.radians(.25))
                 planner.assert_called_once()
 
-    def test_finish_requires_completed_uart_recovery(self):
+    def test_finish_without_jog_is_cancel_not_pass(self):
         p, ctl, planner = jog()
         p.click(ctl.finish_widget)
         ctl(p, 0, list(range(6)), 0, True, False)
         self.assertFalse(ctl.finish_requested)
+        self.assertTrue(ctl.cancel_requested)
         self.assertEqual(ctl.events[-1]["event"],
-                         "safe_gui_jog_finish_rejected")
+                         "safe_gui_jog_cancel_requested")
         self.assertEqual(ctl.applied, 0)
+        # No new motion can be started while finishing the no-jog verdict.
+        p.click(ctl.buttons[1])
+        ctl(p, 0, list(range(6)), 1, True, False)
+        self.assertEqual(ctl.applied, 0)
+        planner.assert_not_called()
 
+    def test_finish_requires_completed_uart_recovery(self):
+        p, ctl, planner = jog()
         p.click(ctl.buttons[1])
         with patch("stage5_safe_gui_jog.validate_joint_path",
                    return_value=safe_gate()):
