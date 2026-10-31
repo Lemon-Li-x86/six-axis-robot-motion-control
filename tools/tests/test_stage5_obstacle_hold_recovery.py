@@ -139,6 +139,30 @@ class RealCRecoveryTest(unittest.TestCase):
         # J1 is known reachable; the other eleven are not assumed reachable.
         self.assertTrue(permitted, "No six-axis GUI jog candidate was feasible")
 
+    def test_real_production_C_goal_near_J6_half_degree_is_not_misclassified(self):
+        """Reproduce observed J6+0.5deg with REAL C APF and actual Bullet links."""
+        p = self.p
+        for joint, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, joint, angle, physicsClientId=self.client)
+        p.resetJointState(
+            self.arm, self.joints[5],
+            self.final_goal[5] + math.radians(.5),
+            physicsClientId=self.client)
+        route = plan_obstacle_hold_recovery(
+            self.dll, p, self.arm, self.joints, self.obstacles,
+            self.client, self.original["cartesian_goal_m"],
+            self.final_goal, "blocked", minimum_extra_clearance_m=.002)
+        self.assertTrue(route["passed"])
+        self.assertGreaterEqual(
+            route["minimum_measured_full_link_clearance_m"], .012)
+        self.assertEqual(
+            tuple(route["joint_waypoints_rad"][-1]),
+            tuple(self.final_goal))
+        self.assertIn(route["recovery_strategy"], (
+            "bounded_full_link_validated_joint_only_C_APF_cartesian_goal_reached",
+            "production_C_APF_C_IK_then_exact_joint_goal"))
+        self.assertGreaterEqual(len(route["joint_waypoints_rad"]), 2)
+
     def test_zero_C_cartesian_waypoints_can_return_subdegree_J6_only_after_full_link_gate(self):
         """J6 may rotate without displacing EE beyond production C tolerance."""
         p = self.p
