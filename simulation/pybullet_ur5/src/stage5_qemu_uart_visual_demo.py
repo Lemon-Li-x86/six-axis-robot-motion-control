@@ -1870,7 +1870,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                           f"{len(sequencer.goals)}")
                                     if not sequencer.done:
                                         sock.sendall(sequencer.next_request(time.monotonic()))
-                                elif (not options.headless and prepare_motion is None
+                                elif (not options.headless
                                       and sequencer.accepted and not sequencer.done
                                       and sequencer.rearms_current_segment == 0
                                       and sequencer.goal is not None):
@@ -1894,11 +1894,46 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     if small_endpoint_rearm_ready(
                                             sequencer, measured, endpoint_stable_frames,
                                             time.monotonic()):
+                                        # The obstructed APF route must NOT
+                                        # inherit the clear-scene rearm
+                                        # permission. Validate the entire new
+                                        # measured-pose -> same-goal segment
+                                        # against actual PyBullet links first.
+                                        gate_info = None
+                                        if safety_obstacles:
+                                            from stage5_collision_validation import (
+                                                validate_joint_path)
+                                            from stage5_avoidance_uart_gate import load_scene
+                                            _, collision_policy = load_scene(
+                                                plan["route_case"])
+                                            start_rad = tuple(
+                                                math.radians(v /
+                                                    wire.JOINT_ANGLE_SCALE)
+                                                for v in measured)
+                                            goal_rad = tuple(
+                                                math.radians(v /
+                                                    wire.JOINT_ANGLE_SCALE)
+                                                for v in sequencer.goal)
+                                            gate_info = validate_joint_path(
+                                                p, arm, safety_obstacles, joints,
+                                                [start_rad, goal_rad],
+                                                maximum_joint_step_rad=collision_policy[
+                                                    "max_joint_step_rad"],
+                                                clearance_m=safety_clearance_m,
+                                                maximum_samples=collision_policy[
+                                                    "max_collision_samples"],
+                                                physics_client_id=client)
+                                            if not gate_info["passed"]:
+                                                raise RuntimeError(
+                                                    "Small endpoint rearm refused by "
+                                                    "full-link safety preflight: "
+                                                    + str(gate_info["collision"]))
                                         event = dict(
                                             event="segment_endpoint_rearm_requested",
                                             segment=sequencer.index+1,
                                             measured_error_deg=endpoint_error,
                                             source="fresh_physical_feedback",
+                                            full_link_rearm_gate=gate_info,
                                             max_rearms=1)
                                         endpoint_rearm_events.append(event)
                                         audit.write(json.dumps(event) + "\n")
