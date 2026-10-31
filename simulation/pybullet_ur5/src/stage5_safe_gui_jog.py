@@ -18,6 +18,7 @@ from stage5_collision_validation import InvalidPath, validate_joint_path
 JOG_AXIS = 0
 JOG_OFFSET_DEG = 2.0
 JOG_EXTRA_CLEARANCE_M = 0.002
+JOG_MAX_SAMPLE_STEP_RAD = math.radians(0.25)
 
 
 class SafeGuiJog:
@@ -73,7 +74,8 @@ class SafeGuiJog:
             gate = validate_joint_path(
                 p, self.robot, self.obstacles, self.joints,
                 [current, proposed],
-                maximum_joint_step_rad=self.maximum_joint_step_rad,
+                maximum_joint_step_rad=min(
+                    self.maximum_joint_step_rad, JOG_MAX_SAMPLE_STEP_RAD),
                 clearance_m=(self.minimum_clearance_m
                              + JOG_EXTRA_CLEARANCE_M),
                 maximum_samples=self.maximum_samples,
