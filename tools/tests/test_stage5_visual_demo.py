@@ -272,6 +272,45 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertTrue(runner.done)
         self.assertEqual(len(runner.segment_final_errors_deg), 3)
 
+    def test_one_measured_endpoint_rearm_requires_real_second_ack_and_settle(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=1.0)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=1.5)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        residual = tuple(value + 24 for value in goal)
+        for _ in range(SETTLE_FRAME_COUNT * 2):
+            self.assertFalse(runner.observe(residual))
+        self.assertEqual(runner.completed, 0)
+        packet = runner.reissue_current_goal_from_feedback(now=4.0)
+        self.assertEqual(packet[4], 42)
+        self.assertEqual(packet[5:17], struct.pack("<6h", *goal))
+        self.assertEqual(runner.index, 0)
+        self.assertEqual(runner.endpoint_rearms, 1)
+        self.assertFalse(runner.accepted)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=4.1)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        for _ in range(SETTLE_FRAME_COUNT-1):
+            self.assertFalse(runner.observe(goal))
+        self.assertTrue(runner.observe(goal))
+        self.assertTrue(runner.done)
+        self.assertEqual(runner.segment_final_errors_deg, [0.0])
+
+    def test_rearm_is_not_allowed_after_success_or_again_on_same_segment(self):
+        runner = MotionSequencer((SCENARIOS["joint_sweep"][0],))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        runner.reissue_current_goal_from_feedback(now=3.0)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=7.0)
+        for _ in range(SETTLE_FRAME_COUNT):
+            runner.observe(runner.goal)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=10.0)
+
     def test_pending_request_cannot_be_overwritten(self) -> None:
         runner = MotionSequencer(SCENARIOS["joint_sweep"])
         runner.next_request(now=0.0)
