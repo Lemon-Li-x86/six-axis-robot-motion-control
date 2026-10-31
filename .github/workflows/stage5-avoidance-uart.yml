@@ -34,6 +34,11 @@ jobs:
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance -G Ninja
           cmake --build build/stage5-avoidance
           ctest --test-dir build/stage5-avoidance --output-on-failure
+      - name: Verify C APF IK displaced-pose obstacle HOLD recovery authorization
+        env:
+          STAGE5_APF_TEST_DLL: build/stage5-avoidance/libstage5_apf_bridge.so
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_obstacle_hold_recovery.py' -v
       - name: Verify original three-segment UART and short-duration timebase regression
         run: python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
       - name: Execute C planned, C IK converted, whole-arm preflighted route via QEMU UART
@@ -43,6 +48,87 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
             --stage5-route-case clear --output-dir build/stage5-actual-path
+      - name: Verify variable-length blocked C APF route through live observer transport
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --headless-observer --no-hold --timeout-s 120 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --output-dir build/stage5-observer-blocked
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=Path('build/stage5-observer-blocked')
+          actual=json.loads((d/'result.json').read_text())
+          observer=json.loads((d/'observer_result.json').read_text())
+          assert actual['passed'], actual
+          assert actual['segments_requested'] > 3, actual
+          assert actual['segments_settled'] == actual['segments_requested']
+          assert observer['segments_requested'] == actual['segments_requested']
+          assert observer['segments_settled'] == actual['segments_settled']
+          assert observer['received'] >= 10
+          assert actual['runtime_full_link_collision_free'] is True
+          print("Blocked C APF LIVE OBSERVER real QEMU + PyBullet PASS")
+          PY
+      - name: Check actual C APF HOLD geometry in PyBullet DIRECT without any mouse drag
+        run: |
+          python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --headless-observer --interactive --hold-seconds 8 --timeout-s 120 \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --stage5-c-apf-library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --output-dir build/stage5-observer-blocked-hold
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("build/stage5-observer-blocked-hold/result.json").read_text())
+          print("C APF HOLD clearance planned, at entry, fault:",
+                r.get("avoidance_preflight",{}).get("minimum_planned_full_link_clearance_m"),
+                r.get("hold_entry_minimum_full_link_clearance_m"),
+                r.get("measured_clearance_m"),
+                flush=True)
+          assert r["segments_settled"] == r["segments_requested"]
+          assert r["passed"], r
+          PY
+      - name: Preserve blocked HOLD geometry and joint telemetry evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-blocked-apf-direct-hold-geometry
+          path: build/stage5-observer-blocked-hold/*
+          if-no-files-found: ignore
+      - name: Execute controlled disturbance and newly validated C APF recovery via actual QEMU UART
+        run: |
+          python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --output-dir build/stage5-controlled-hold-recovery
+      - name: Real C APF QEMU UART multi-return sequence regression
+        run: |
+          python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --library build/stage5-avoidance/libstage5_apf_bridge.so \
+            --cycles 2 --output-dir build/stage5-controlled-hold-recovery-twice
+      - name: Archive repeated recovery evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-controlled-C-APF-hold-recovery-twice
+          path: build/stage5-controlled-hold-recovery-twice/*
+          if-no-files-found: ignore
+      - name: Archive controlled C APF recovery evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-controlled-C-APF-hold-recovery
+          path: build/stage5-controlled-hold-recovery/*
+          if-no-files-found: ignore
+      - name: Preserve blocked APF observer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-c-apf-blocked-live-observer
+          path: build/stage5-observer-blocked/*
+          if-no-files-found: ignore
       - name: Validate dynamic physics measurements, not only preflight
         run: |
           python - <<'PY'

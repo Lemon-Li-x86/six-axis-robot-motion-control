@@ -26,6 +26,15 @@ class RejectedRoute(RuntimeError):
     pass
 
 
+class CartesianGoalAlreadyReached(RejectedRoute):
+    """Production C APF returned zero legs because EE is within goal tolerance.
+
+    This signal is NOT a blanket permission to bypass an unsafe C APF route.
+    Only the Stage5 recovery caller may authorize a bounded JOINT-space return
+    after independently validating the entire full-link return geometry.
+    """
+
+
 class JointPositions(ctypes.Structure):
     _fields_ = [("value", ctypes.c_int32 * JOINT_COUNT)]
 
@@ -184,6 +193,11 @@ def preflight_joint_avoidance(
                 apf_config.goal_tolerance_mm + 1e-6):
             raise RejectedRoute(f"C APF leg {leg+1} did not reach goal tolerance")
     if total_points == 0:
+        if len(targets) == 1 and math.dist(
+                list(start.mm), list(goal.mm)) <= apf_config.goal_tolerance_mm + 1e-6:
+            raise CartesianGoalAlreadyReached(
+                "production C APF: Cartesian goal already within tolerance; "
+                "no C Cartesian motion segments")
         raise RejectedRoute("goal already reached; refusing empty motion request")
     raw_apf_waypoints = total_points
     # Clone the C APF output before evaluating simplification candidates:
@@ -281,6 +295,9 @@ def preflight_joint_avoidance(
         "joint_waypoints_rad": path,
         "segment_duration_s": durations,
         "sampled_full_arm_states": gate["sampled_states"],
+        "minimum_planned_full_link_clearance_m":
+            gate["minimum_measured_clearance_m"],
+        "nearest_planned_link_index": gate["nearest_link_index"],
         "total_minimum_rest_to_rest_duration_s": sum(durations),
         "static_collision_clearance_m": minimum_full_link_clearance_m,
         "cartesian_point_clearance_m": apf_config.clearance_mm/1000,

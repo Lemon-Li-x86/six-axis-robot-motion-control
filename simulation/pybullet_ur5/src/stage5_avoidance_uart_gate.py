@@ -141,8 +141,16 @@ def make_avoidance_preflight(
         shape = physics.createCollisionShape(
             physics.GEOM_BOX, halfExtents=half_extents_m,
             physicsClientId=client)
+        # Collision shapes have no guaranteed visible representation in
+        # PyBullet's native GUI. Match the visual box to the SAME geometry
+        # and pose, rather than drawing an unrelated debug-only obstacle.
+        visual = physics.createVisualShape(
+            physics.GEOM_BOX, halfExtents=half_extents_m,
+            rgbaColor=[0.95, 0.2, 0.10, 0.95],
+            physicsClientId=client)
         obstacle = physics.createMultiBody(
             baseMass=0.0, baseCollisionShapeIndex=shape,
+            baseVisualShapeIndex=visual,
             basePosition=center_m, physicsClientId=client)
         # Both tests use actual PyBullet geometry rather than a duplicate
         # Python box intersection implementation.
@@ -187,7 +195,24 @@ def make_avoidance_preflight(
             direct_cartesian_segment_blocked=direct_blocked,
             obstacle_center_m=center_m,
             obstacle_half_extents_m=half_extents_m,
+            cartesian_start_m=list(end_m),
+            cartesian_goal_m=[v / 1000.0 for v in goal_mm],
         )
         return result
 
+    def plan_hold_recovery(
+        physics, robot, joints, client, original_plan,
+        *, minimum_extra_clearance_m=0.0,
+    ):
+        # Always use the current measured physical joint state. The obstacle
+        # body remains in the SAME authoritative Bullet world; never recreate
+        # the box relative to a newly displaced EE.
+        from stage5_obstacle_hold_recovery import plan_obstacle_hold_recovery
+        return plan_obstacle_hold_recovery(
+            library, physics, robot, joints, original_plan["obstacle_ids"],
+            client, original_plan["cartesian_goal_m"],
+            original_plan["joint_waypoints_rad"][-1], route_case,
+            minimum_extra_clearance_m=minimum_extra_clearance_m)
+
+    prepare.plan_hold_recovery = plan_hold_recovery
     return prepare

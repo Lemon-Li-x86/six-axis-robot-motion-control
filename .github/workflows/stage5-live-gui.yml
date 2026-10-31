@@ -6,7 +6,8 @@ on:
       - feat/stage5-live-qemu-pybullet-gui-20261027
       - fix/stage5-native-pybullet-interaction-20261027
       - fix/stage5-qmp-physics-clock-gate-20261028
-      - feat/stage5-native-gui-clean-20261030
+      - fix/stage5-native-gui-feedback-overflow-20261028
+      - feat/stage5-gui-preserved-integration-20261030
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
@@ -14,8 +15,20 @@ on:
       - 'simulation/pybullet_ur5/src/qemu_clock_gate.py'
       - 'tools/tests/test_stage5_live_gui.py'
       - 'tools/tests/test_stage5_visual_demo.py'
+      - 'tools/tests/test_stage5_gui_apf_integration.py'
+      - 'tools/tests/test_stage5_gui_joint_travel.py'
+      - 'tools/tests/test_stage5_gui_avoidance_visibility.py'
+      - 'tools/tests/test_stage5_gui_safe_jog.py'
+      - 'simulation/pybullet_ur5/src/stage5_safe_gui_jog.py'
+      - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
       - 'tools/run_stage5_live_windows.ps1'
+      - 'tools/run_stage5_controlled_recovery_windows.ps1'
+      - 'tools/tests/run_stage5_controlled_apf_hold_recovery.py'
+      - 'tools/tests/test_stage5_obstacle_hold_recovery.py'
+      - 'simulation/pybullet_ur5/src/stage5_obstacle_hold_recovery.py'
+      - 'simulation/pybullet_ur5/src/stage5_avoidance_preflight.py'
+      - 'simulation/pybullet_ur5/src/stage5_avoidance_uart_gate.py'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
   pull_request:
@@ -38,6 +51,10 @@ jobs:
         run: |
           python -m unittest discover -s tools/tests -p 'test_stage5_live_gui.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_visual_demo.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_apf_integration.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -68,6 +85,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
           "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
           python -m pip install numpy pybullet
+      - name: Real Bullet URDF joint-stop physics against imposed torque
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_native_joint_stops.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
@@ -140,3 +163,60 @@ jobs:
           cmake -S firmware/freertos_demo/tests/host -B build/stage5-native-regression -DCMAKE_BUILD_TYPE=Debug
           cmake --build build/stage5-native-regression --parallel 2
           ctest --test-dir build/stage5-native-regression --output-on-failure
+
+  windows-c-apf-bridge:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile production C APF/IK host bridge as a Windows DLL
+        shell: pwsh
+        run: |
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-win -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw "C APF configure failed" }
+          cmake --build build/stage5-avoidance-win --config Debug
+          if ($LASTEXITCODE -ne 0) { throw "C APF build failed" }
+          ctest --test-dir build/stage5-avoidance-win -C Debug --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "C APF host tests failed" }
+          $dll = Get-ChildItem build/stage5-avoidance-win -Recurse -Filter stage5_apf_bridge.dll | Select-Object -First 1
+          if (-not $dll) { throw "Missing Stage5 APF/IK Windows DLL" }
+          $env:STAGE5_APF_TEST_DLL = $dll.FullName
+          python -c "import ctypes,os; d=ctypes.CDLL(os.environ['STAGE5_APF_TEST_DLL']); [getattr(d,n) for n in ['robot_apf_segment_blocked','stage5_apf_points_to_joint_route','stage5_apf_joint_pose_limits']]; print('C APF/IK Windows DLL exports PASS')"
+          if ($LASTEXITCODE -ne 0) { throw "C APF ctypes exports unavailable" }
+
+  windows-controlled-obstacle-recovery:
+    # Same entrypoint provided to the user; actual PC Windows QEMU + C DLL.
+    # No GUI mouse picking, no physical motor hardware and no interaction claim.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+      - name: Install QEMU and PyBullet on Windows
+        shell: pwsh
+        run: |
+          choco install qemu --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+          python -m pip install numpy pybullet
+          if ($LASTEXITCODE -ne 0) { throw "PyBullet installation failed" }
+      - name: Verify one-command production DLL plus C APF UART controlled recovery
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_controlled_recovery_windows.ps1 -Python python -Qemu qemu-system-arm -OutputDir build/stage5-recovery-windows-ci
+          if ($LASTEXITCODE -ne 0) { throw "Windows controlled recovery failed" }
+          $a = Get-Content build/stage5-recovery-windows-ci/controlled_recovery_acceptance.json -Raw | ConvertFrom-Json
+          if ($a.passed -ne $true) { throw "Windows controlled recovery evidence not PASS" }
+      - name: Archive Windows controlled C APF/QEMU recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-windows-controlled-obstacle-recovery
+          path: build/stage5-recovery-windows-ci/*
+          if-no-files-found: ignore

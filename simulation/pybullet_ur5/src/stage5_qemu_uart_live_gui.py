@@ -23,6 +23,8 @@ import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
     DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
+    GUI_JOINT_TRAVEL_MODES, DEFAULT_GUI_JOINT_TRAVEL_MODE,
+    SETTLE_TOLERANCE_DEG,
 )
 
 # Observer polling never changes the physics timestep or UART pacing.
@@ -83,6 +85,9 @@ def capture_worker(
     hold_seconds=None, test_disturbance=False, disturbance_cycles=1,
     headless=False, opengl2=False,
     diagnostics_timeout_s=DIAGNOSTICS_TIMEOUT_S, observe_hold=False,
+    c_apf_library=None, route_case="clear", raw_route=False,
+    gui_joint_travel=DEFAULT_GUI_JOINT_TRAVEL_MODE,
+    gui_safe_jog=False,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
@@ -91,6 +96,8 @@ def capture_worker(
         interactive_hold=interactive, hold_duration_s=hold_seconds,
         opengl2=opengl2, diagnostics_timeout_s=diagnostics_timeout_s,
         hold_observe_only=observe_hold,
+        gui_joint_travel=gui_joint_travel,
+        gui_safe_jog=gui_safe_jog,
     )
     hold_at = None
     peak_error_deg = 0.0
@@ -172,9 +179,16 @@ def capture_worker(
     faulthandler.enable(log)
     # Deliberately no asynchronous stack walker: Python 3.11 Windows crash.
     try:
+        prepare_motion = None
+        if c_apf_library is not None:
+            from stage5_avoidance_uart_gate import make_avoidance_preflight
+            prepare_motion = make_avoidance_preflight(
+                Path(c_apf_library), route_case,
+                shortcut_override=False if raw_route else None)
         report = run(
             Path(elf), destination, qemu, options, on_sample=publish,
             stop_requested=stop.is_set, on_physics=physics if interactive else None,
+            prepare_motion=prepare_motion,
         )
         if test_disturbance:
             regression = {
@@ -221,7 +235,13 @@ def capture_worker(
 class LiveMeasurements:
     """Incremental diagnostics based only on sampled *actual* joint angles."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_segments: int | None = None) -> None:
+        # No fixed three-segment assumption: APF uses the scene's existing
+        # waypoint_capacity; regular demo keeps its scenario's exact count.
+        if (max_segments is not None and
+                (type(max_segments) is not int or max_segments < 1)):
+            raise ValueError("Invalid motion segment capacity")
+        self.max_segments = max_segments
         self.frames_received = 0
         self.frames_while_worker_alive = 0
         self.segments: set[int] = set()
@@ -232,10 +252,14 @@ class LiveMeasurements:
     def observe(self, frame: RawFrame, worker_alive: bool) -> None:
         stamp, segment, raw = frame
         if (not math.isfinite(stamp) or stamp < 0 or
-                not 0 <= segment <= len(SCENARIOS["six_axis"]) or
+                type(segment) is not int or segment < 0 or
+                (self.max_segments is not None and segment > self.max_segments) or
                 len(raw) != len(JOINT_NAMES) or
                 any(type(v) is not int for v in raw)):
-            raise ValueError("Invalid live measurement from worker")
+            raise ValueError(
+                "Invalid live measurement from worker: "
+                f"segment={segment}, allowed=0..{self.max_segments}, "
+                f"sample_time={stamp}, actual_joint_count={len(raw)}")
         self.frames_received += 1
         if worker_alive:
             self.frames_while_worker_alive += 1
@@ -258,6 +282,28 @@ class LiveMeasurements:
         )
 
 
+def required_motion_axes(
+    scenario: str, avoidance_preflight: dict | None,
+) -> list[int]:
+    """Use the actual planned C APF/IK joint route, not demo's three goals."""
+    if avoidance_preflight is None:
+        return [i for i in range(len(JOINT_NAMES))
+                if any(goal[i] != START_RAW[i] for goal in SCENARIOS[scenario])]
+    waypoints = avoidance_preflight.get("joint_waypoints_rad")
+    if (not isinstance(waypoints, (list, tuple)) or len(waypoints) < 2 or
+            any(not isinstance(pose, (list, tuple)) or
+                len(pose) != len(JOINT_NAMES) or
+                any(type(v) not in (int, float) or not math.isfinite(v)
+                    for v in pose) for pose in waypoints)):
+        raise ValueError("Malformed C APF/IK joint_waypoints_rad in worker report")
+    return [
+        axis for axis in range(len(JOINT_NAMES))
+        if math.degrees(max(pose[axis] for pose in waypoints) -
+                        min(pose[axis] for pose in waypoints))
+        >= MIN_OBSERVED_MOTION_DEG + 2.0 * SETTLE_TOLERANCE_DEG
+    ]
+
+
 def run_live(
     elf: Path, output_dir: Path, qemu: str, scenario: str,
     timeout_s: float, refresh_hz: float, headless_observer: bool,
@@ -266,6 +312,11 @@ def run_live(
     opengl2: bool = False, disturbance_cycles: int = 1,
     diagnostics_timeout_s: float = DIAGNOSTICS_TIMEOUT_S,
     observe_hold: bool = False,
+    c_apf_library: Path | None = None,
+    route_case: str = "clear",
+    raw_route: bool = False,
+    gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE,
+    gui_safe_jog: bool = False,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -293,6 +344,30 @@ def run_live(
         interactive = True
     if headless_observer and interactive and hold_seconds is None:
         raise ValueError("Headless hold requires --hold-seconds")
+    if raw_route and c_apf_library is None:
+        raise ValueError("Raw APF route requires a C APF shared library")
+    if gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
+        raise ValueError("Invalid GUI joint travel policy")
+    if gui_safe_jog and (
+            headless_observer or not interactive or observe_hold or
+            test_disturbance or c_apf_library is None or
+            route_case != "blocked"):
+        raise ValueError(
+            "SAFE GUI JOG requires native GUI, blocked C APF/IK, "
+            "interactive HOLD and no headless disturbance mode")
+    if c_apf_library is not None and not c_apf_library.is_file():
+        raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
+    if c_apf_library is not None and test_disturbance:
+        raise ValueError("Headless disturbance fixture only supports the fixed demo goal")
+
+    # Read route capacity from its single versioned scene fixture. The worker
+    # later provides the *actual* requested/settled count in result.json.
+    if c_apf_library is None:
+        maximum_segments = len(SCENARIOS[scenario])
+    else:
+        from stage5_avoidance_uart_gate import load_scene
+        scene, _ = load_scene(route_case)
+        maximum_segments = scene["waypoint_capacity"]
 
     context = mp.get_context("spawn")
     channel = LatestMailbox(context)
@@ -305,10 +380,12 @@ def run_live(
             timeout_s, channel, stop, ready, interactive, hold_seconds,
             test_disturbance, disturbance_cycles, headless_observer, opengl2,
             diagnostics_timeout_s, observe_hold,
+            str(c_apf_library.resolve()) if c_apf_library else None,
+            route_case, raw_route, gui_joint_travel, gui_safe_jog,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
-    measurements = LiveMeasurements()
+    measurements = LiveMeasurements(max_segments=maximum_segments)
     last_segment = 0
     last_report_at = 0.0
     hold_announced = False
@@ -335,7 +412,8 @@ def run_live(
                 segment = frame[1]
                 if segment > last_segment:
                     print(f"[LIVE] Physical segment {segment}/"
-                          f"{len(SCENARIOS[scenario])}", flush=True)
+                          f"{len(SCENARIOS[scenario]) if c_apf_library is None else 'APF route'}",
+                          flush=True)
                     last_segment = segment
 
             now = time.monotonic()
@@ -399,13 +477,29 @@ def run_live(
             code = worker.exitcode
             native_code = (f"0x{code & 0xffffffff:08X}"
                            if code is not None else "unknown")
+            # The worker may have saved a specific protocol/physics fault.
+            # Preserve the original exit code while surfacing the root cause
+            # instead of only repeating the generic 'worker exited 1'.
+            worker_failure = {}
+            failed_report = output_dir / "result.json"
+            if failed_report.is_file():
+                try:
+                    worker_failure = json.loads(failed_report.read_text(
+                        encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            failure_detail = worker_failure.get("error", "")
             (output_dir / "worker_exit.json").write_text(json.dumps({
                 "passed": False, "exit_code": code, "exit_hex": native_code,
                 "last_sample": measurements.latest,
+                "fault_type": worker_failure.get("fault_type"),
+                "fault_joint": worker_failure.get("fault_joint"),
+                "fault_angle_deg": worker_failure.get("fault_angle_deg"),
             }, indent=2), encoding="utf-8")
             raise RuntimeError(
-                f"Physics worker exited {code} ({native_code}); "
-                "see worker.log and joint_trace.csv"
+                f"Physics worker exited {code} ({native_code})"
+                + (f"; worker fault: {failure_detail}" if failure_detail else "")
+                + "; see worker.log, result.json and joint_trace.csv"
             )
 
         report_file = output_dir / "result.json"
@@ -418,16 +512,22 @@ def run_live(
             and result.get("bad_checksum_frames") == 0
             and result.get("fault_counters")
             and all(value == 0 for value in result["fault_counters"].values()))
-        if (result.get("segments_settled") != len(SCENARIOS[scenario])
-                or (result.get("passed") is not True and not clean_observation)):
-            raise RuntimeError("QEMU/FreeRTOS closed-loop acceptance failed")
+        requested = result.get("segments_requested")
+        settled = result.get("segments_settled")
+        if (type(requested) is not int or
+                not 1 <= requested <= maximum_segments or
+                settled != requested or
+                any(segment > requested for segment in measurements.segments) or
+                (result.get("passed") is not True and not clean_observation)):
+            raise RuntimeError(
+                "QEMU/FreeRTOS closed-loop acceptance failed: "
+                f"requested={requested}, settled={settled}, "
+                f"observed_segments={sorted(measurements.segments)}")
 
         motion = measurements.ranges_deg()
-        required_axes = [
-            i for i in range(len(JOINT_NAMES))
-            if any(goal[i] != START_RAW[i] for goal in SCENARIOS[scenario])
-        ]
-        if (not motion
+        required_axes = required_motion_axes(
+            scenario, result.get("avoidance_preflight"))
+        if (not motion or not required_axes
                 or any(motion[i] < MIN_OBSERVED_MOTION_DEG for i in required_axes)
                 or measurements.frames_received < 10
                 or measurements.frames_while_worker_alive == 0):
@@ -441,6 +541,8 @@ def run_live(
                 + int(channel.skipped.value),
             frames_during_control=measurements.frames_while_worker_alive,
             joint_ranges_deg=motion, headless_observer=headless_observer,
+            required_motion_axes=[JOINT_NAMES[i] for i in required_axes],
+            segments_requested=requested, segments_settled=settled,
             note="PyBullet GUI renders the authoritative physics directly",
         )
         (output_dir / "observer_result.json").write_text(
@@ -466,6 +568,18 @@ def main() -> int:
     parser.add_argument("--elf", required=True, type=Path)
     parser.add_argument("--qemu", default="qemu-system-arm")
     parser.add_argument("--scenario", choices=tuple(SCENARIOS), default="six_axis")
+    parser.add_argument("--stage5-c-apf-library", type=Path,
+                        help="Opt in to real C APF/IK and full-link collision gate")
+    parser.add_argument("--stage5-route-case", choices=("clear", "blocked"),
+                        default="clear")
+    parser.add_argument("--stage5-raw-route", action="store_true",
+                        help="Disable optional APF waypoint compaction")
+    parser.add_argument("--gui-joint-travel", choices=GUI_JOINT_TRAVEL_MODES,
+                        default=DEFAULT_GUI_JOINT_TRAVEL_MODE,
+                        help="Native GUI picking range only; never changes C model")
+    parser.add_argument("--safe-gui-jog", action="store_true",
+        help="Guarded +/-2deg J1 GUI buttons in blocked APF HOLD; "
+             "unrestricted native mouse picking stays disabled")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-live-qemu-gui")
     parser.add_argument("--timeout-s", type=float, default=210.0)
@@ -491,7 +605,10 @@ def main() -> int:
              args.timeout_s, args.refresh_hz, args.headless_observer,
              not args.no_hold, args.interactive, args.hold_seconds,
              args.test_disturbance_recovery, args.opengl2, args.disturbance_cycles,
-             args.diagnostics_timeout_s, args.observe_hold)
+             args.diagnostics_timeout_s, args.observe_hold,
+             args.stage5_c_apf_library, args.stage5_route_case,
+             args.stage5_raw_route, args.gui_joint_travel,
+             args.safe_gui_jog)
     return 0
 
 
