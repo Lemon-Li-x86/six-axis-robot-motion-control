@@ -600,6 +600,29 @@ class MotionSequencerTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "not an integer"):
             joint_feedback_frame((True, 0, 0, 0, 0, 0))
 
+    def test_recovery_sequencer_uses_fresh_UART_sequence_without_changing_original(self):
+        original = MotionSequencer([(0,)*6, (100,)*6])
+        original.next_request(0.0)
+        self.assertEqual(original.sequence, 41)
+        original.acknowledge(struct.pack("<Bb", 41, 0))
+        self.assertFalse(original.done)
+
+        # New collision-validated recovery route starts after completed
+        # original sequence 44, never reuses packet IDs 41..44.
+        recovery = MotionSequencer(
+            [(0,)*6, (100,)*6], first_sequence=45)
+        recovery.next_request(0.0)
+        self.assertEqual(recovery.sequence, 45)
+        recovery.acknowledge(struct.pack("<Bb", 45, 0))
+        # Force 15 settled frames to move from the first to second goal.
+        for _ in range(SETTLE_FRAME_COUNT):
+            recovery.observe((0,)*6)
+        self.assertEqual(recovery.completed, 1)
+        recovery.next_request(1.0)
+        self.assertEqual(recovery.sequence, 46)
+        with self.assertRaisesRegex(ValueError, "sequence base"):
+            MotionSequencer([(0,)*6], first_sequence=256)
+
     def test_gui_fault_stop_terminates_qemu_preserves_physics_without_steps_until_q(self) -> None:
         class FakeProcess:
             def __init__(self):
