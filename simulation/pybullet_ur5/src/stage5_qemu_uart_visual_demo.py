@@ -1114,7 +1114,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         minimum_clearance_m=safety_clearance_m,
                         maximum_samples=collision_policy["max_collision_samples"],
                         preview_return=lambda: prepare_motion.plan_hold_recovery(
-                            p, arm, joints, client, plan))
+                            p, arm, joints, client, plan,
+                            minimum_extra_clearance_m=0.002))
                     previous_on_physics = on_physics
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
                         if previous_on_physics is not None:
@@ -1410,7 +1411,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 raise RuntimeError("C APF recovery planner unavailable")
                                             recovery_plan_report = (
                                                 prepare_motion.plan_hold_recovery(
-                                                    p, arm, joints, client, plan))
+                                                    p, arm, joints, client, plan,
+                                                    minimum_extra_clearance_m=(
+                                                        safe_gui_jog.extra_clearance_m
+                                                        if options.gui_safe_jog else 0.0)))
                                             recovery_goals = [
                                                 tuple(round(math.degrees(v) *
                                                             wire.JOINT_ANGLE_SCALE)
