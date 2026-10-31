@@ -54,7 +54,7 @@ def main():
         timeout_s=180,
         hold_window=True,
         interactive_hold=True,
-        hold_duration_s=15.0,
+        hold_duration_s=60.0,
         diagnostics_timeout_s=30,
         test_obstacle_hold_recovery=True,
     )
