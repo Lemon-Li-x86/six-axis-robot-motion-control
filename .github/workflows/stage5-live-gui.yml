@@ -56,6 +56,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -92,6 +93,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
@@ -161,6 +163,9 @@ jobs:
             --stage5-c-apf-library build/stage5-avoidance-gui/libstage5_apf_bridge.so \
             --stage5-route-case blocked --safe-gui-jog --ci-scripted-safe-jog \
             --output-dir build/stage5-ci-gui-scripted-j6
+      - name: Independently audit native GUI scripted J6 physical C/UART verdict
+        run: |
+          python tools/check_stage5_safe_gui_acceptance.py build/stage5-ci-gui-scripted-j6/result.json
       - name: Preserve native GUI scripted C APF/UART acceptance
         if: always()
         uses: actions/upload-artifact@v4
