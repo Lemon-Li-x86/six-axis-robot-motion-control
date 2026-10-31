@@ -114,6 +114,79 @@ class GuardedJogTests(unittest.TestCase):
         self.assertEqual(ctl.events[-1]["reason"],
                          "not_in_idle_hold_or_already_used")
 
+class PyBulletDebugButtons:
+    """DIRECT uses real contact geometry but synthetic debug widget events."""
+    def __init__(self, real):
+        self.p = real
+        self.buttons = {}
+        self.id = 10
+
+    def __getattr__(self, name):
+        return getattr(self.p, name)
+
+    def addUserDebugParameter(self, label, low, high, initial, physicsClientId):
+        self.id += 1
+        self.buttons[self.id] = 0
+        return self.id
+
+    def readUserDebugParameter(self, widget, physicsClientId):
+        return self.buttons[widget]
+
+    def click(self, widget):
+        self.buttons[widget] += 1
+
+
+class RealPhysicsJogGateTests(unittest.TestCase):
+    def test_actual_pybullet_full_link_preview_rejects_occupied_space(self):
+        try:
+            import pybullet as p
+            from stage4_dynamic_closed_loop import URDF, START_RAW, joint_indices
+        except ImportError:
+            self.skipTest("Real PyBullet not installed")
+        cid = p.connect(p.DIRECT)
+        self.assertGreaterEqual(cid, 0)
+        try:
+            robot = p.loadURDF(str(URDF), useFixedBase=True, physicsClientId=cid)
+            joints = joint_indices(p, robot)
+            for joint, angle in zip(joints, START_RAW):
+                p.resetJointState(
+                    robot, joint, math.radians(angle / 100),
+                    physicsClientId=cid)
+            # Make a real obstacle at the wrist link, rather than mocking the
+            # collision rejection; any jog from this unsafe current pose fails.
+            obstacle_at = p.getLinkState(
+                robot, joints[4], computeForwardKinematics=True,
+                physicsClientId=cid)[4]
+            shape = p.createCollisionShape(
+                p.GEOM_BOX, halfExtents=[.02] * 3,
+                physicsClientId=cid)
+            obstacle = p.createMultiBody(
+                baseMass=0, baseCollisionShapeIndex=shape,
+                basePosition=obstacle_at, physicsClientId=cid)
+            proxy = PyBulletDebugButtons(p)
+            limits = [(
+                max(-math.pi, p.getJointInfo(
+                    robot, j, physicsClientId=cid)[8]),
+                min(math.pi, p.getJointInfo(
+                    robot, j, physicsClientId=cid)[9])
+            ) for j in joints]
+            control = SafeGuiJog(
+                proxy, robot, joints, [obstacle], cid, limits,
+                maximum_joint_step_rad=math.radians(3),
+                minimum_clearance_m=.01, maximum_samples=100)
+            before = [p.getJointState(robot, j, physicsClientId=cid)[0]
+                      for j in joints]
+            proxy.click(control.buttons[1])
+            control(proxy, robot, joints, 0, True, False)
+            after = [p.getJointState(robot, j, physicsClientId=cid)[0]
+                     for j in joints]
+            self.assertEqual(control.applied, 0)
+            self.assertEqual(control.events[-1]["reason"],
+                             "full_arm_clearance")
+            self.assertEqual(before, after)
+        finally:
+            p.disconnect(cid)
+
 
 if __name__ == "__main__":
     unittest.main()
