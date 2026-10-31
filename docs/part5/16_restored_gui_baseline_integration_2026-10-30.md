@@ -205,3 +205,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -St
 第一次手工验收建议只选择 J1、+2°，验证旧路径没有回归；第二轮在上一轮全部回位后选择另一轴（可先 J6 ±0.5°），确认新按钮状态、动作是否经 C APF/IK 重新规划且结果安全。**并非所有轴/方向/位移都保证可达，预检失败时拒绝点动才是正确行为。** 交互选项只供仿真；无连续扫掠形式化证明，无真实接触/力矩/伺服硬件安全认证。
 
 自动化新增 `tools/tests/run_stage5_controlled_apf_hold_recovery.py --cycles 2`，在 PyBullet DIRECT 上安排两次不同符号的有界 J1 偏移，验证各轮重新规划、UART 序列不重复、物理到位及严格碰撞检测。Windows 一键脚本 `tools/run_stage5_controlled_recovery_windows.ps1 -Cycles 2` 可离线再现。此功能与真实 GUI 人工按钮是两种验收，不应混为一谈。
+
+## 13. J6 半度近目标边界和错误退出诊断（2026-10-31）
+
+Windows 用户 `276358b` 版本实测：原始4段、J1+2°第1轮 C 回位2段、J1+2°第2轮 C 回位2段全部完成；`safe_gui_jog_applied=2`、`safe_gui_jog_completed=2`、`hold_recoveries=2`、原始序列45/47均 `completed=true`、最终误差0.02°。但 `result.json passed=false` 且正常结算时才有的 `clock_alignment_reference`、UART和 `fault_counters` 无值。**这代表可能保存的是异常分支简化失败报告，不能据此宣布时钟不对齐、UART故障或 C 控制器故障。** 必须读取已有 `result.json.error`、`worker.log`、`worker_exit.json` 后判断根因；未取得实际异常前不得降低时钟或安全阈值、也不得把已完成两轮改成总验收PASS。
+
+同一测试中 J6+0.5° 点动被拒绝 `recovery_preflight_failed`，详细信息 `goal already reached; refusing empty motion request`。生产 C APF 对初始末端笛卡尔目标附近的零段规划**不是碰撞错误**，但原方案错误地把这类几乎纯旋转的小幅 J6 回位拒绝为无运动。本补丁增加明确 `CartesianGoalAlreadyReached` 异常类，**只有 C APF 确认零段、末端位置已在原 C 目标容差内，并且最大六轴角差不大于2°** 时，才尝试从实时姿态直接回复到精确六轴目标。完整关节返回段通过同一真实 PyBullet 世界全部连杆扫描，最大片段采样间距0.25°，交互路径仍要求原10mm之外的2mm裕量。若真实 C APF 不可达、其他规划异常、关节差值过大、任何全连杆碰撞或采样预算不足，仍严格拒绝，绝不把它们降级为直返。
+
+新增针对生产 C + PyBullet真实 J6半度场景的集成回归，以及对零笛卡尔段、安全直接回位、超2°关节跳跃和非零段APF失败保持禁用的测试。新版本需等待 CI 和本机验收，不得拿旧版本报告宣称新回退已过。
