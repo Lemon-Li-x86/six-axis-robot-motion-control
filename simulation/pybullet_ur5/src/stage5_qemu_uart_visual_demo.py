@@ -1268,13 +1268,30 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 "[HOLD] SAFE GUI JOG buttons armed; native mouse "
                                 "dragging OFF. Click one +/-2deg button. "
                                 "Guarded C APF/IK recovery follows. "
-                        "After recovery, press SAFE JOG FINISH to validate "
-                        "and exit; do not close the window with X.", flush=True)
+                        "Press SAFE JOG FINISH/EXIT to validate and exit after "
+                        "recovery, or cancel safely without a jog. "
+                        "Do not close the window with X.", flush=True)
                         else:
                             print(
                                 "[HOLD] Static obstacle scene: mouse picking "
                                 "disabled; unvalidated recovery rearm forbidden.",
                                 flush=True)
+                if (safe_gui_jog is not None and safe_gui_jog.cancel_requested
+                        and not ending):
+                    if (not sequencer.done or recovering or
+                            recovery_sequencer is not None or
+                            safe_gui_jog.applied != 0 or
+                            safe_gui_jog.completed != 0):
+                        raise RuntimeError(
+                            "SAFE GUI JOG cancel attempted during an active recovery")
+                    ending = True
+                    audit.write(json.dumps(dict(
+                        event="safe_gui_jog_cancel_accepted",
+                        reason="no_guarded_jog_requested",
+                        target_frames=target_frames)) + "\n")
+                    print("[SAFE GUI JOG CANCEL] No jog attempted; "
+                          "collecting final UART diagnostics. NOT PASS.",
+                          flush=True)
                 if (safe_gui_jog is not None and safe_gui_jog.finish_requested
                         and not ending):
                     if (not sequencer.done or recovering or
@@ -1959,6 +1976,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "interactive_hold": options.interactive_hold,
                 "native_gui_picking": native_picking_allowed,
                 "gui_safe_jog": options.gui_safe_jog,
+                "cancelled": bool(safe_gui_jog is not None and
+                                  safe_gui_jog.cancel_requested),
+                "cancel_reason": (
+                    "no_guarded_jog_requested"
+                    if safe_gui_jog is not None and safe_gui_jog.cancel_requested
+                    else None),
                 "safe_gui_jog_events": (
                     safe_gui_jog.events if safe_gui_jog is not None else []),
                 "safe_gui_jog_applied": (
