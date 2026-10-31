@@ -20,6 +20,8 @@ on:
       - 'tools/tests/test_stage5_gui_joint_travel.py'
       - 'tools/tests/test_stage5_gui_avoidance_visibility.py'
       - 'tools/tests/test_stage5_gui_safe_jog.py'
+      - 'tools/tests/test_stage5_gui_acceptance.py'
+      - 'tools/check_stage5_safe_gui_acceptance.py'
       - 'simulation/pybullet_ur5/src/stage5_safe_gui_jog.py'
       - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
@@ -149,6 +151,35 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --scenario six_axis --opengl2 --no-hold --timeout-s 60 \
             --output-dir build/stage5-ci-gui-nodrag
+      - name: Preserve GUI physical motion and latency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-nodrag-xvfb
+          path: build/stage5-ci-gui-nodrag/*
+          if-no-files-found: ignore
+
+  native-gui-scripted-j6-xvfb:
+    # Independent from the legacy no-drag smoke: must truly execute C APF/IK,
+    # UART, full-link collision checks and a settled recovery in native p.GUI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, Bullet and virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Compile virtual-only firmware for UART loop
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
       - name: Build production C APF host library for native GUI integration
         run: |
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-gui -DCMAKE_BUILD_TYPE=Debug
@@ -173,13 +204,15 @@ jobs:
           name: stage5-gui-scripted-j6-xvfb
           path: build/stage5-ci-gui-scripted-j6/*
           if-no-files-found: ignore
-      - name: Preserve GUI physical motion and latency evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage5-gui-nodrag-xvfb
-          path: build/stage5-ci-gui-nodrag/*
-          if-no-files-found: ignore
+      - name: Show guarded GUI worker logs on failure
+        if: failure()
+        run: |
+          if [ -f build/stage5-ci-gui-scripted-j6/worker.log ]; then
+            tail -n 100 build/stage5-ci-gui-scripted-j6/worker.log
+          fi
+          if [ -f build/stage5-ci-gui-scripted-j6/result.json ]; then
+            cat build/stage5-ci-gui-scripted-j6/result.json
+          fi
 
   native-firmware-regression:
     runs-on: ubuntu-latest
