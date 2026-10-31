@@ -137,3 +137,23 @@ python tools/tests/run_stage5_controlled_apf_hold_recovery.py \
   --library build/stage5-avoidance/libstage5_apf_bridge.so \
   --output-dir build/stage5-controlled-hold-recovery
 ```
+
+## 10. Windows 本机一键受控扰动回归（2026-10-31）
+
+已通过的 Linux QEMU/UART 验证：2026-10-31 工作流 `41159505600`（历史提交 `e1ffad12`）记录真正生产 C APF+IK 的 4/4 段自动避障，人工输入**未使用鼠标**；受控 +2° J1 模拟位置扰动后重新规划 2 段，分别得到 `[HOLD C APF ACCEPTED] Recovery segment 1/2` 和 `2/2`、最终 `All validated recovery segments settled`，`CONTROLLED C APF HOLD RECOVERY ACTUAL QEMU UART PASS`。上一批较短 HOLD 时长的端到端回归曾因没完成第二段而失败，后续延长有限 HOLD 时长后通过；不得把早期失败排除记录。
+
+使用相同验证内核的 Windows 一键入口：`tools/run_stage5_controlled_recovery_windows.ps1`。它会构建真实 FreeRTOS QEMU ELF 和 Windows C APF/IK DLL，执行 CTest，执行 `tools/tests/run_stage5_controlled_apf_hold_recovery.py`。新的模拟扰动测试在把关节重置到 +2° 前，通过 `validate_joint_path` 在**同一物理场景、同一障碍物、同一场景要求的 10mm 阈值**上检查起点到位移终点。失败即拒绝扰动。该受控实验仅能说明离散几何预检的有效性，不证明连续物理力矩人机交互安全。
+
+```powershell
+cd "D:\1_ToGo\Robo\code\six-axis-robot-motion-control"
+git status --porcelain  # 非空时停止切换，保留本地改动
+git fetch origin feat/stage5-gui-preserved-integration-20261030
+git switch --detach FETCH_HEAD
+git rev-parse --short HEAD
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_controlled_recovery_windows.ps1 -OutputDir build/stage5-controlled-recovery-local-1
+Get-Content build/stage5-controlled-recovery-local-1/controlled_recovery_acceptance.json
+```
+
+可以覆盖传入 `-Python python` 与 `-Qemu <path>`（要与目标 Python 的 PyBullet、C DLL 架构兼容），默认使用已有 .venv；始终在项目仓库根目录运行。脚本会新建`controlled_recovery_acceptance.json`，每个关键检查都有 true/false，并保留 `result.json`、`uart_live.jsonl`、`joint_trace.csv`、`run_metadata.json`；只有 `passed=true` 才有本轮受控闭环 PASS 的依据。
+
+在当前恢复规划算法的开发阶段，**原生 PyBullet GUI 任意鼠标拖拽保持禁用**。人机拖拽的运动约束、碰撞预测/安全距离以及真实机器人硬件安全均没有因此自动实现。单独的 Windows GitHub Actions job `windows-controlled-obstacle-recovery` 使用用户同一脚本，必须有明确的 Windows 完整回归通过记录，才能宣告跨 Windows 环境已验收；旧稳定备份与 main 不动。
