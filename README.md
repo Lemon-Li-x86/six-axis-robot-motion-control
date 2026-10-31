@@ -15,7 +15,7 @@
 | Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 Linux GUI `six_axis` 未通过，PR #33 尚未合并 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
-详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
+**请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
 
 ## 系统架构
 
@@ -28,13 +28,13 @@
                        │
                UART 双向通信
                        │
-              Python 通信桥接
-                       │
-                PyBullet UR5
-             关节执行 / 状态反馈
+           Python 仿真主机／物理桥接
+              ↙                ↘
+     生产 C APF/IK 库       PyBullet UR5
+     静态场景路径预检      虚拟执行／实际反馈
 ```
 
-运动学、轨迹和控制算法使用同一套 C 实现，既可进行 Host 单元测试，也可由固件调用。PyBullet 负责仿真执行与实际关节反馈。
+运动学、轨迹和控制算法使用同一套 C 实现，既可进行 Host 单元测试，也可由固件调用。**当前 Stage5 静态场景的 C APF/IK 整路避障编排在仿真主机执行**，然后由固件实际执行 UART 下发的关节航点；不能误写成 FreeRTOS 固件已经自主规划障碍路径。PyBullet 负责虚拟执行与实际关节反馈。
 
 主要技术：**C11、FreeRTOS、CMake、ARM GNU Toolchain、QEMU、UART、Python、PyBullet、GDB**。
 
