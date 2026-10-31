@@ -93,6 +93,56 @@ class GuardedJogTests(unittest.TestCase):
                     math.radians(.25))
                 planner.assert_called_once()
 
+    def test_finish_requires_completed_uart_recovery(self):
+        p, ctl, planner = jog()
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 0, True, False)
+        self.assertFalse(ctl.finish_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_finish_rejected")
+        self.assertEqual(ctl.applied, 0)
+
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, list(range(6)), 1, True, False)
+        self.assertEqual(ctl.applied, 1)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 2, True, False)
+        self.assertFalse(ctl.finish_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_finish_rejected")
+        ctl.complete_recovery()
+        # The rejected finish was consumed; only a NEW click can finish.
+        ctl(p, 0, list(range(6)), 3, True, False)
+        self.assertFalse(ctl.finish_requested)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 4, True, False)
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_finish_requested")
+        self.assertEqual(ctl.events[-1]["completed_recoveries"], 1)
+        # A finish request cannot authorize another jog while the final
+        # diagnostics are being collected.
+        before = ctl.applied
+        p.click(ctl.buttons[1])
+        ctl(p, 0, list(range(6)), 5, True, False)
+        self.assertEqual(ctl.applied, before)
+        planner.assert_called_once()
+
+    def test_finish_after_maximum_completed_recoveries(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            for cycle in range(JOG_MAX_SUCCESSES):
+                p.click(ctl.buttons[1])
+                ctl(p, 0, range(6), cycle, True, False)
+                ctl.complete_recovery()
+        self.assertFalse(ctl.available)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, range(6), 5, True, False)
+        self.assertTrue(ctl.finish_requested)
+
     def test_joint_limit_rejects_before_gate_or_planner(self):
         p, ctl, planner = jog(limit=math.radians(40.5))
         p.click(ctl.buttons[1])
