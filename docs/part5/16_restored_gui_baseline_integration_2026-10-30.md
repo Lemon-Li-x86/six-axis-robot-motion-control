@@ -157,3 +157,29 @@ Get-Content build/stage5-controlled-recovery-local-1/controlled_recovery_accepta
 可以覆盖传入 `-Python python` 与 `-Qemu <path>`（要与目标 Python 的 PyBullet、C DLL 架构兼容），默认使用已有 .venv；始终在项目仓库根目录运行。脚本会新建`controlled_recovery_acceptance.json`，每个关键检查都有 true/false，并保留 `result.json`、`uart_live.jsonl`、`joint_trace.csv`、`run_metadata.json`；只有 `passed=true` 才有本轮受控闭环 PASS 的依据。
 
 在当前恢复规划算法的开发阶段，**原生 PyBullet GUI 任意鼠标拖拽保持禁用**。人机拖拽的运动约束、碰撞预测/安全距离以及真实机器人硬件安全均没有因此自动实现。单独的 Windows GitHub Actions job `windows-controlled-obstacle-recovery` 使用用户同一脚本，必须有明确的 Windows 完整回归通过记录，才能宣告跨 Windows 环境已验收；旧稳定备份与 main 不动。
+
+## 11. 原生 GUI 受限关节点动（2026-10-31，Windows 手工验收前）
+
+先前 Windows 本机 DIRECT/QEMU 的 C APF/IK 从当前六轴姿态返回原目标已经通过：`controlled_recovery_acceptance.json` 全部 true，初始 4/4 段 + C 回位 2/2 段，`hold_recoveries=1`，`hold_final_error_deg=0.02`，回位规划路径离散最小整臂间隙26.23mm，高于10mm要求（**不代表连续扫掠或物理电机安全证明**）。
+
+现在实验性 GUI 入口 `-SafeJog` 或 Python `--safe-gui-jog`：只允许载入 blocked C APF/IK、原生 GUI、非被动 `HOLD` 时启用。PyBullet 原生鼠标任意拖拽 **始终关闭**。控制面板新增两个真正的交互按钮：
+
+- `SAFE APF JOG: J1 +2 deg (once in HOLD)`
+- `SAFE APF JOG: J1 -2 deg (once in HOLD)`
+
+程序在收到按钮边沿后，拒绝早于 HOLD 的命令；每次测试只允许**一项成功点动**。在施加偏移之前，严格验证实际 GUI 单圈 J1行程、从当前六轴实测姿态到提出的新姿态的全部关节段、同一 PyBullet 场景内全连杆与真实障碍物的距离。交互预检在原场景最低10mm之外另保留2mm裕量，即要求 **至少12mm**；接触检测最大间隔不超过0.25°；预检结束必须还原原来物理状态。任何失败都记录 `safe_gui_jog_rejected` 并且**不改动关节姿态、也不发 UART 重规划**。按键路径只做模拟 `resetJointState` 注入小幅姿态扰动，不是安全的人力牵引或实时力矩控制。
+
+成功授权后在该同一 GUI 机械臂上形成2°受控位移，随后使用已有“当前实测六轴 → 生产 C APF/IK → 原六轴姿态补段 → 全连杆整条路径验证”的回位规划，以及真实 QEMU FreeRTOS UART 多段 ACK 和物理反馈结算。任何无 GUI 按钮授权的其他>0.5°偏差仍以 `Stage5UnvalidatedHoldRecoveryError` 拒绝直返。运行时10mm整臂安全检查、界面故障冻结和 QMP 时钟锁均保留。
+
+```powershell
+# 项目根目录，拉取 Stage5 PR 最新提交后运行
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 -Stage5RouteCase blocked -SafeJog -GuiJointTravel single-turn -DiagnosticsTimeoutSeconds 30 -OutputDir build/stage5-safe-gui-jog-local-1
+# 等到界面和控制台出现 [HOLD]，只点击面板一个 SAFE APF JOG 按钮；
+# 两段 C 回位都显示 [HOLD C APF ACCEPTED] 与 SETTLED，再按 Q 退出
+Get-Content .\build\stage5-safe-gui-jog-local-1\result.json
+Get-Content .\build\stage5-safe-gui-jog-local-1\worker.log -Tail 80
+```
+
+验收必须同时满足：`passed=true`、`safe_gui_jog_applied=1`、`native_gui_picking=false`、`obstacle_recovery_preflight.passed=true`、`obstacle_recovery_segments_settled>=1`、`hold_recoveries>=1`、最终误差<=0.15°，无 runtime clearance breach 和固件 fault。**没有按按钮就正常退出不得算点动通过**；按钮撞到拒绝区域不会擅自调整障碍物或者降低阈值。失败结果同样保留完整日志；由于这一版本尚需 Windows GUI 鼠标点击验收，不能将 Python 单元测试等同为 GUI 人工验收。
+
+留意模式区别：`--safe-gui-jog` 是受控 GUI 按钮操作，不是 `--test-obstacle-hold-recovery` 的 DIRECT 无窗口注入，也不是以前曾经导致接触的原生 drag picking。真实硬件不在本项目目前验证范围内。
