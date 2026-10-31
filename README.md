@@ -2,7 +2,7 @@
 
 基于 **ARM Cortex-M4、FreeRTOS、QEMU 和 PyBullet** 的 UR5 六轴机器人运动控制项目。使用 C 实现运动学、轨迹规划和 PID 控制，通过 QEMU 运行嵌入式固件，并在 PyBullet 中完成运动仿真与反馈验证。
 
-**当前进度：Stage 1–4 已验收；Stage 5 的 QEMU/FreeRTOS/UART ↔ PyBullet 静态避障核心闭环已通过 CI，原生 Windows GUI 与最终范围签收尚待完成。Stage 6 综合搬运任务未开发完毕。** 项目以软件仿真为目标，不使用实体机器人。
+**当前进度（2026-10-31）：Stage 1–4 已验收；Stage 5 的静态 C APF/IK → QEMU/FreeRTOS → UART → PyBullet 全臂避障核心闭环与 Windows SAFE JOG 已获得实测证据，按 [有保留结项报告](docs/part5/17_stage5_final_acceptance_2026-10-31.md) 签收。旧 Linux GUI `six_axis` 三段收敛测试仍失败（[Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34)），修复 PR #33 保持 Draft/未合并，不能宣称全部 GUI 已验证。Stage 6 搬运任务待开发。** 本项目仅进行软件仿真，不使用实体机器人。
 
 ## 项目进度
 
@@ -12,10 +12,10 @@
 | Stage 2 · 驱动与协议 | UART / Timer / GPIO 驱动、Ring Buffer、协议解析、六轴电机状态抽象 | 已完成 |
 | Stage 3 · 运动学 | UR5 正逆运动学、IK 选解、连续角处理、关节限位 | 已完成 |
 | Stage 4 · 运动控制 | 三次/五次多项式、梯形速度、笛卡尔直线/圆弧轨迹、六轴增量式 PID、FreeRTOS 控制任务 | 核心验收通过，封版候选 |
-| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计；GUI 尚需独立验收 | 无头核心通过；阶段全项未签收 |
+| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 Linux GUI `six_axis` 未通过，PR #33 尚未合并 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
-详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)与 [Stage 5 结项证据/尚存限制](docs/part5/15_stage5_exit_review_2026-10-30.md)。
+详见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
 
 ## 系统架构
 
