@@ -8,11 +8,13 @@ pauses simulation. No mirrored robot, mouse IPC or Python PID is required.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
 import multiprocessing as mp
 import os
 import queue
+import subprocess
 import sys
 import time
 import traceback
@@ -22,13 +24,16 @@ from typing import Any
 import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
-    DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
+    DIAGNOSTICS_TIMEOUT_S, UART_SILENCE_TIMEOUT_S, DemoOptions, SCENARIOS, run,
     GUI_JOINT_TRAVEL_MODES, DEFAULT_GUI_JOINT_TRAVEL_MODE,
     SETTLE_TOLERANCE_DEG,
 )
 
 # Observer polling never changes the physics timestep or UART pacing.
 REFRESH_HZ = 30.0
+# Windows GUI message-loop probe lives in the observer, never in PyBullet worker.
+GUI_HEALTH_POLL_S = 1.0
+GUI_HUNG_CONFIRM_POLLS = 3
 MIN_OBSERVED_MOTION_DEG = 2.0
 # Test fixture only. Physical motor limits remain in firmware config.
 TEST_TORQUE_NM = 300.0
@@ -40,6 +45,122 @@ TEST_PERIOD_S = 12.0
 TEST_FORCE_START_S = 1.0
 TEST_FORCE_END_S = 1.8
 RawFrame = tuple[float, int, tuple[int, ...]]
+
+
+def clean_safe_jog_cancellation(report: dict, enabled: bool) -> bool:
+    """Recognize deliberate no-jog cancellation, never motion acceptance."""
+    faults = report.get("fault_counters")
+    return bool(
+        enabled and report.get("passed") is False
+        and report.get("cancelled") is True
+        and report.get("cancel_reason") == "no_guarded_jog_requested"
+        and report.get("gui_safe_jog") is True
+        and report.get("safe_gui_jog_applied") == 0
+        and report.get("safe_gui_jog_completed") == 0
+        and report.get("hold_recoveries") == 0
+        and report.get("segments_requested") == report.get("segments_settled")
+        and report.get("bad_checksum_frames") == 0
+        and report.get("clock_alignment_passed") is True
+        and isinstance(faults, dict)
+        and len(faults) == 3
+        and all(v == 0 for v in faults.values())
+    )
+
+
+def gui_safe_jog_worker_stalled(
+    now: float, last_sample_at: float, diagnostics_timeout_s: float,
+    *, ready: bool, gui_safe_jog: bool,
+) -> bool:
+    """Detect absent physics samples, not a normal user-idle HOLD.
+
+    The worker has its own UART silence guard. This is an independent parent
+    bound for when C/PyBullet code stops returning to the feedback loop at all.
+    """
+    return bool(
+        ready and gui_safe_jog
+        and now - last_sample_at > diagnostics_timeout_s + UART_SILENCE_TIMEOUT_S
+    )
+
+
+
+def windows_gui_health(worker_pid: int | None) -> dict[str, int] | None:
+    """Query native Windows responsiveness without calling into hung PyBullet.
+
+    None means no usable native window/probe. It is NOT evidence of a hang.
+    All platform-specific calls stay in the independent observer process.
+    """
+    if os.name != "nt" or not worker_pid:
+        return None
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        window_proc = ctypes.WINFUNCTYPE(
+            ctypes.c_int, ctypes.c_void_p, ctypes.c_ssize_t)
+        user32.EnumWindows.argtypes = (window_proc, ctypes.c_ssize_t)
+        user32.EnumWindows.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        user32.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+        user32.IsWindowVisible.restype = ctypes.c_int
+        user32.IsHungAppWindow.argtypes = (ctypes.c_void_p,)
+        user32.IsHungAppWindow.restype = ctypes.c_int
+        status = {"visible": 0, "hung": 0}
+
+        @window_proc
+        def visit(hwnd, _):
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if (pid.value == worker_pid and user32.IsWindowVisible(hwnd)):
+                status["visible"] += 1
+                status["hung"] += int(bool(user32.IsHungAppWindow(hwnd)))
+            return 1
+
+        if not user32.EnumWindows(visit, 0):
+            return None
+        return status if status["visible"] else None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def next_gui_hung_streak(previous: int, status: dict[str, int] | None) -> int:
+    """Only consecutive positive Windows OS probes count as a hung GUI."""
+    if status is None or status.get("visible", 0) < 1 or status.get("hung", 0) < 1:
+        return 0
+    return previous + 1
+
+
+def terminate_stuck_worker(worker, *, platform_name: str | None = None) -> None:
+    """Kill worker + its QEMU child on Windows, not unrelated processes.
+
+    Multiprocessing terminate() on Windows kills only the Python worker and
+    leaves child QEMU alive. Only use taskkill /T for an already stuck worker;
+    normal worker shutdown owns its own QEMU cleanup.
+    """
+    if not worker.is_alive():
+        return
+    system = os.name if platform_name is None else platform_name
+    if system == "nt" and worker.pid is not None:
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(worker.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False)
+            if result.returncode == 0:
+                return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    worker.terminate()
+
+
+def console_abort_pressed() -> bool:
+    """Independent Windows-console Q; the PyBullet GUI need not respond."""
+    if os.name != "nt" or sys.stdin is None or not sys.stdin.isatty():
+        return False
+    try:
+        import msvcrt
+        return bool(msvcrt.kbhit() and msvcrt.getwch().lower() == "q")
+    except (OSError, RuntimeError):
+        return False
 
 
 class LatestMailbox:
@@ -87,7 +208,7 @@ def capture_worker(
     diagnostics_timeout_s=DIAGNOSTICS_TIMEOUT_S, observe_hold=False,
     c_apf_library=None, route_case="clear", raw_route=False,
     gui_joint_travel=DEFAULT_GUI_JOINT_TRAVEL_MODE,
-    gui_safe_jog=False,
+    gui_safe_jog=False, ci_scripted_safe_jog=False,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
@@ -98,6 +219,7 @@ def capture_worker(
         hold_observe_only=observe_hold,
         gui_joint_travel=gui_joint_travel,
         gui_safe_jog=gui_safe_jog,
+        ci_scripted_safe_jog=ci_scripted_safe_jog,
     )
     hold_at = None
     peak_error_deg = 0.0
@@ -217,12 +339,18 @@ def capture_worker(
             and report.get("bad_checksum_frames") == 0
             and report.get("fault_counters")
             and all(value == 0 for value in report["fault_counters"].values()))
-        if report.get("passed") is not True and not clean_observation:
+        clean_cancel = clean_safe_jog_cancellation(report, gui_safe_jog)
+        if report.get("passed") is not True and not clean_observation and not clean_cancel:
             raise RuntimeError("QEMU/FreeRTOS/UART physics verdict failed")
+        if clean_cancel:
+            print("[SAFE GUI JOG CANCEL] No validated jog. "
+                  "Orderly GUI shutdown; passed=false.", flush=True)
         if clean_observation and report.get("passed") is not True:
             print("[OBSERVE] Finished outside target tolerance; result.json passed=false",
                   flush=True)
-        verdict = "PASS" if report.get("passed") is True else "OBSERVED (NOT PASS)"
+        verdict = ("CANCELLED (NOT PASS)" if clean_cancel else
+                   "PASS" if report.get("passed") is True else
+                   "OBSERVED (NOT PASS)")
         print(f"[LIVE] {verdict} {report['segments_settled']}/"
               f"{report['segments_requested']} segments", flush=True)
     except Exception:
@@ -317,6 +445,7 @@ def run_live(
     raw_route: bool = False,
     gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE,
     gui_safe_jog: bool = False,
+    ci_scripted_safe_jog: bool = False,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -344,6 +473,10 @@ def run_live(
         interactive = True
     if headless_observer and interactive and hold_seconds is None:
         raise ValueError("Headless hold requires --hold-seconds")
+    # A native GUI test must never wait forever after its initial C route.
+    # Reuse the caller's existing timeout if no separate HOLD budget is set.
+    if gui_safe_jog and hold_seconds is None:
+        hold_seconds = timeout_s
     if raw_route and c_apf_library is None:
         raise ValueError("Raw APF route requires a C APF shared library")
     if gui_joint_travel not in GUI_JOINT_TRAVEL_MODES:
@@ -355,6 +488,8 @@ def run_live(
         raise ValueError(
             "SAFE GUI JOG requires native GUI, blocked C APF/IK, "
             "interactive HOLD and no headless disturbance mode")
+    if ci_scripted_safe_jog and not gui_safe_jog:
+        raise ValueError("CI scripted GUI jog requires explicit --safe-gui-jog")
     if c_apf_library is not None and not c_apf_library.is_file():
         raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
     if c_apf_library is not None and test_disturbance:
@@ -382,6 +517,7 @@ def run_live(
             diagnostics_timeout_s, observe_hold,
             str(c_apf_library.resolve()) if c_apf_library else None,
             route_case, raw_route, gui_joint_travel, gui_safe_jog,
+            ci_scripted_safe_jog,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
@@ -390,8 +526,12 @@ def run_live(
     last_report_at = 0.0
     hold_announced = False
     hold_wall = None
+    last_gui_health_check = float("-inf")
+    last_gui_health_log = float("-inf")
+    gui_hung_streak = 0
     output_dir.mkdir(parents=True, exist_ok=True)
     for stale in ("result.json", "observer_result.json", "worker_exit.json",
+                  "observer_stall.json", "observer_gui_hung.json",
                   "mouse_events.jsonl", "drag_events.jsonl"):
         (output_dir / stale).unlink(missing_ok=True)
     audit = (output_dir / "observer.jsonl").open(
@@ -399,6 +539,7 @@ def run_live(
     try:
         worker.start()
         started = time.monotonic()
+        last_worker_sample_at = started
         print("[LIVE] QEMU + FreeRTOS + UART + "
               + ("PyBullet DIRECT" if headless_observer else "PyBullet native GUI")
               + " running", flush=True)
@@ -408,6 +549,7 @@ def run_live(
             except queue.Empty:
                 frame = None
             if frame is not None:
+                last_worker_sample_at = time.monotonic()
                 measurements.observe(frame, worker.is_alive())
                 segment = frame[1]
                 if segment > last_segment:
@@ -419,12 +561,61 @@ def run_live(
             now = time.monotonic()
             if ready.is_set() and not hold_announced:
                 if not headless_observer:
-                    print("[HOLD] Native PyBullet: left-drag a link and release; "
-                          "press Q or Ctrl+C to exit", flush=True)
+                    if gui_safe_jog:
+                        print(
+                            "[HOLD] SAFE GUI JOG: +/- to inject, FINISH/EXIT "
+                            "to close after recovery or cancel without a jog. "
+                            "Press Q in this TERMINAL for independent exit; "
+                            f"auto-close budget={hold_seconds:.0f}s. "
+                            "Do not close GUI with X.", flush=True)
+                    else:
+                        print("[HOLD] Native PyBullet: left-drag a link and release; "
+                              "press Q or Ctrl+C to exit", flush=True)
                 else:
                     print("[HOLD] Headless disturbance observation started", flush=True)
                 hold_announced = True
                 hold_wall = now
+
+            if (gui_safe_jog and hold_announced and
+                    not stop.is_set() and console_abort_pressed()):
+                stop.set()
+                audit.write(json.dumps(dict(
+                    event="console_gui_safe_jog_abort",
+                    at_wall_s=now-started,
+                    note="Orderly stop request; never overrides C verdict")) + "\n")
+                print("[LIVE] Terminal Q requested stop. "
+                      "Unfinished jog cannot PASS.", flush=True)
+
+            # Native UI responsiveness is independent of UART heartbeat.
+            # The GUI can hang even while 100-Hz motor feedback continues.
+            if (gui_safe_jog and hold_announced and worker.is_alive()
+                    and now - last_gui_health_check >= GUI_HEALTH_POLL_S):
+                last_gui_health_check = now
+                health = windows_gui_health(worker.pid)
+                gui_hung_streak = next_gui_hung_streak(gui_hung_streak, health)
+                if health is not None and (
+                        gui_hung_streak > 0 or
+                        now-last_gui_health_log >= 5 * GUI_HEALTH_POLL_S):
+                    audit.write(json.dumps(dict(
+                        event="native_gui_health",
+                        wall_s=now-started, worker_pid=worker.pid,
+                        **health, consecutive_hung_checks=gui_hung_streak)) + "\n")
+                    last_gui_health_log = now
+                if gui_hung_streak >= GUI_HUNG_CONFIRM_POLLS:
+                    evidence = dict(
+                        passed=False, fault_type="native_gui_message_loop_hung",
+                        worker_pid=worker.pid, window_probe=health,
+                        confirmed_checks=gui_hung_streak,
+                        target_frames_published=channel.seen,
+                        last_sample=measurements.latest,
+                        observed_wall_s=round(now-started, 3),
+                        note="Windows OS reports unresponsive PyBullet window; "
+                             "UART feedback alone cannot certify GUI health")
+                    (output_dir / "observer_gui_hung.json").write_text(
+                        json.dumps(evidence, indent=2), encoding="utf-8")
+                    raise TimeoutError(
+                        "Windows reports native PyBullet GUI unresponsive; "
+                        "observer_gui_hung.json saved; NOT PASS.")
 
             deadline = (hold_wall + hold_seconds + 25.0
                         if hold_wall is not None and hold_seconds is not None
@@ -432,7 +623,37 @@ def run_live(
                         if hold_wall is not None and interactive
                         else started + timeout_s + 25.0)
             if now > deadline:
-                raise TimeoutError("Physics worker exceeded deadline; see worker.log")
+                evidence = dict(
+                    passed=False, fault_type="stage5_observer_deadline",
+                    hold_budget_s=hold_seconds,
+                    last_sample=measurements.latest,
+                    target_frames_published=channel.seen,
+                    worker_alive=worker.is_alive())
+                (output_dir / "observer_stall.json").write_text(
+                    json.dumps(evidence, indent=2), encoding="utf-8")
+                raise TimeoutError(
+                    "Physics worker exceeded its finite deadline; "
+                    "observer_stall.json saved; NOT PASS.")
+            if (worker.is_alive() and gui_safe_jog_worker_stalled(
+                    now, last_worker_sample_at, diagnostics_timeout_s,
+                    ready=ready.is_set(), gui_safe_jog=gui_safe_jog)):
+                stall = {
+                    "passed": False,
+                    "error": "GUI SAFE JOG physics worker stopped publishing samples",
+                    "silence_wall_s": round(now - last_worker_sample_at, 3),
+                    "last_sample": measurements.latest,
+                    "published": channel.seen,
+                    "diagnostics_timeout_s": diagnostics_timeout_s,
+                    "uart_silence_timeout_s": UART_SILENCE_TIMEOUT_S,
+                    "worker_exit": "parent_watchdog",
+                    "evidence": "worker.log phase markers and uart_live.jsonl",
+                }
+                (output_dir / "observer_stall.json").write_text(
+                    json.dumps(stall, indent=2), encoding="utf-8")
+                raise TimeoutError(
+                    "SAFE GUI JOG physics worker stopped producing feedback "
+                    f"for {stall['silence_wall_s']:.1f}s; see "
+                    "observer_stall.json and worker.log. NOT PASS.")
 
             if measurements.latest is not None and now - last_report_at >= 1.0:
                 status = channel.status
@@ -508,6 +729,7 @@ def run_live(
         result = json.loads(report_file.read_text(encoding="utf-8"))
         # An observation run is allowed to preserve passed=False without
         # claiming convergence. Real firmware/transport errors are still fatal.
+        clean_cancel = clean_safe_jog_cancellation(result, gui_safe_jog)
         clean_observation = (observe_hold
             and result.get("bad_checksum_frames") == 0
             and result.get("fault_counters")
@@ -518,7 +740,8 @@ def run_live(
                 not 1 <= requested <= maximum_segments or
                 settled != requested or
                 any(segment > requested for segment in measurements.segments) or
-                (result.get("passed") is not True and not clean_observation)):
+                (result.get("passed") is not True and
+                 not clean_observation and not clean_cancel)):
             raise RuntimeError(
                 "QEMU/FreeRTOS closed-loop acceptance failed: "
                 f"requested={requested}, settled={settled}, "
@@ -543,6 +766,7 @@ def run_live(
             joint_ranges_deg=motion, headless_observer=headless_observer,
             required_motion_axes=[JOINT_NAMES[i] for i in required_axes],
             segments_requested=requested, segments_settled=settled,
+            cancelled=clean_cancel,
             note="PyBullet GUI renders the authoritative physics directly",
         )
         (output_dir / "observer_result.json").write_text(
@@ -557,7 +781,7 @@ def run_live(
         if worker.is_alive():
             worker.join(timeout=5.0)
         if worker.is_alive():
-            worker.terminate()
+            terminate_stuck_worker(worker)
         if worker.pid is not None:
             worker.join(timeout=5.0)
         audit.close()
@@ -578,8 +802,12 @@ def main() -> int:
                         default=DEFAULT_GUI_JOINT_TRAVEL_MODE,
                         help="Native GUI picking range only; never changes C model")
     parser.add_argument("--safe-gui-jog", action="store_true",
-        help="Guarded +/-2deg J1 GUI buttons in blocked APF HOLD; "
+        help="Guarded +/-2deg J1..J6 GUI buttons in blocked APF HOLD; "
              "unrestricted native mouse picking stays disabled")
+    parser.add_argument("--ci-scripted-safe-jog", action="store_true",
+        help="CI-only: one collision-checked J6 +0.5deg in native p.GUI and "
+             "automatically finish after real UART ACK + settled recovery; "
+             "does not test human mouse input")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-live-qemu-gui")
     parser.add_argument("--timeout-s", type=float, default=210.0)
@@ -590,7 +818,8 @@ def main() -> int:
     parser.add_argument("--opengl2", action="store_true", help="Compatible Windows GUI renderer")
     parser.add_argument("--interactive", action="store_true", default=None,
                         help="Keep true UART control active after three segments; GUI defaults to this")
-    parser.add_argument("--hold-seconds", type=float, default=None)
+    parser.add_argument("--hold-seconds", type=float, default=None,
+                        help="Maximum active HOLD time; SAFE JOG defaults to timeout-s")
     parser.add_argument("--diagnostics-timeout-s", type=float,
                         default=DIAGNOSTICS_TIMEOUT_S,
                         help="Finite UART diagnostic response timeout, 5..60 seconds")
@@ -608,7 +837,7 @@ def main() -> int:
              args.diagnostics_timeout_s, args.observe_hold,
              args.stage5_c_apf_library, args.stage5_route_case,
              args.stage5_raw_route, args.gui_joint_travel,
-             args.safe_gui_jog)
+             args.safe_gui_jog, args.ci_scripted_safe_jog)
     return 0
 
 

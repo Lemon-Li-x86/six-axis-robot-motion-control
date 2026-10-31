@@ -8,6 +8,7 @@ on:
       - fix/stage5-qmp-physics-clock-gate-20261028
       - fix/stage5-native-gui-feedback-overflow-20261028
       - feat/stage5-gui-preserved-integration-20261030
+      - fix/stage5-safe-jog-small-step-hold-20261031
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
@@ -19,6 +20,8 @@ on:
       - 'tools/tests/test_stage5_gui_joint_travel.py'
       - 'tools/tests/test_stage5_gui_avoidance_visibility.py'
       - 'tools/tests/test_stage5_gui_safe_jog.py'
+      - 'tools/tests/test_stage5_gui_acceptance.py'
+      - 'tools/check_stage5_safe_gui_acceptance.py'
       - 'simulation/pybullet_ur5/src/stage5_safe_gui_jog.py'
       - 'tools/tests/test_stage5_native_joint_stops.py'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_closed_loop.py'
@@ -55,6 +58,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -91,6 +95,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_joint_travel.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
       - name: Build real Cortex-M4 FreeRTOS UART firmware
         run: |
           cmake --preset stage5-live-uart
@@ -154,6 +159,61 @@ jobs:
           path: build/stage5-ci-gui-nodrag/*
           if-no-files-found: ignore
 
+  native-gui-scripted-j6-xvfb:
+    # Independent from the legacy no-drag smoke: must truly execute C APF/IK,
+    # UART, full-link collision checks and a settled recovery in native p.GUI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, Bullet and virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Compile virtual-only firmware for UART loop
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+      - name: Build production C APF host library for native GUI integration
+        run: |
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-gui -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-avoidance-gui --parallel 2
+          ctest --test-dir build/stage5-avoidance-gui --output-on-failure
+      - name: Native GUI + real QEMU UART + guarded J6 +0.5deg recovery (scripted CI input)
+        run: |
+          timeout 210s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis --opengl2 --timeout-s 100 --hold-seconds 90 \
+            --stage5-c-apf-library build/stage5-avoidance-gui/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --safe-gui-jog --ci-scripted-safe-jog \
+            --output-dir build/stage5-ci-gui-scripted-j6
+      - name: Independently audit native GUI scripted J6 physical C/UART verdict
+        run: |
+          python tools/check_stage5_safe_gui_acceptance.py build/stage5-ci-gui-scripted-j6/result.json
+      - name: Preserve native GUI scripted C APF/UART acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-scripted-j6-xvfb
+          path: build/stage5-ci-gui-scripted-j6/*
+          if-no-files-found: ignore
+      - name: Show guarded GUI worker logs on failure
+        if: failure()
+        run: |
+          if [ -f build/stage5-ci-gui-scripted-j6/worker.log ]; then
+            tail -n 100 build/stage5-ci-gui-scripted-j6/worker.log
+          fi
+          if [ -f build/stage5-ci-gui-scripted-j6/result.json ]; then
+            cat build/stage5-ci-gui-scripted-j6/result.json
+          fi
+
   native-firmware-regression:
     runs-on: ubuntu-latest
     steps:
@@ -175,7 +235,9 @@ jobs:
       - name: Compile production C APF/IK host bridge as a Windows DLL
         shell: pwsh
         run: |
-          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-win -G "Visual Studio 17 2022" -A x64
+          # Prefer the runner's installed MSVC toolset, not VS 2022 specifically.
+          # Mirrors the tested tools/run_stage5_controlled_recovery_windows.ps1.
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-win
           if ($LASTEXITCODE -ne 0) { throw "C APF configure failed" }
           cmake --build build/stage5-avoidance-win --config Debug
           if ($LASTEXITCODE -ne 0) { throw "C APF build failed" }

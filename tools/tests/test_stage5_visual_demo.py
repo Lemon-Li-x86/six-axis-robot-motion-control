@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import socket
 import threading
 import struct
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 # The test file lives in tools/tests and imports the production demonstration
@@ -40,6 +42,8 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     joint_motor_velocity_caps,
     hold_continuous_goal_raw,
     hold_replan_allowed,
+    hold_recovery_requested,
+    execute_guarded_gui_jog,
     HOLD_STAGNANT_PERIOD_S,
     HOLD_RETRY_COOLDOWN_S,
     HOLD_MAX_REPLAN_ATTEMPTS,
@@ -54,6 +58,76 @@ import qemu_uart_receiver as wire  # noqa: E402
 from qemu_clock_gate import QemuClockGate  # noqa: E402
 
 
+
+
+class SafeGuiJogHoldBridgeTests(unittest.TestCase):
+    def test_half_degree_jog_must_request_c_recovery_below_old_threshold(self):
+        pending = SimpleNamespace(applied=1, completed=0, available=False)
+        completed = SimpleNamespace(applied=1, completed=1, available=True)
+        # The actual measured offset may already be smaller than the 0.5deg
+        # programmed jog; the authorized event must still reach C APF/UART.
+        self.assertTrue(hold_recovery_requested(0.02, True, pending))
+        self.assertTrue(hold_recovery_requested(0.5, True, pending))
+        self.assertFalse(hold_recovery_requested(0.02, False, pending))
+        self.assertFalse(hold_recovery_requested(0.02, True, completed))
+        self.assertFalse(hold_recovery_requested(0.02, True, None))
+        self.assertFalse(hold_recovery_requested(0.5, False, None))
+        self.assertTrue(hold_recovery_requested(0.51, False, None))
+
+    def test_ci_scripted_bridge_refuses_injection_outside_hold(self):
+        class Dummy:
+            applied = 0
+            def __call__(self, *args):
+                pass
+        with self.assertRaisesRegex(RuntimeError, "outside idle HOLD"):
+            execute_guarded_gui_jog(
+                Dummy(), None, 0, range(6), 0.0, False, False,
+                [1.0] * 6, [1.0] * 6, ci_scripted_trigger=True)
+
+    def test_authorized_jog_changes_bullet_servo_target_only_on_success(self):
+        class Bullet:
+            POSITION_CONTROL = 2
+            def __init__(self):
+                self.positions = [0.0] * 6
+                self.target_commands = []
+            def getJointState(self, arm, joint, physicsClientId):
+                self.assert_client(arm, physicsClientId)
+                return (self.positions[joint], 0.0, None, None)
+            def assert_client(self, arm, client):
+                if arm != 3 or client != 7:
+                    raise AssertionError("Wrong PyBullet object/client")
+            def setJointMotorControl2(
+                self, arm, joint, controlMode, *, targetPosition,
+                force, maxVelocity
+            ):
+                self.assert_client(arm, 7)
+                if controlMode != self.POSITION_CONTROL:
+                    raise AssertionError("Unexpected motor mode")
+                self.target_commands.append((joint, targetPosition))
+
+        class Jog:
+            client = 7
+            def __init__(self, authorized):
+                self.authorized = authorized
+                self.applied = 0
+            def __call__(self, bullet, arm, joints, stamp, done, ending):
+                if self.authorized:
+                    bullet.positions[5] = math.radians(0.5)
+                    self.applied += 1
+
+        for authorized in (False, True):
+            with self.subTest(authorized=authorized):
+                bullet = Bullet()
+                jog = Jog(authorized)
+                execute_guarded_gui_jog(
+                    jog, bullet, 3, tuple(range(6)), 10.0, True, False,
+                    (5.0,) * 6, (1.0,) * 6)
+                if authorized:
+                    self.assertEqual(len(bullet.target_commands), 6)
+                    self.assertAlmostEqual(
+                        bullet.target_commands[5][1], math.radians(0.5))
+                else:
+                    self.assertEqual(bullet.target_commands, [])
 
 class QmpClockGateTests(unittest.TestCase):
     def run_fake_qmp(self, raise_during_physics: bool = False) -> None:

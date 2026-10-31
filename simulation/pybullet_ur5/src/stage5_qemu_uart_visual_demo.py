@@ -77,6 +77,7 @@ HOLD_TRACE_LIFETIME_S = 10.0
 UART_BATCH_WARNING_FRAMES = 24
 UART_BATCH_WARNING_S = 0.15
 DIAGNOSTICS_TIMEOUT_S = 5.0  # Default; simulator observation can override.
+UART_SILENCE_TIMEOUT_S = 8.0  # Existing live QEMU UART watchdog window.
 # Acceptance criterion for physically meaningful temporal correspondence.
 # Counts are diagnostic estimates, not proof of exact FreeRTOS tick alignment.
 CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR = 0.25
@@ -119,6 +120,15 @@ class DemoOptions:
     test_obstacle_hold_recovery: bool = False
     # Explicit native GUI guarded-button trial, never native mouse picking.
     gui_safe_jog: bool = False
+    # CI opt-in only: scripts exactly one guarded J6 minimum-step jog in
+    # native p.GUI; NEVER used by operator runs or on real motors.
+    ci_scripted_safe_jog: bool = False
+
+
+class Stage5GuiDisconnectedError(RuntimeError):
+    """Native PyBullet client went away before a final measured verdict."""
+
+    fault_type = "stage5_gui_disconnected"
 
 
 class Stage5UnvalidatedHoldRecoveryError(ValueError):
@@ -420,6 +430,44 @@ def advance_physics_step_batch(
             )
         bullet.stepSimulation()
 
+
+
+def safe_gui_jog_recovery_pending(jog) -> bool:
+    """A fully preflighted jog is still pending even if a servo hides its error."""
+    return (jog is not None and jog.applied > jog.completed
+            and not jog.available)
+
+
+def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bool:
+    """Keep the ordinary HOLD threshold, but honor an authorized jog event."""
+    return (deviation_deg > HOLD_DEVIATION_TRIGGER_DEG
+            or (gui_safe_jog and safe_gui_jog_recovery_pending(jog)))
+
+
+def execute_guarded_gui_jog(
+    jog, bullet, arm, joints, stamp, done, ending,
+    motor_forces_nm, gui_motor_velocity_caps,
+    *, ci_scripted_trigger: bool = False,
+) -> None:
+    """Preserve an authorized injected pose until the C UART recovery takes over.
+
+    The original Bullet POSITION_CONTROL target is the final HOLD pose.
+    Without this update a 0.5-degree jog can be erased within one physics
+    frame, before HOLD deviation sampling and any C recovery request.
+    """
+    previous_applied = jog.applied
+    jog(bullet, arm, joints, stamp, done, ending)
+    if ci_scripted_trigger:
+        if not done or ending:
+            raise RuntimeError("Scripted CI jog outside idle HOLD")
+        jog.request_ci_scripted_j6_half_degree()
+    if jog.applied > previous_applied:
+        displaced_rad = tuple(
+            bullet.getJointState(arm, joint, physicsClientId=jog.client)[0]
+            for joint in joints)
+        set_joint_position_motors(
+            bullet, arm, joints, displaced_rad,
+            motor_forces_nm, gui_motor_velocity_caps)
 
 class MotionSequencer:
     """按真实反馈到位情况依次发出关节请求，不覆盖未完成的请求。"""
@@ -892,6 +940,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError(
             "Guarded GUI jog requires native GUI, active HOLD and C APF; "
             "unrestricted native picking remains forbidden")
+    if options.ci_scripted_safe_jog and not options.gui_safe_jog:
+        raise ValueError("Scripted native GUI CI fixture requires guarded GUI jog")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -996,6 +1046,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             else "refuse_unvalidated_return_and_disable_manual_picking"
             if prepare_motion is not None else "original_unobstructed_hold"),
         gui_safe_jog=options.gui_safe_jog,
+        ci_scripted_safe_jog=options.ci_scripted_safe_jog,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1117,11 +1168,32 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             p, arm, joints, client, plan,
                             minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M))
                     previous_on_physics = on_physics
+                    scripted_ci_jog_sent = False
+                    scripted_ci_finish_sent = False
+
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
+                        nonlocal scripted_ci_jog_sent, scripted_ci_finish_sent
                         if previous_on_physics is not None:
                             previous_on_physics(
                                 bullet, body, axes, stamp, done, ending)
-                        safe_gui_jog(bullet, body, axes, stamp, done, ending)
+                        ci_inject = bool(
+                            options.ci_scripted_safe_jog
+                            and done and not ending
+                            and not scripted_ci_jog_sent)
+                        # Latch before calling the planner, fail closed if rejected.
+                        if ci_inject:
+                            scripted_ci_jog_sent = True
+                        execute_guarded_gui_jog(
+                            safe_gui_jog, bullet, body, axes, stamp, done, ending,
+                            motor_forces_nm, gui_motor_velocity_caps,
+                            ci_scripted_trigger=ci_inject)
+                        if (options.ci_scripted_safe_jog
+                                and scripted_ci_jog_sent
+                                and not scripted_ci_finish_sent
+                                and safe_gui_jog.applied == 1
+                                and safe_gui_jog.completed == 1):
+                            safe_gui_jog.request_ci_finish()
+                            scripted_ci_finish_sent = True
                     on_physics = guarded_jog_callback
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
@@ -1129,7 +1201,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         "Use during HOLD; 0.5..2.0deg increments, up to 3 "
                         "complete returns per run. Outbound AND return routes "
                         "are checked BEFORE application. "
-                        "Original mouse dragging remains OFF; press Q to finish.",
+                        "Original mouse dragging remains OFF; "
+                        "FINISH/EXIT validates or cancels; console Q can exit.",
                         flush=True)
             if not options.headless:
                 p.resetDebugVisualizerCamera(
@@ -1171,7 +1244,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             while True:
                 now = time.monotonic()
                 if not options.headless and not p.isConnected(client):
-                    raise RuntimeError(
+                    raise Stage5GuiDisconnectedError(
                         "PyBullet GUI window disconnected. For a measured HOLD "
                         "verdict keep the window open and press Q to exit; "
                         "closing X before the final sample is not a PASS.")
@@ -1224,20 +1297,79 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         elif options.gui_safe_jog:
                             print(
                                 "[HOLD] SAFE GUI JOG buttons armed; native mouse "
-                                "dragging OFF. Click one +/-2deg button. "
-                                "Guarded C APF/IK recovery follows.", flush=True)
+                                "dragging OFF. Select joint and 0.5..2deg step, click +/-. "
+                                "Guarded C APF/IK recovery follows. "
+                        "Press SAFE JOG FINISH/EXIT to validate and exit after "
+                        "recovery, or cancel safely without a jog. "
+                        "Do not close the window with X.", flush=True)
                         else:
                             print(
                                 "[HOLD] Static obstacle scene: mouse picking "
                                 "disabled; unvalidated recovery rearm forbidden.",
                                 flush=True)
+                if (safe_gui_jog is not None and safe_gui_jog.cancel_requested
+                        and not ending):
+                    if (not sequencer.done or recovering or
+                            recovery_sequencer is not None or
+                            safe_gui_jog.applied != 0 or
+                            safe_gui_jog.completed != 0):
+                        raise RuntimeError(
+                            "SAFE GUI JOG cancel attempted during an active recovery")
+                    ending = True
+                    audit.write(json.dumps(dict(
+                        event="safe_gui_jog_cancel_accepted",
+                        reason="no_guarded_jog_requested",
+                        target_frames=target_frames)) + "\n")
+                    print("[SAFE GUI JOG CANCEL] No jog attempted; "
+                          "collecting final UART diagnostics. NOT PASS.",
+                          flush=True)
+                if (safe_gui_jog is not None and safe_gui_jog.finish_requested
+                        and not ending):
+                    if (not sequencer.done or recovering or
+                            recovery_sequencer is not None or
+                            safe_gui_jog.applied < 1 or
+                            safe_gui_jog.completed != safe_gui_jog.applied or
+                            hold_recoveries != safe_gui_jog.completed):
+                        raise RuntimeError(
+                            "SAFE GUI JOG finish attempted before validated C recovery")
+                    ending = True
+                    audit.write(json.dumps(dict(
+                        event="safe_gui_jog_finish_accepted",
+                        completed_recoveries=safe_gui_jog.completed,
+                        target_frames=target_frames)) + "\n")
+                    print("[SAFE GUI JOG FINISH] All requested C recoveries "
+                          "settled; collecting final UART diagnostics", flush=True)
                 if stop_requested is not None and stop_requested():
                     if not sequencer.done or not options.interactive_hold:
                         raise InterruptedError("Observer requested live control shutdown")
+                    if (safe_gui_jog is not None and safe_gui_jog.applied == 0
+                            and not safe_gui_jog.cancel_requested):
+                        safe_gui_jog.cancel_requested = True
+                        audit.write(json.dumps(dict(
+                            event="safe_gui_jog_cancel_accepted",
+                            source="external_stop",
+                            reason="no_guarded_jog_requested",
+                            target_frames=target_frames)) + "\n")
                     ending = True
                 if options.interactive_hold and hold_started is not None:
-                    if options.hold_duration_s is not None and now-hold_started >= options.hold_duration_s:
-                        ending = True
+                    if (options.hold_duration_s is not None and
+                            now-hold_started >= options.hold_duration_s):
+                        if safe_gui_jog is not None and safe_gui_jog.applied == 0:
+                            if not safe_gui_jog.cancel_requested:
+                                safe_gui_jog.cancel_requested = True
+                                audit.write(json.dumps(dict(
+                                    event="safe_gui_jog_cancel_accepted",
+                                    source="hold_duration_limit",
+                                    reason="no_guarded_jog_requested",
+                                    target_frames=target_frames)) + "\n")
+                            ending = True
+                        elif (safe_gui_jog is not None and
+                              safe_gui_jog.applied > safe_gui_jog.completed):
+                            # Let an in-flight validated C recovery finish.
+                            # The independent observer has a finite grace period.
+                            pass
+                        else:
+                            ending = True
                 elif now-start_wall >= options.timeout_s:
                     raise TimeoutError(f"Demo timed out; completed {sequencer.completed}/{len(sequencer.goals)} segments")
                 if hold_request_sequence is not None and now-hold_request_at > 8.0:
@@ -1248,7 +1380,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     raise TimeoutError("Validated C recovery segment ACK timeout")
                 if qemu.poll() is not None:
                     raise RuntimeError(f"QEMU terminated: {qemu.returncode}")
-                if time.monotonic() - last_frame_wall > 8.0:
+                if time.monotonic() - last_frame_wall > UART_SILENCE_TIMEOUT_S:
                     raise TimeoutError(
                         "No UART frames from QEMU for 8 seconds; "
                         f"targets={target_frames}, feedback_acks={feedback_acks}, "
@@ -1372,7 +1504,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 if sequencer.done and options.interactive_hold and not ending:
                                     deviation = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                                                     for a,b in zip(measured, hold_goal_raw))
-                                    if deviation > HOLD_DEVIATION_TRIGGER_DEG and not recovering:
+                                    if (hold_recovery_requested(
+                                            deviation, options.gui_safe_jog,
+                                            safe_gui_jog) and not recovering):
                                         if safety_obstacles:
                                             # The arbitrary GUI picking case remains
                                             # blocked. Only a controlled DIRECT test
@@ -1382,11 +1516,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 enforce_collision_aware_hold_policy(
                                                     True, measured, hold_goal_raw)
                                             if (options.gui_safe_jog and
-                                                    (safe_gui_jog is None or
-                                                     not (
-                                                 safe_gui_jog.applied >
-                                                 safe_gui_jog.completed and
-                                                 not safe_gui_jog.available))):
+                                                    not safe_gui_jog_recovery_pending(
+                                                        safe_gui_jog)):
                                                 # Guarded mode cannot be used as a
                                                 # backdoor to replan arbitrary
                                                 # unvalidated external motion.
@@ -1409,12 +1540,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                 gui_motor_velocity_caps)
                                             if not hasattr(prepare_motion, "plan_hold_recovery"):
                                                 raise RuntimeError("C APF recovery planner unavailable")
+                                            print(
+                                                "[HOLD C APF PHASE] runtime_recovery_planning_started",
+                                                flush=True)
+                                            audit.write(json.dumps(dict(
+                                                event="hold_C_apf_recovery_planning_started",
+                                                target_frames=target_frames,
+                                                measured_raw=list(measured))) + "\n")
+                                            audit.flush()
+                                            recovery_plan_started = time.monotonic()
                                             recovery_plan_report = (
                                                 prepare_motion.plan_hold_recovery(
                                                     p, arm, joints, client, plan,
                                                     minimum_extra_clearance_m=(
                                                         safe_gui_jog.extra_clearance_m
                                                         if options.gui_safe_jog else 0.0)))
+                                            print(
+                                                "[HOLD C APF PHASE] runtime_recovery_planning_finished "
+                                                f"wall_s={time.monotonic()-recovery_plan_started:.3f}",
+                                                flush=True)
                                             recovery_goals = [
                                                 tuple(round(math.degrees(v) *
                                                             wire.JOINT_ANGLE_SCALE)
@@ -1590,10 +1734,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         )
                                     last_tool_xyz = tuple(tool_xyz)
                                     debug_text_id = p.addUserDebugText(
-                                        f"Segment {sequencer.index + 1}/"
+                                        ((safe_gui_jog.status_text(sequencer.done) + " | ")
+                                         if safe_gui_jog is not None else "")
+                                        + f"Segments {sequencer.completed}/"
                                         f"{len(sequencer.goals)} | "
                                         f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
-                                        [-0.65, -0.65, 0.85],
+                                        ([tool_xyz[0], tool_xyz[1], tool_xyz[2] + 0.12]
+                                         if safe_gui_jog is not None else
+                                         [-0.65, -0.65, 0.85]),
                                         textColorRGB=[0.1, 0.9, 0.2],
                                         textSize=1.25,
                                         replaceItemUniqueId=debug_text_id,
@@ -1887,6 +2035,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "interactive_hold": options.interactive_hold,
                 "native_gui_picking": native_picking_allowed,
                 "gui_safe_jog": options.gui_safe_jog,
+                "cancelled": bool(safe_gui_jog is not None and
+                                  safe_gui_jog.cancel_requested),
+                "cancel_reason": (
+                    "no_guarded_jog_requested"
+                    if safe_gui_jog is not None and safe_gui_jog.cancel_requested
+                    else None),
                 "safe_gui_jog_events": (
                     safe_gui_jog.events if safe_gui_jog is not None else []),
                 "safe_gui_jog_applied": (
@@ -1972,6 +2126,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 safe_gui_jog.completed if safe_gui_jog is not None else 0),
             avoidance_hold_recovery_policy=metadata[
                 "avoidance_hold_recovery_policy"])
+        if (not options.headless and client >= 0 and
+                (isinstance(error, Stage5GuiDisconnectedError) or
+                 (isinstance(error, p.error) and not p.isConnected(client)))):
+            failure.update(
+                fault_type=Stage5GuiDisconnectedError.fault_type,
+                fault_phase="native_gui_disconnected_before_verdict",
+                gui_finish_requested=bool(
+                    safe_gui_jog is not None and safe_gui_jog.finish_requested),
+                completed_recoveries=hold_recoveries,
+                note="Motion completion is retained as evidence; "
+                     "unexpected GUI disconnect is never PASS.")
+            audit.write(json.dumps(dict(
+                event=Stage5GuiDisconnectedError.fault_type,
+                target_frames=target_frames,
+                completed_recoveries=hold_recoveries)) + "\n")
         if isinstance(error, Stage5UnvalidatedHoldRecoveryError):
             failure.update(
                 fault_type=error.fault_type,

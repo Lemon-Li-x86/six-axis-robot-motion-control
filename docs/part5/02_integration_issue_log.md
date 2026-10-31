@@ -50,3 +50,12 @@
 | PR #15 / #28 | 原生 GUI 旧版 xvfb 第2段超时，正在基于最新固件重复原生窗口测试 | **未签收**，不得拿 PyBullet DIRECT 通过代替 |
 
 5.1~5.4 的阶段报告、ARM Map/FreeRTOS CPU/抖动/栈水位数据与 PR/CI 链接详见第 15 号文档。第六阶段的完整工业搬运、长时连续运行和交付资料独立验收。
+
+
+## 2026-10-31 阶段结项更新：S5-010 与原生 SAFE JOG 实测
+
+- **S5-010 / [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34)，OPEN**：旧 Linux 原生 GUI `six_axis --no-hold` 演示在首段轨迹 60s 后仍未满足独立物理收敛判据（0/3）。[Actions #41206909042](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41206909042) 的 `stage5-gui-nodrag-xvfb` 证据显示 `requests_accepted=1`，UART/固件故障计数零；最终物理状态距首段实际目标约 0.24°，超过本地权威 `SETTLE_TOLERANCE_DEG` 0.15°。**原因未确认**，不修改参数掩盖失败。
+- **Windows 原生 SAFE JOG 通过**：上传的 `stage5-j6-manual-evidence.zip`、独立 Windows 鼠标重复验证 `stage5-caption-j6-verified` 均表现为原 C APF 4/4、J6 +0.5°、C 回位 1/1、最终误差 0.02°、固件故障零，按真实物理反馈、UART 和诊断结束；过程细节见 [16_safe_jog_click_review_2026-10-31.md](16_safe_jog_click_review_2026-10-31.md)。
+- **Linux 同物理模型 J6 脚本化 GUI 自动回位通过**：同一 CI Run 的 `native-gui-scripted-j6-xvfb` 独立 PASS，注意脚本输入不代表 Windows 鼠标事件覆盖。
+- **遗留窗口偶发无响应**：历史 GUI 断连日志不能证明窗口消息循环死锁；已补充 Windows 原生窗口健康探测、按钮接收记录和有限退出，仍保留复现观察，不虚构根因。
+- **签收策略**：Stage5 静态避障主链路 **有保留结项**，全 GUI 兼容性不签收；[Stage 5 最终签收与 Stage 6 交接](17_stage5_final_acceptance_2026-10-31.md) 是最新权威结论。PR #33 保留 Draft 直到未通过的门禁问题解释并修复。

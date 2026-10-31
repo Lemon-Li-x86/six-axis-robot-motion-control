@@ -19,12 +19,121 @@ sys.path.insert(0, str(ROOT / "simulation/pybullet_ur5/src"))
 from stage5_qemu_uart_closed_loop import BufferedUART
 from stage5_qemu_uart_live_gui import (  # noqa: E402
     LiveMeasurements, LatestMailbox, capture_worker, required_motion_axes,
+    clean_safe_jog_cancellation,
+    next_gui_hung_streak,
+    windows_gui_health,
+    terminate_stuck_worker,
+    gui_safe_jog_worker_stalled,
 )
 
 
 def produce_without_reader(channel):
     for i in range(10000):
         channel.publish(i / 100, 1, (i,) * 6, (0,) * 6, i, 0)
+
+
+class NativeWorkerCleanupTests(unittest.TestCase):
+    def test_windows_force_stop_targets_only_worker_and_descendant_qemu(self):
+        from types import SimpleNamespace
+        worker = Mock()
+        worker.pid = 1234
+        worker.is_alive.return_value = True
+        with patch("stage5_qemu_uart_live_gui.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0)) as run:
+            terminate_stuck_worker(worker, platform_name="nt")
+        self.assertEqual(run.call_args.args[0],
+                         ["taskkill", "/PID", "1234", "/T", "/F"])
+        worker.terminate.assert_not_called()
+
+    def test_failed_windows_tree_kill_has_fallback(self):
+        from types import SimpleNamespace
+        worker = Mock()
+        worker.pid = 1234
+        worker.is_alive.return_value = True
+        with patch("stage5_qemu_uart_live_gui.subprocess.run",
+                   return_value=SimpleNamespace(returncode=1)):
+            terminate_stuck_worker(worker, platform_name="nt")
+        worker.terminate.assert_called_once()
+
+    def test_successful_worker_does_not_kill_anything(self):
+        worker = Mock()
+        worker.is_alive.return_value = False
+        with patch("stage5_qemu_uart_live_gui.subprocess.run") as run:
+            terminate_stuck_worker(worker, platform_name="nt")
+        run.assert_not_called()
+        worker.terminate.assert_not_called()
+
+
+class NativeGuiResponsivenessTests(unittest.TestCase):
+    def test_consecutive_windows_hung_checks_not_uart_samples(self):
+        streak = next_gui_hung_streak(0, {"visible": 1, "hung": 1})
+        self.assertEqual(streak, 1)
+        streak = next_gui_hung_streak(streak, {"visible": 2, "hung": 1})
+        self.assertEqual(streak, 2)
+        self.assertEqual(next_gui_hung_streak(streak, None), 0)
+        self.assertEqual(next_gui_hung_streak(streak, {"visible": 1, "hung": 0}), 0)
+        self.assertEqual(next_gui_hung_streak(streak, {"visible": 0, "hung": 0}), 0)
+
+    def test_windows_probe_is_not_a_false_positive_off_windows(self):
+        import os
+        if os.name != "nt":
+            self.assertIsNone(windows_gui_health(12345))
+        self.assertIsNone(windows_gui_health(None))
+
+
+class SafeGuiJogCancelVerdictTests(unittest.TestCase):
+    def valid_cancel(self):
+        return dict(
+            passed=False, cancelled=True,
+            cancel_reason="no_guarded_jog_requested",
+            gui_safe_jog=True, safe_gui_jog_applied=0,
+            safe_gui_jog_completed=0, hold_recoveries=0,
+            segments_requested=4, segments_settled=4,
+            bad_checksum_frames=0, clock_alignment_passed=True,
+            fault_counters=dict(controller_faults=0, planner_faults=0,
+                                feedback_stale_count=0),
+        )
+
+    def test_clean_cancel_is_orderly_but_not_pass(self):
+        report = self.valid_cancel()
+        self.assertTrue(clean_safe_jog_cancellation(report, True))
+        self.assertFalse(report["passed"])
+        self.assertFalse(clean_safe_jog_cancellation(report, False))
+
+    def test_active_jog_or_fault_never_masquerades_as_cancel(self):
+        for key, value in (
+            ("safe_gui_jog_applied", 1),
+            ("safe_gui_jog_completed", 1),
+            ("segments_settled", 3),
+            ("bad_checksum_frames", 1),
+            ("clock_alignment_passed", False),
+            ("passed", True),
+        ):
+            with self.subTest(key=key):
+                report = self.valid_cancel()
+                report[key] = value
+                self.assertFalse(clean_safe_jog_cancellation(report, True))
+        report = self.valid_cancel()
+        report["fault_counters"]["controller_faults"] = 1
+        self.assertFalse(clean_safe_jog_cancellation(report, True))
+
+
+class GuiSafeJogWorkerWatchdogTests(unittest.TestCase):
+    def test_interactive_idle_hold_does_not_timeout_while_frames_continue(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            102.0, 101.9, 30.0, ready=True, gui_safe_jog=True))
+
+    def test_missing_samples_has_bounded_parent_failure(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            137.9, 100.0, 30.0, ready=True, gui_safe_jog=True))
+        self.assertTrue(gui_safe_jog_worker_stalled(
+            138.1, 100.0, 30.0, ready=True, gui_safe_jog=True))
+
+    def test_non_jog_modes_and_startup_do_not_change(self):
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            999.0, 0.0, 30.0, ready=True, gui_safe_jog=False))
+        self.assertFalse(gui_safe_jog_worker_stalled(
+            999.0, 0.0, 30.0, ready=False, gui_safe_jog=True))
 
 
 class LiveTransportTests(unittest.TestCase):

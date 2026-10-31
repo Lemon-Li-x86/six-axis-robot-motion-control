@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
-from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES
+from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES, JOG_MIN_DEG
 
 
 def valid_return():
@@ -69,6 +69,31 @@ def safe_gate():
 
 
 class GuardedJogTests(unittest.TestCase):
+    def test_click_receipt_survives_native_preflight_failure(self):
+        p, ctl, planner = jog()
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   side_effect=RuntimeError("native call failed")):
+            with self.assertRaisesRegex(RuntimeError, "native call failed"):
+                ctl(p, 0, range(6), 0, True, False)
+        self.assertEqual(ctl.events[-1]["event"], "safe_gui_jog_click_received")
+        self.assertEqual(ctl.applied, 0)
+        self.assertEqual(p.resets, [])
+        planner.assert_not_called()
+
+    def test_visible_completion_requires_real_recovery(self):
+        p, ctl, planner = jog()
+        self.assertIn("WAIT", ctl.status_text(False))
+        self.assertIn("READY", ctl.status_text(True))
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, range(6), 0, True, False)
+        self.assertIn("BUSY", ctl.status_text(True))
+        ctl.complete_recovery()
+        self.assertIn("RETURN COMPLETE", ctl.status_text(True))
+        self.assertIn("returned=1", ctl.status_text(True))
+
     def test_six_axis_selection_and_small_step(self):
         for selected in range(1, 7):
             with self.subTest(joint=selected):
@@ -92,6 +117,94 @@ class GuardedJogTests(unittest.TestCase):
                     gate.call_args.kwargs["maximum_joint_step_rad"],
                     math.radians(.25))
                 planner.assert_called_once()
+
+    def test_ci_scripted_j6_uses_real_preflight_and_requires_uart_settlement(self):
+        p, ctl, planner = jog()
+        # GUI selection is J1, but CI's explicit scope is J6 at minimum step.
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()) as gate:
+            event = ctl.request_ci_scripted_j6_half_degree()
+        self.assertEqual(event["joint"], 6)
+        self.assertEqual(event["displacement_deg"], JOG_MIN_DEG)
+        self.assertEqual(event["source"], "ci_scripted_native_gui_jog")
+        self.assertEqual(ctl.applied, 1)
+        self.assertEqual(gate.call_args.kwargs["clearance_m"], .012)
+        planner.assert_called_once()
+        with self.assertRaisesRegex(RuntimeError, "completed real C recovery"):
+            ctl.request_ci_finish()
+        ctl.complete_recovery()
+        ctl.request_ci_finish()
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.completed, 1)
+
+    def test_ci_scripted_j6_rejected_when_collision_gate_fails(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value={"passed": False, "collision": {"robot_link_index": 2}}):
+            with self.assertRaisesRegex(RuntimeError, "refused"):
+                ctl.request_ci_scripted_j6_half_degree()
+        self.assertEqual(ctl.applied, 0)
+        self.assertEqual(ctl.refused, 1)
+        planner.assert_not_called()
+        self.assertEqual(ctl.events[-1]["event"], "safe_gui_jog_rejected")
+
+    def test_finish_without_jog_is_cancel_not_pass(self):
+        p, ctl, planner = jog()
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 0, True, False)
+        self.assertFalse(ctl.finish_requested)
+        self.assertTrue(ctl.cancel_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_cancel_requested")
+        self.assertEqual(ctl.applied, 0)
+        # No new motion can be started while finishing the no-jog verdict.
+        p.click(ctl.buttons[1])
+        ctl(p, 0, list(range(6)), 1, True, False)
+        self.assertEqual(ctl.applied, 0)
+        planner.assert_not_called()
+
+    def test_finish_requires_completed_uart_recovery(self):
+        p, ctl, planner = jog()
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, list(range(6)), 1, True, False)
+        self.assertEqual(ctl.applied, 1)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 2, True, False)
+        self.assertFalse(ctl.finish_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_finish_rejected")
+        ctl.complete_recovery()
+        # The rejected finish was consumed; only a NEW click can finish.
+        ctl(p, 0, list(range(6)), 3, True, False)
+        self.assertFalse(ctl.finish_requested)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, list(range(6)), 4, True, False)
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.events[-1]["event"],
+                         "safe_gui_jog_finish_requested")
+        self.assertEqual(ctl.events[-1]["completed_recoveries"], 1)
+        # A finish request cannot authorize another jog while the final
+        # diagnostics are being collected.
+        before = ctl.applied
+        p.click(ctl.buttons[1])
+        ctl(p, 0, list(range(6)), 5, True, False)
+        self.assertEqual(ctl.applied, before)
+        planner.assert_called_once()
+
+    def test_finish_after_maximum_completed_recoveries(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            for cycle in range(JOG_MAX_SUCCESSES):
+                p.click(ctl.buttons[1])
+                ctl(p, 0, range(6), cycle, True, False)
+                ctl.complete_recovery()
+        self.assertFalse(ctl.available)
+        p.click(ctl.finish_widget)
+        ctl(p, 0, range(6), 5, True, False)
+        self.assertTrue(ctl.finish_requested)
 
     def test_joint_limit_rejects_before_gate_or_planner(self):
         p, ctl, planner = jog(limit=math.radians(40.5))

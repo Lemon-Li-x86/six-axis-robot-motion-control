@@ -32,3 +32,19 @@
 - APF单步不会自动保证目标可达、IK连续、关节运动安全，也不能解决局部极小；
 - 实际碰撞检测需要在PyBullet中对连杆/环境逐个检验，再在嵌入式轨迹边界重做策略校验；
 - 随着Stage5通信协议扩展，当前Python/C协议镜像一致性检查需进一步升级为单一wire schema；不能凭字面相同视为串口功能联调。
+
+
+## 2026-10-31 后续接口权威位置（不重复定义参数值）
+
+此登记簿上方章节是 2026-10-27 的历史首批切片状态；不可用“尚未接入FreeRTOS”描述目前 Stage5 的真实双向 QEMU UART 仿真。最新范围与签收见 [17_stage5_final_acceptance_2026-10-31.md](17_stage5_final_acceptance_2026-10-31.md)。Stage6 继承以下**唯一权威来源**，不得复制新默认值：
+
+| 类型 | 唯一权威位置 | 分层要求 |
+|---|---|---|
+| 固件 PID/任务周期/电机动作开关 | `firmware/freertos_demo/config/robot_defaults.json` 与其既有生成产物 | 控制参数不写入 GUI 或场景脚本；实体电机命令默认 OFF |
+| UR5 几何/关节限位/正逆运动学 | `firmware/freertos_demo/model/` 与加载的 URDF、生产 C IK | GUI 不扩大 URDF 或 C 的行程；运行时核对一致性 |
+| C APF 策略/IK 精度上限 | `algorithms/avoidance/` 与生产 C IK/FK 接口 | Python 只负责传递场景输入并执行几何门禁，不写同义第二套 APF |
+| 静态障碍和路径策略 | `simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json` | 测试具名场景是输入，不注入控制任务或算法内部默认 |
+| UART 编码/序列和反馈 | 生产固件通信协议及 `qemu_uart_receiver.py` 一致性测试 | ACK 是请求确认，不能代替 PyBullet 实际到位 |
+| GUI/JOG 的观察与门禁阈值 | `stage5_qemu_uart_visual_demo.py`、`stage5_safe_gui_jog.py` 当前既有常量 | 单独的仿真测试/观测策略；不要在报告、Stage6 app 重复定义数值 |
+
+CPU/ARM map 量测按 [15 号技术验收](15_stage5_exit_review_2026-10-30.md) 和最终签收记录归档；任何 Stage6 扩展先查本登记簿，并分离常量、派生量与运行态。
