@@ -22,6 +22,7 @@ from stage5_qemu_uart_live_gui import (  # noqa: E402
     clean_safe_jog_cancellation,
     next_gui_hung_streak,
     windows_gui_health,
+    terminate_stuck_worker,
     gui_safe_jog_worker_stalled,
 )
 
@@ -29,6 +30,38 @@ from stage5_qemu_uart_live_gui import (  # noqa: E402
 def produce_without_reader(channel):
     for i in range(10000):
         channel.publish(i / 100, 1, (i,) * 6, (0,) * 6, i, 0)
+
+
+class NativeWorkerCleanupTests(unittest.TestCase):
+    def test_windows_force_stop_targets_only_worker_and_descendant_qemu(self):
+        from types import SimpleNamespace
+        worker = Mock()
+        worker.pid = 1234
+        worker.is_alive.return_value = True
+        with patch("stage5_qemu_uart_live_gui.subprocess.run",
+                   return_value=SimpleNamespace(returncode=0)) as run:
+            terminate_stuck_worker(worker, platform_name="nt")
+        self.assertEqual(run.call_args.args[0],
+                         ["taskkill", "/PID", "1234", "/T", "/F"])
+        worker.terminate.assert_not_called()
+
+    def test_failed_windows_tree_kill_has_fallback(self):
+        from types import SimpleNamespace
+        worker = Mock()
+        worker.pid = 1234
+        worker.is_alive.return_value = True
+        with patch("stage5_qemu_uart_live_gui.subprocess.run",
+                   return_value=SimpleNamespace(returncode=1)):
+            terminate_stuck_worker(worker, platform_name="nt")
+        worker.terminate.assert_called_once()
+
+    def test_successful_worker_does_not_kill_anything(self):
+        worker = Mock()
+        worker.is_alive.return_value = False
+        with patch("stage5_qemu_uart_live_gui.subprocess.run") as run:
+            terminate_stuck_worker(worker, platform_name="nt")
+        run.assert_not_called()
+        worker.terminate.assert_not_called()
 
 
 class NativeGuiResponsivenessTests(unittest.TestCase):
