@@ -69,6 +69,31 @@ def safe_gate():
 
 
 class GuardedJogTests(unittest.TestCase):
+    def test_click_receipt_survives_native_preflight_failure(self):
+        p, ctl, planner = jog()
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   side_effect=RuntimeError("native call failed")):
+            with self.assertRaisesRegex(RuntimeError, "native call failed"):
+                ctl(p, 0, range(6), 0, True, False)
+        self.assertEqual(ctl.events[-1]["event"], "safe_gui_jog_click_received")
+        self.assertEqual(ctl.applied, 0)
+        self.assertEqual(p.resets, [])
+        planner.assert_not_called()
+
+    def test_visible_completion_requires_real_recovery(self):
+        p, ctl, planner = jog()
+        self.assertIn("WAIT", ctl.status_text(False))
+        self.assertIn("READY", ctl.status_text(True))
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, range(6), 0, True, False)
+        self.assertIn("BUSY", ctl.status_text(True))
+        ctl.complete_recovery()
+        self.assertIn("RETURN COMPLETE", ctl.status_text(True))
+        self.assertIn("returned=1", ctl.status_text(True))
+
     def test_six_axis_selection_and_small_step(self):
         for selected in range(1, 7):
             with self.subTest(joint=selected):

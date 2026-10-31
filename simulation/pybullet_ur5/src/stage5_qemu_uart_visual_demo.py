@@ -1297,7 +1297,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         elif options.gui_safe_jog:
                             print(
                                 "[HOLD] SAFE GUI JOG buttons armed; native mouse "
-                                "dragging OFF. Click one +/-2deg button. "
+                                "dragging OFF. Select joint and 0.5..2deg step, click +/-. "
                                 "Guarded C APF/IK recovery follows. "
                         "Press SAFE JOG FINISH/EXIT to validate and exit after "
                         "recovery, or cancel safely without a jog. "
@@ -1734,10 +1734,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         )
                                     last_tool_xyz = tuple(tool_xyz)
                                     debug_text_id = p.addUserDebugText(
-                                        f"Segment {sequencer.index + 1}/"
+                                        ((safe_gui_jog.status_text(sequencer.done) + " | ")
+                                         if safe_gui_jog is not None else "")
+                                        + f"Segments {sequencer.completed}/"
                                         f"{len(sequencer.goals)} | "
                                         f"physics={target_frames * FEEDBACK_STEP_S:.2f}s",
-                                        [-0.65, -0.65, 0.85],
+                                        ([tool_xyz[0], tool_xyz[1], tool_xyz[2] + 0.12]
+                                         if safe_gui_jog is not None else
+                                         [-0.65, -0.65, 0.85]),
                                         textColorRGB=[0.1, 0.9, 0.2],
                                         textSize=1.25,
                                         replaceItemUniqueId=debug_text_id,

@@ -12,6 +12,8 @@ dragging; resetJointState is a deterministic simulation-only test actuator.
 from __future__ import annotations
 
 import math
+import ctypes
+import os
 import time
 from typing import Callable, Sequence
 
@@ -23,6 +25,49 @@ JOG_MIN_DEG = 0.5
 JOG_MAX_DEG = 2.0
 JOG_DEG_INCREMENT = 0.5
 JOG_MAX_SUCCESSES = 3
+
+
+def set_native_gui_status(text: str) -> bool:
+    """OpenGL2 does not reliably render debug text; use the Windows caption.
+
+    Only touch visible windows owned by this physics process. This is best-
+    effort presentation and must never change the motion verdict.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                          ctypes.c_ssize_t)
+        user32.EnumWindows.argtypes = (callback_type, ctypes.c_ssize_t)
+        user32.GetWindowThreadProcessId.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        user32.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+        user32.SendMessageTimeoutW.argtypes = (
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
+            ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_size_t))
+        user32.SendMessageTimeoutW.restype = ctypes.c_size_t
+        caption = ctypes.create_unicode_buffer(text)
+        updated = False
+
+        @callback_type
+        def visit(hwnd, _):
+            nonlocal updated
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == os.getpid() and user32.IsWindowVisible(hwnd):
+                result = ctypes.c_size_t()
+                # WM_SETTEXT, SMTO_ABORTIFHUNG: presentation must not wait
+                # indefinitely on an unresponsive native rendering thread.
+                updated = bool(user32.SendMessageTimeoutW(
+                    hwnd, 0x000C, 0, ctypes.cast(caption, ctypes.c_void_p),
+                    0x0002, 50, ctypes.byref(result))) or updated
+            return 1
+
+        user32.EnumWindows(visit, 0)
+        return updated
+    except (OSError, AttributeError, ValueError):
+        return False
 
 
 class SafeGuiJog:
@@ -58,6 +103,10 @@ class SafeGuiJog:
         self.available = True
         self.finish_requested = False
         self.cancel_requested = False
+        self.polls = 0
+        self.last_poll_log_at = float("-inf")
+        self.last_caption = None
+        self.last_caption_attempt_at = float("-inf")
         self.axis_widget = physics.addUserDebugParameter(
             "SAFE JOG: selected joint J1..J6", 1.0, 6.0, 1.0,
             physicsClientId=client)
@@ -107,6 +156,26 @@ class SafeGuiJog:
             raise RuntimeError("Safe jog recovery completion without an in-flight jog")
         self.completed += 1
         self.available = self.applied < JOG_MAX_SUCCESSES
+
+    def status_text(self, done: bool) -> str:
+        """Persistent feedback; a small completed jog can be hard to see."""
+        if not done:
+            phase = "WAIT: initial route"
+        elif self.cancel_requested:
+            phase = "CANCELLING"
+        elif self.finish_requested:
+            phase = "FINISH: checking diagnostics"
+        elif self.completed < self.applied:
+            phase = "BUSY: C return pending"
+        elif self.events and self.events[-1]["event"] in (
+                "safe_gui_jog_rejected", "safe_gui_jog_finish_rejected"):
+            phase = "REFUSED: " + self.events[-1]["reason"]
+        elif self.completed:
+            phase = "RETURN COMPLETE: click FINISH"
+        else:
+            phase = "READY: choose joint/step, click +/-"
+        return (f"SAFE JOG {phase} | applied={self.applied} "
+                f"returned={self.completed} refused={self.refused}")
 
     def _authorize(self, sign: int, *, selection: tuple[int, float] | None = None) -> dict:
         """Authorize outgoing and return legs BEFORE the single pose injection."""
@@ -234,6 +303,21 @@ class SafeGuiJog:
         print("[SAFE GUI JOG CI] " + str(event), flush=True)
 
     def __call__(self, physics, robot, joints, sim_time, done, ending):
+        self.polls += 1
+        caption = self.status_text(done)
+        if (caption != self.last_caption and
+                time.monotonic() - self.last_caption_attempt_at >= 1.0):
+            self.last_caption_attempt_at = time.monotonic()
+            if set_native_gui_status(caption):
+                self.last_caption = caption
+        # Bounded input telemetry distinguishes a live poll loop with no
+        # received click from a worker blocked inside a native GUI call.
+        if time.monotonic() - self.last_poll_log_at >= 5.0:
+            print(f"[SAFE GUI INPUT] polls={self.polls} "
+                  f"buttons={self.previous_counts} "
+                  f"finish={self.previous_finish_count} "
+                  + self.status_text(done), flush=True)
+            self.last_poll_log_at = time.monotonic()
         # Always consume button events immediately. No early click can queue
         # a surprise movement when the controller later enters HOLD.
         for sign, widget in self.buttons.items():
@@ -243,6 +327,12 @@ class SafeGuiJog:
             self.previous_counts[sign] = count
             if count <= previous:
                 continue
+            # Persist receipt BEFORE any selection read, Bullet query or C
+            # preflight so a blocked native call cannot erase the click evidence.
+            self.events.append({"event": "safe_gui_jog_click_received",
+                                "sign": sign, "count": count,
+                                "poll": self.polls})
+            print("[SAFE GUI INPUT] " + str(self.events[-1]), flush=True)
             if (not done or ending or self.finish_requested
                     or self.cancel_requested or not self.available or
                     self.applied >= JOG_MAX_SUCCESSES):
