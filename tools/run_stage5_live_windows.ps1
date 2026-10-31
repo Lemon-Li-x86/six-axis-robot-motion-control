@@ -71,7 +71,18 @@ try {
     }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
     & $Python @liveArgs
-    if ($LASTEXITCODE -ne 0) { throw "Live control failed; inspect $OutputDir/worker.log" }
+    $liveExit = $LASTEXITCODE
+    if ($SafeJog) {
+        # Audit the persisted physical evidence separately. Cancellation,
+        # incomplete UART return or GUI disconnection must never count as PASS.
+        & $Python tools/check_stage5_safe_gui_acceptance.py (Join-Path $OutputDir "result.json")
+        $auditExit = $LASTEXITCODE
+        if ($liveExit -ne 0 -or $auditExit -ne 0) {
+            throw "SAFE GUI JOG NOT PASS. Keep $OutputDir logs; inspect worker.log."
+        }
+    } elseif ($liveExit -ne 0) {
+        throw "Live control failed; inspect $OutputDir/worker.log"
+    }
 } finally {
     Pop-Location
 }
