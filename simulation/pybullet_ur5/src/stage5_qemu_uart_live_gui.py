@@ -22,7 +22,7 @@ from typing import Any
 import qemu_uart_receiver as wire
 from stage4_dynamic_closed_loop import JOINT_NAMES, ROOT, START_RAW, URDF, joint_indices
 from stage5_qemu_uart_visual_demo import (
-    DIAGNOSTICS_TIMEOUT_S, DemoOptions, SCENARIOS, run,
+    DIAGNOSTICS_TIMEOUT_S, UART_SILENCE_TIMEOUT_S, DemoOptions, SCENARIOS, run,
     GUI_JOINT_TRAVEL_MODES, DEFAULT_GUI_JOINT_TRAVEL_MODE,
     SETTLE_TOLERANCE_DEG,
 )
@@ -40,6 +40,21 @@ TEST_PERIOD_S = 12.0
 TEST_FORCE_START_S = 1.0
 TEST_FORCE_END_S = 1.8
 RawFrame = tuple[float, int, tuple[int, ...]]
+
+
+def gui_safe_jog_worker_stalled(
+    now: float, last_sample_at: float, diagnostics_timeout_s: float,
+    *, ready: bool, gui_safe_jog: bool,
+) -> bool:
+    """Detect absent physics samples, not a normal user-idle HOLD.
+
+    The worker has its own UART silence guard. This is an independent parent
+    bound for when C/PyBullet code stops returning to the feedback loop at all.
+    """
+    return bool(
+        ready and gui_safe_jog
+        and now - last_sample_at > diagnostics_timeout_s + UART_SILENCE_TIMEOUT_S
+    )
 
 
 class LatestMailbox:
@@ -399,6 +414,7 @@ def run_live(
     try:
         worker.start()
         started = time.monotonic()
+        last_worker_sample_at = started
         print("[LIVE] QEMU + FreeRTOS + UART + "
               + ("PyBullet DIRECT" if headless_observer else "PyBullet native GUI")
               + " running", flush=True)
@@ -408,6 +424,7 @@ def run_live(
             except queue.Empty:
                 frame = None
             if frame is not None:
+                last_worker_sample_at = time.monotonic()
                 measurements.observe(frame, worker.is_alive())
                 segment = frame[1]
                 if segment > last_segment:
@@ -433,6 +450,26 @@ def run_live(
                         else started + timeout_s + 25.0)
             if now > deadline:
                 raise TimeoutError("Physics worker exceeded deadline; see worker.log")
+            if (worker.is_alive() and gui_safe_jog_worker_stalled(
+                    now, last_worker_sample_at, diagnostics_timeout_s,
+                    ready=ready.is_set(), gui_safe_jog=gui_safe_jog)):
+                stall = {
+                    "passed": False,
+                    "error": "GUI SAFE JOG physics worker stopped publishing samples",
+                    "silence_wall_s": round(now - last_worker_sample_at, 3),
+                    "last_sample": measurements.latest,
+                    "published": channel.seen,
+                    "diagnostics_timeout_s": diagnostics_timeout_s,
+                    "uart_silence_timeout_s": UART_SILENCE_TIMEOUT_S,
+                    "worker_exit": "parent_watchdog",
+                    "evidence": "worker.log phase markers and uart_live.jsonl",
+                }
+                (output_dir / "observer_stall.json").write_text(
+                    json.dumps(stall, indent=2), encoding="utf-8")
+                raise TimeoutError(
+                    "SAFE GUI JOG physics worker stopped producing feedback "
+                    f"for {stall['silence_wall_s']:.1f}s; see "
+                    "observer_stall.json and worker.log. NOT PASS.")
 
             if measurements.latest is not None and now - last_report_at >= 1.0:
                 status = channel.status
