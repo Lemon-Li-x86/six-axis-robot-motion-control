@@ -46,4 +46,4 @@ Python→C IK 的默认 FK 误差限值现在由 `stage5_apf_joint_pose_limits()
 
 先以可单独撤销的分支合并小型 C 算法/几何接口；然后验证 PyBullet 物理门禁；最后才接 UART/FreeRTOS。每次合并依赖本次提交的 GitHub Actions 实际结果。第六阶段交付包应包含固件源码、运行配置、仿真场景、独立测试记录、开发/使用说明、问题追踪、实验视频和最终项目总结。
 
-**当前验收事实**：清场控制组已经做到 C APF/IK → QEMU UART → PyBullet 动态执行；物理阻挡场景仍在测试，GUI 鼠标抓取、完整搬运、长时运行和最终项目交付均尚未完成。
+**截至 2026-10-31 的更新**：Stage5 静态被阻挡场景 C APF/IK → QEMU FreeRTOS UART → PyBullet 实际逐段执行已通过 4/4 压缩与 28/28 未压缩路径，Windows 原生 GUI SAFE JOG + C 回位也通过，见 [Stage5 最终有保留签收](../part5/17_stage5_final_acceptance_2026-10-31.md)。未解决的 `six_axis` legacy Linux 原生 GUI 收敛见 [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34)；不能把 Stage5 PR #33 的 Draft 状态当成已合并。**第六阶段的虚拟抓取/放置、完整搬运、多场景和长时运行尚未开发验收**。上层编排应复用已验证的受控 C/UART 物理闭环，不以历史 GUI 鼠标点动为依赖。
