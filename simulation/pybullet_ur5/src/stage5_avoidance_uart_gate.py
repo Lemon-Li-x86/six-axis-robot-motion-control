@@ -200,4 +200,15 @@ def make_avoidance_preflight(
         )
         return result
 
+    def plan_hold_recovery(physics, robot, joints, client, original_plan):
+        # Always use the current measured physical joint state. The obstacle
+        # body remains in the SAME authoritative Bullet world; never recreate
+        # the box relative to a newly displaced EE.
+        from stage5_obstacle_hold_recovery import plan_obstacle_hold_recovery
+        return plan_obstacle_hold_recovery(
+            library, physics, robot, joints, original_plan["obstacle_ids"],
+            client, original_plan["cartesian_goal_m"],
+            original_plan["joint_waypoints_rad"][-1], route_case)
+
+    prepare.plan_hold_recovery = plan_hold_recovery
     return prepare
