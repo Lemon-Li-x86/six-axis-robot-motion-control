@@ -14,11 +14,18 @@ from typing import Sequence
 
 from stage4_dynamic_closed_loop import DEFAULT_JSON
 from stage5_avoidance_uart_gate import load_scene
-from stage5_avoidance_preflight import preflight_joint_avoidance, RejectedRoute
+from stage5_avoidance_preflight import (
+    preflight_joint_avoidance, RejectedRoute, CartesianGoalAlreadyReached,
+)
 from stage5_collision_validation import validate_joint_path, InvalidPath
 from stage5_static_obstacle_probe import Config
 
 JOINT_COUNT = 6
+# Only a tiny locally requested joint jog may take the full-link-tested direct
+# return when C APF declares the Cartesian goal already reached. An arbitrary
+# far-away IK branch must NEVER exploit this exceptional zero-Cartesian-leg case.
+JOINT_ONLY_RETURN_MAX_RAD = math.radians(2.0)
+JOINT_ONLY_RETURN_MAX_SAMPLE_RAD = math.radians(0.25)
 
 
 def plan_obstacle_hold_recovery(
@@ -76,25 +83,45 @@ def plan_obstacle_hold_recovery(
 
     motion = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))["stage4_motion"]
     apf = Config(*(float(scene["apf"][key]) for key, _ in Config._fields_))
-    c_route = preflight_joint_avoidance(
-        library, physics, robot, obstacles, joints, end_link,
-        [1000.0 * v for v in original_goal_m],
-        apf_config=apf,
-        max_velocity_deg_s=motion["max_velocity_deg_s"],
-        max_acceleration_deg_s2=motion["max_acceleration_deg_s2"],
-        max_fk_position_error_mm=None,
-        max_fk_rotation_element_error=None,
-        waypoint_capacity=scene["waypoint_capacity"],
-        max_joint_step_rad=safety["max_joint_step_rad"],
-        max_collision_samples=safety["max_collision_samples"],
-        physics_client_id=client,
-        minimum_full_link_clearance_m=required_clearance,
-        # Original via-offsets are tied to the INITIAL mission start, not
-        # this displaced pose. No fabricated waypoint for recovery.
-        via_points_mm=(),
-        shortcut_cartesian=scene.get("shortcut_cartesian", False),
-    )
     last = tuple(float(x) for x in exact_goal_joint_rad)
+    joint_only = False
+    try:
+        c_route = preflight_joint_avoidance(
+            library, physics, robot, obstacles, joints, end_link,
+            [1000.0 * v for v in original_goal_m],
+            apf_config=apf,
+            max_velocity_deg_s=motion["max_velocity_deg_s"],
+            max_acceleration_deg_s2=motion["max_acceleration_deg_s2"],
+            max_fk_position_error_mm=None,
+            max_fk_rotation_element_error=None,
+            waypoint_capacity=scene["waypoint_capacity"],
+            max_joint_step_rad=safety["max_joint_step_rad"],
+            max_collision_samples=safety["max_collision_samples"],
+            physics_client_id=client,
+            minimum_full_link_clearance_m=required_clearance,
+            # Original via-offsets are tied to the INITIAL mission start, not
+            # this displaced pose. No fabricated waypoint for recovery.
+            via_points_mm=(),
+            shortcut_cartesian=scene.get("shortcut_cartesian", False),
+        )
+    except CartesianGoalAlreadyReached:
+        if max(abs(a - b) for a, b in zip(current, last)) > (
+                JOINT_ONLY_RETURN_MAX_RAD + 1e-6):
+            raise RejectedRoute(
+                "C APF zero-Cartesian-leg return too far in joint space; "
+                "refusing unchecked IK-branch jump")
+        # C APF has confirmed that the CURRENT Cartesian end-effector
+        # position needs no path. Only the bounded exact-six-axis joint leg
+        # remains. It is checked against the SAME physical obstacle geometry
+        # before ANY UART request; no C Cartesian waypoints are fabricated.
+        joint_only = True
+        c_route = {
+            "passed": True,
+            "scope": "C_APF_zero_cartesian_leg_joint_only_return_not_actuated",
+            "cartesian_waypoints": 0,
+            "joint_waypoints_rad": [current],
+            "not_certified": ["joint-only leg until complete full-link gate"],
+        }
     path = list(c_route["joint_waypoints_rad"])
     if any(abs(a-b) > 1e-7 for a,b in zip(last, path[-1])):
         path.append(last)
@@ -103,7 +130,10 @@ def plan_obstacle_hold_recovery(
     try:
         full_gate = validate_joint_path(
             physics, robot, obstacles, joints, path,
-            maximum_joint_step_rad=safety["max_joint_step_rad"],
+            maximum_joint_step_rad=(
+                min(safety["max_joint_step_rad"],
+                    JOINT_ONLY_RETURN_MAX_SAMPLE_RAD)
+                if joint_only else safety["max_joint_step_rad"]),
             clearance_m=required_clearance,
             maximum_samples=safety["max_collision_samples"],
             physics_client_id=client)
@@ -116,6 +146,9 @@ def plan_obstacle_hold_recovery(
     return {
         "passed": True,
         "scope": "unactuated_discrete_recovery_from_measured_pose",
+        "recovery_strategy": (
+            "bounded_full_link_validated_joint_only_C_APF_cartesian_goal_reached"
+            if joint_only else "production_C_APF_C_IK_then_exact_joint_goal"),
         "joint_waypoints_rad": path,
         "C_apf_ik_joint_segments": len(c_route["joint_waypoints_rad"]) - 1,
         "exact_final_joint_goal_segment": (
