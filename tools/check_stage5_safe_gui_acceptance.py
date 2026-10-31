@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
 
 from stage5_safe_gui_jog import JOG_MIN_DEG  # noqa: E402
+from stage5_qemu_uart_visual_demo import SETTLE_TOLERANCE_DEG  # noqa: E402
 
 
 def evaluate(report: dict) -> list[str]:
@@ -74,7 +75,7 @@ def evaluate(report: dict) -> list[str]:
          "firmware fault counter is nonzero or missing")
     need(isinstance(report.get("hold_final_error_deg"), (int, float))
          and math.isfinite(report["hold_final_error_deg"])
-         and report["hold_final_error_deg"] <= 0.15,
+         and report["hold_final_error_deg"] <= SETTLE_TOLERANCE_DEG,
          "physical six-axis final HOLD error above existing settle tolerance")
     return failures
 
