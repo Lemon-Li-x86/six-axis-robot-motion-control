@@ -45,6 +45,7 @@ class RealGuiAcceptanceTests(unittest.TestCase):
                  safe_gui_jog_events=[
                      {"event":"safe_gui_jog_applied","joint":6,"displacement_deg":0.5},
                      {"event":"safe_gui_jog_applied","joint":6,"displacement_deg":2.0},
+                     {"event":"safe_gui_jog_finish_requested"},
                  ])
         self.assertEqual(evaluate(x, two_step=True), [])
         self.assertNotEqual(evaluate(x), [])
