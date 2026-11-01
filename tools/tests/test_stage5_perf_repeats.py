@@ -85,7 +85,8 @@ class RepeatTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inconsistent"):
             summarize(p)
         p = pairs()
-        p[0][1]["elapsed_seconds"] = 12
+        # Both windows remain valid 5s runs, but differ by more than 10%.
+        p[0][1]["elapsed_seconds"] = 5.4
         with self.assertRaisesRegex(ValueError, "windows differ"):
             summarize(p)
 
