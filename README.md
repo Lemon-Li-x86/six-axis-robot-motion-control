@@ -21,22 +21,38 @@
 
 ## 系统架构
 
+当前第五阶段有两条不同的 C APF/IK 验证路径，不能将旧版宿主侧规划与 2026-11-01 新增的固件侧规划混为一谈：
+
 ```text
-      Cortex-M4 固件（QEMU + FreeRTOS）
-                       │
-         协议 / 运动请求 / 状态管理
-                       │
-      C 运动学 → C 轨迹规划 → C PID
-                       │
-               UART 双向通信
-                       │
-           Python 仿真主机／物理桥接
-              ↙                ↘
-     生产 C APF/IK 库       PyBullet UR5
-     静态场景路径预检      虚拟执行／实际反馈
+路径 A（既有宿主机同源 C 库预检）
+静态场景 JSON → Host C APF/IK → PyBullet 全连杆离散碰撞预检
+                                     ↓
+                            UART 请求关节轨迹
+                                     ↓
+                            ARM FreeRTOS C PID
+
+路径 B（新增 ARM FreeRTOS 内实际 C APF/IK）
+PyBullet 当前关节反馈 + 静态 AABB / 目标 → UART 0x05
+                                     ↓
+                       ARM ProtocolRX 入队
+                                     ↓
+               ARM Trajectory Task：C APF → FK/IK
+                                     ↓
+                   UART 0x88 返回候选关节位置
+                                     ↓
+             PyBullet 全连杆扫掠预检（单独安全门禁）
+                                     ↓
+                  UART 0x03 单独授权关节运动
+                                     ↓
+                 ARM C 轨迹 / C PID / UART 输出
+                                     ↓
+                   PyBullet UR5 虚拟物理反馈
+                                     ↺
 ```
 
-运动学、轨迹和控制算法使用同一套 C 实现，既可进行 Host 单元测试，也可由固件调用。**当前 Stage5 静态场景的 C APF/IK 整路避障编排在仿真主机执行**，然后由固件实际执行 UART 下发的关节航点；不能误写成 FreeRTOS 固件已经自主规划障碍路径。PyBullet 负责虚拟执行与实际关节反馈。
+两条路径复用生产 C APF/IK、运动学及控制算法，但**只有路径 B 的 APF/IK 候选计算发生在 ARM FreeRTOS 任务内**。路径 B 已有指定静态 `blocked` 场景的 28/28 段固件候选、独立全连杆检查及真实 UART/物理到位证据。候选**不是运动授权**；PyBullet 仍负责基于 URDF 的全连杆预检与逐步批准，场景还提供高层途经目标，因此不应称为“脱离仿真主机、可应对任意障碍物的全自主避障”。所有安全结论仅适用于规定的软件仿真条件。
+
+**版本提示**：2026-10-31 的 [阶段结项快照](docs/part5/17_stage5_final_acceptance_2026-10-31.md) 和 [24 项进度审计](docs/project_plan_progress_audit_2026-10-31.md) 保留了当时“固件端 APF 尚未集成”的历史状态；最新实现及性能保留条件应以 [2026-11-01 逐项验收](docs/part5/19_stage5_original_requirements_evidence_review_2026-11-01.md)、当前源码和同提交 CI 为准。
 
 主要技术：**C11、FreeRTOS、CMake、ARM GNU Toolchain、QEMU、UART、Python、PyBullet、GDB**。
 
@@ -109,9 +125,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\test_stage4_closure.ps1 -Includ
 - [Stage 1：系统设计与通信环境](docs/part1/01_system_design.md)
 - [Stage 2：驱动与协议测试](docs/part2/03_unit_and_function_test_report.md)
 - [Stage 3：运动学验证](docs/part3/02_algorithm_validation_report.md)
-- [Stage 4：PID参数调优与轨迹性能分析](docs/part4/01_pid_tuning_and_trajectory_performance.md)
-- [Stage 4：多任务调度与实时性验证](docs/part4/02_multitask_scheduling_and_realtime_verification.md)
-- [Stage 4：历史封版记录](docs/part4_archive/12_stage4_release_candidate_2026-10-28.md)
+- [Stage 4：PID参数调优与轨迹性能分析](docs/part4/02_pid_tuning_and_trajectory_performance.md)
+- [Stage 4：多任务调度与实时性验证](docs/part4/03_multitask_scheduling_and_realtime_verification.md)
+- [Stage 4：历史封版记录](docs/part4/part4_archive/12_stage4_release_candidate_2026-10-28.md)
 - [Stage 5：集成问题记录](docs/part5/02_integration_issue_log.md)
 - [Stage 5：完整闭环、性能和 GDB 验收报告](docs/part5/15_stage5_exit_review_2026-10-30.md)
 - [Stage 6：未来任务编排和边界约束](docs/part6/00_stage6_interface_and_acceptance_contract.md)
