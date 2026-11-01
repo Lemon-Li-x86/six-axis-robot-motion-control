@@ -369,3 +369,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 - **必须保留差距并使用更新的两轮数据**：[第二轮严格验证器 CI #41309323797](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41309323797) 也 PASS，但 Control/Trajectory 抖动在其6对中只有各3对改善。**合计12对：Monitor CPU 12/12下降（0.05%→0.02%）；Control/Trajectory P99 抖动各8/12改善、4/12退化；Monitor P99 10/12退化。** 综合原始配对绝对抖动中位数 Control `0.02232→0.02162ms`、Trajectory `0.03260→0.02732ms`、Monitor `0.03322→0.04994ms`。不能只引用第一轮5/6，不能写“所有任务抖动持续下降”“已证明硬件 WCET”或“5.3 无保留全部完成”。详细对照在第20号5.3报告。
 - **接下来如果继续做 5.3**：先以新工件验证每组实际控制负载和 p99 对照，再决定是否实施独立的调度/ISR 级改动；不能仅凭某一组数据直接改变优先级、核心控制算法、QEMU Tick 频率或宽松化通过条件。新的修改要先立可复现的因果假设并独立跑同提交负载 A/B。
 - 新会话应查看当前 PR #37 HEAD/CI。此节中的 `e5e6dbc9` 是**实验提交标识**，不是保证永远有效的分支 HEAD。
+
+## 10. 静态障碍自动绕行候选（2026-11-01，CI 待按新 SHA 验证）
+
+**不要把候选生成等同于全自主机器人，或跳过原有 ARM/GUI 回归。** 本轮变更仅在原有结构内加入可测试的能力：
+
+- **纯 C 算法归属**：`firmware/freertos_demo/algorithms/avoidance/potential_field_path.[ch]` 提供 `robot_apf_generate_bypass_vias()` 和 ABI 数量查询 `robot_apf_bypass_capacity()`。从**当前起点、终点、静态 AABB、已有 APF clearance/step 参数**计算有限候选；只支持一块静态长方体，依据现有 `robot_apf_segment_blocked()` 筛掉候选两段直线穿越扩张障碍物的情况。没有 GUI/串口/运动许可，不定义新的机器人参数；输出有上界且失败不修改候选缓冲。
+- **完整预检归属**：`simulation/pybullet_ur5/src/stage5_avoidance_preflight.py` 的 `automatic_bypass=True` 依次尝试 **C APF 路径 → 生产 C IK/关节限位与轨迹 → 现有 PyBullet 全连杆离散扫掠门禁**；保留候选拒绝原因，全部拒绝则失败，不产生运动命令。选择流程单测在 `tools/tests/test_stage5_auto_bypass_selection.py`；C 规则测试在 `firmware/freertos_demo/tests/avoidance/potential_field_path_test_main.c`。
+- **桥接与场景所有权**：`stage5_avoidance_uart_gate.py` 仅从 `scenarios/stage5_static_obstacles.json` 读取 `automatic_bypass`。当前 `blocked` 的 GUI 路径设置为 `true`，因此不使用旧 `via_offsets_ee_mm` 进行 GUI 预检；旧 `via` **仅为保留原始 ARM 逐段 UART/FreeRTOS 验收路线**。新 C 几何算法在 Host 桥与固件共用源码，但**当前 ARM 0x05 协议的多段目标依然由主机测试逐次提供**；不可把 GUI 自动候选的成功说成固件已经实现无监督全局目标搜索。
+- **验证约束**：必须获取**本轮自动模式提交 SHA**的 CTest、Linux/Windows GUI/真实物理回位和 ARM 嵌入式整路日志，不能挪用旧 3cm 的 `29/29` 或 GUI 五次点动结果。4cm 曾在 GUI 运行时违反 10mm 净距，新增自动模式是否改善须通过独立日志证实，**绝不能修改 10mm 净距或 0.15° 到位阈值**。只要真实物理执行失败，恢复至已知安全版本并在 Issue Log 留下原始工件。
