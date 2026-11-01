@@ -11,6 +11,7 @@ on:
       - fix/stage5-safe-jog-small-step-hold-20261031
       - fix/stage5-final-closeout-20261031
       - feat/stage5-rtos-apf-closure-20261101
+      - fix/stage5-verdict-docs-20261101
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
@@ -40,6 +41,8 @@ on:
       - 'tools/tests/test_stage5_embedded_apf_runtime.py'
       - 'tools/run_stage5_embedded_apf_windows.ps1'
       - 'docs/part5/18_stage5_windows_final_two_step_acceptance.md'
+      - 'README.md'
+      - 'tools/tests/test_readme_links.py'
       - 'simulation/pybullet_ur5/src/qemu_uart_receiver.py'
   pull_request:
     branches: [main]
@@ -67,6 +70,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
+          python -m unittest discover -s tools/tests -p 'test_readme_links.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -159,6 +163,25 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --scenario six_axis --opengl2 --no-hold --timeout-s 60 \
             --output-dir build/stage5-ci-gui-nodrag
+      - name: Assert real three-segment physical verdict (not merely process exit)
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("build/stage5-ci-gui-nodrag/result.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          assert report.get("passed") is True, report
+          assert report.get("segments_requested") == 3, report
+          assert report.get("segments_settled") == 3, report
+          assert report.get("clock_alignment_passed") is True, report
+          assert report.get("max_final_segment_error_deg") is not None, report
+          assert report.get("bad_checksum_frames") == 0, report
+          assert report.get("bad_ack_frames") == 0, report
+          faults = report.get("fault_counters")
+          assert isinstance(faults, dict) and faults, report
+          assert all(value == 0 for value in faults.values()), faults
+          print("[STAGE5 LEGACY GUI] PASS: 3/3 physically settled with healthy UART/clock")
+          PY
       - name: Preserve GUI physical motion and latency evidence
         if: always()
         uses: actions/upload-artifact@v4
