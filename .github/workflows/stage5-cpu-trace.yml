@@ -2,7 +2,7 @@ name: Stage5 FreeRTOS task CPU measurement
 
 on:
   push:
-    branches: [feat/stage5-cpu-trace-main-20261029], feat/stage5-rtos-apf-closure-20261101
+    branches: [feat/stage5-cpu-trace-main-20261029, feat/stage5-rtos-apf-closure-20261101]
     paths:
       - 'firmware/freertos_demo/**'
       - 'tools/ci_stage5_cpu_trace_qemu.sh'
