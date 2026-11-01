@@ -59,3 +59,12 @@
 - **Linux 同物理模型 J6 脚本化 GUI 自动回位通过**：同一 CI Run 的 `native-gui-scripted-j6-xvfb` 独立 PASS，注意脚本输入不代表 Windows 鼠标事件覆盖。
 - **遗留窗口偶发无响应**：历史 GUI 断连日志不能证明窗口消息循环死锁；已补充 Windows 原生窗口健康探测、按钮接收记录和有限退出，仍保留复现观察，不虚构根因。
 - **签收策略**：Stage5 静态避障主链路 **有保留结项**，全 GUI 兼容性不签收；[Stage 5 最终签收与 Stage 6 交接](17_stage5_final_acceptance_2026-10-31.md) 是最新权威结论。PR #33 保留 Draft 直到未通过的门禁问题解释并修复。
+
+
+## S5-011（2026-11-01）：Windows 连续 SAFE GUI JOG +2° 被零笛卡尔路程保护误拒绝
+
+- **原始现场证据**：用户上传 `stage5-final-acceptance.zip`，第一次 J6 +0.5° 已完成真实 C APF/UART 回位，HOLD 实测误差约 0.02°，随后同一窗口第二次请求 J6 +2° 被 `recovery_preflight_failed` 拒绝；`C APF zero-Cartesian-leg return too far in joint space`。出站的全连杆碰撞预检**通过**，不是碰撞故障。
+- **具体根因**：第二次点击前实际 J6 14.17°，原 HOLD 关节目标 J6 14.15°；合法 +2.00° 点动后，与原目标的最大差变成 2.02°。原 C APF 笛卡尔终点已到时的“无授权任意 IK 跳变不得超过 2°”通用保护把合法 GUI 关节增量与前次跟踪余差混为一谈。
+- **修复**：`stage5_safe_gui_jog.py` 记录按原有限位/净距和 C 回位预检确认为安全的**单关节**操作员点击（起始六关节、J6 轴、离散 0.5–2° 原始增量），通过 `stage5_avoidance_uart_gate.py` 只传给 `stage5_obstacle_hold_recovery.py` 的零笛卡尔路径特殊分支。要求点击前姿态在原有 0.15° HOLD 到位容差内；偏移后的实测状态必须与点击增量一致；**真正的每段全连杆离散碰撞检查、原始速度/限位/样本预算及 C/UART ACK 不变**。对没有合法 GUI 授权的普通三度跳变及错误 IK 分支仍原样拒绝。实际恢复完成后销毁该授权。
+- **防复发**：添加与真实 PyBullet/生产 C APF 接驳的 0.02° HOLD 残差 +2° 回位测试及伪造授权/3° 跳变负例，Linux/Windows CI 同时运行；新增 Linux Xvfb 原生 GUI 0.5°→回位→2°→回位自动闭环测试；Windows `-RequireTwoStepJog` 参数与独立 `--two-step` 审核要求 J6 两次成功，任何被拒绝的点动都使最终 PASS 无效，杜绝“0.5° PASS 掩盖 2° 拒绝”。
+- **状态**：修复代码已在 PR #35；必须等待同提交的自动化结果及 Windows 同一轮实际鼠标复测才可关闭此项。完整流程及不可省略的判据见 [18 号 Windows 验收指南](18_stage5_windows_final_two_step_acceptance.md)。
