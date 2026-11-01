@@ -1364,8 +1364,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
                         "SAFE APF JOG +/- buttons and J1..J6 selector. "
-                        "Use during HOLD; 0.5..2.0deg increments, up to 3 "
-                        "complete returns per run. Outbound AND return routes "
+                        "Use during HOLD; 0.5..2.0deg increments, repeat "
+                        "after each confirmed C/UART physical return. "
+                        "Outbound AND return routes "
                         "are checked BEFORE application. "
                         "Original mouse dragging remains OFF; "
                         "FINISH/EXIT validates or cancels; console Q can exit.",
