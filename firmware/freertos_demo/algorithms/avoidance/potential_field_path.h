@@ -34,6 +34,8 @@ robot_status_t robot_apf_plan_path(
  * existing APF clearance/step policy: no hidden robot/scene defaults.
  */
 #define ROBOT_APF_BYPASS_MAX_CANDIDATES 12U
+/* Host ctypes asks C for the authoritative maximum; no mirrored literal. */
+size_t robot_apf_bypass_capacity(void);
 robot_status_t robot_apf_generate_bypass_vias(
     const robot_apf_point_t *start,
     const robot_apf_point_t *goal,
