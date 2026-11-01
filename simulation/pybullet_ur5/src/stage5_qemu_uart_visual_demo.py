@@ -2681,7 +2681,7 @@ def main() -> int:
                         default="six_axis")
     parser.add_argument("--stage5-c-apf-library", type=Path,
                         help="Use production C APF/IK with all-link preflight")
-    parser.add_argument("--stage5-route-case", choices=("clear", "blocked"),
+    parser.add_argument("--stage5-route-case", choices=("clear", "blocked", "blocked_large"),
                         default="clear")
     parser.add_argument("--stage5-raw-route", action="store_true",
                         help="Keep all original C APF waypoints (no compaction)")

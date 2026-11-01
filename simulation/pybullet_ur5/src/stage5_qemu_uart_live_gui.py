@@ -806,7 +806,7 @@ def main() -> int:
     parser.add_argument("--scenario", choices=tuple(SCENARIOS), default="six_axis")
     parser.add_argument("--stage5-c-apf-library", type=Path,
                         help="Opt in to real C APF/IK and full-link collision gate")
-    parser.add_argument("--stage5-route-case", choices=("clear", "blocked"),
+    parser.add_argument("--stage5-route-case", choices=("clear", "blocked", "blocked_large"),
                         default="clear")
     parser.add_argument("--stage5-raw-route", action="store_true",
                         help="Disable optional APF waypoint compaction")

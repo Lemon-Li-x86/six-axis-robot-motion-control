@@ -78,6 +78,10 @@ docs/                架构、参数登记、阶段记录、性能与验收证�
 
 **单一参数来源：** 固件 PID 增益、任务周期、速度/加速度、超时等默认值由 [`robot_defaults.json`](firmware/freertos_demo/config/robot_defaults.json) 管理；UR5 物理模型/限位属于模型层；场景障碍与安全门禁策略由 [仿真场景](simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json) 管理。不要在运行脚本里复制“另一套 PID / 关节限制”。
 
+## 5 cm 大障碍物独立实验
+
+已验收的 `blocked`（3 cm）场景保持不变。试验分支 `experiment/stage5-5cm-auto-bypass-20261101` 另外提供 `blocked_large`（5 cm）场景：由生产 C 自动生成绕行候选，保留原 10 mm 运行时净距及 3 mm 额外规划余量，**不提供固定途经点**。该试验未通过单独物理集成验收前不得当作成功案例。首次测试只跑初始避障路线，不启用 GUI 手动点动或 ARM 既有 29 段固定场景验收。操作步骤见 [5 cm 障碍物实验](docs/part5/21_stage5_5cm_auto_bypass_experiment.md)。
+
 ## Windows 本机验收：复用仓库已有脚本
 
 **不需要手工拼接 CMake、QEMU 与 Python 启动命令。** 本仓库已有两个 PowerShell 入口：

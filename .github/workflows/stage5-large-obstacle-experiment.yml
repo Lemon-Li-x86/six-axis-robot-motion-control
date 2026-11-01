@@ -1,0 +1,54 @@
+name: Stage5 experimental 5cm obstacle
+
+on:
+  push:
+    branches:
+      - experiment/stage5-5cm-auto-bypass-20261101
+  workflow_dispatch:
+
+jobs:
+  linux-real-c-uart-pybullet-5cm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install QEMU, ARM compiler and PyBullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Compile real ARM FreeRTOS UART and C APF/IK bridge
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-5cm -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-avoidance-5cm --parallel 2
+          ctest --test-dir build/stage5-avoidance-5cm --output-on-failure
+          python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
+      - name: Attempt 5cm C auto-bypass with real QEMU UART and native Bullet
+        run: |
+          timeout 240s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --qemu qemu-system-arm --scenario six_axis --opengl2 --no-hold \
+            --timeout-s 150 \
+            --stage5-c-apf-library build/stage5-avoidance-5cm/libstage5_apf_bridge.so \
+            --stage5-route-case blocked_large \
+            --output-dir build/stage5-5cm-ci
+          python -c "import json; from pathlib import Path; r=json.loads(Path('build/stage5-5cm-ci/result.json').read_text()); assert r['passed'] is True and r['segments_settled']==r['segments_requested'],r"
+      - name: Report experimental failure logs
+        if: failure()
+        run: |
+          if [ -f build/stage5-5cm-ci/worker.log ]; then tail -n 140 build/stage5-5cm-ci/worker.log; fi
+      - name: Preserve genuine 5cm geometry and physical execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-5cm-native-pybullet-evidence
+          path: build/stage5-5cm-ci/*
+          if-no-files-found: ignore

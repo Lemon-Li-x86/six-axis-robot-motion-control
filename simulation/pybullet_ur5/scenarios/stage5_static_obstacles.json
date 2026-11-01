@@ -75,6 +75,39 @@
       "shortcut_cartesian": true,
       "automatic_bypass": true,
       "planning_extra_clearance_mm": 3
+    },
+    "blocked_large": {
+      "goal_offset_mm": [
+        -180,
+        0,
+        0
+      ],
+      "obstacle": {
+        "center_offset_ee_mm": [
+          -90,
+          0,
+          0
+        ],
+        "half_extents_m": [
+          0.025,
+          0.025,
+          0.025
+        ]
+      },
+      "apf": {
+        "attraction_gain": 1,
+        "repulsion_gain": 50000,
+        "influence_distance_mm": 150,
+        "clearance_mm": 12,
+        "maximum_step_mm": 10,
+        "goal_tolerance_mm": 2
+      },
+      "minimum_full_link_clearance_mm": 10,
+      "waypoint_capacity": 96,
+      "expect_direct_blocked": true,
+      "shortcut_cartesian": true,
+      "automatic_bypass": true,
+      "planning_extra_clearance_mm": 3
     }
   }
 }

@@ -7,7 +7,7 @@ param(
     [double]$SafeJogHoldSeconds = 90,  # Wall-clock HOLD budget; C recovery may use observer grace.
     [switch]$ObserveHold,
     [switch]$NoHold,
-    [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
+    [ValidateSet("", "clear", "blocked", "blocked_large")][string]$Stage5RouteCase = "",
     [switch]$RawRoute,
     [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn",
     [switch]$SafeJog,
@@ -69,7 +69,7 @@ try {
         if ($RawRoute) { $liveArgs += "--stage5-raw-route" }
         Write-Host "[Stage5] C APF route: $Stage5RouteCase; bridge: $($apfDll.FullName)"
     } elseif ($RawRoute) {
-        throw "-RawRoute requires -Stage5RouteCase clear or blocked"
+        throw "-RawRoute requires -Stage5RouteCase clear, blocked or blocked_large"
     }
     if ($SafeJog) {
         if ([double]::IsNaN($SafeJogHoldSeconds) -or

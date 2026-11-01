@@ -214,6 +214,25 @@ class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
         finally:
             p.disconnect(cid)
 
+    def test_large_obstacle_is_opt_in_without_manual_via_or_weaker_gate(self):
+        from stage5_avoidance_uart_gate import load_scene
+        baseline, _ = load_scene("blocked")
+        larger, _ = load_scene("blocked_large")
+        self.assertEqual(baseline["obstacle"]["half_extents_m"],
+                         [0.015, 0.015, 0.015])
+        self.assertEqual(larger["obstacle"]["half_extents_m"],
+                         [0.025, 0.025, 0.025])
+        self.assertEqual(larger["goal_offset_mm"], baseline["goal_offset_mm"])
+        self.assertEqual(larger["obstacle"]["center_offset_ee_mm"],
+                         baseline["obstacle"]["center_offset_ee_mm"])
+        self.assertTrue(larger["expect_direct_blocked"])
+        self.assertTrue(larger["automatic_bypass"])
+        self.assertNotIn("via_offsets_ee_mm", larger)
+        self.assertEqual(larger["minimum_full_link_clearance_mm"],
+                         baseline["minimum_full_link_clearance_mm"])
+        self.assertEqual(larger["planning_extra_clearance_mm"],
+                         baseline["planning_extra_clearance_mm"])
+
 
 if __name__ == "__main__":
     unittest.main()
