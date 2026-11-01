@@ -1271,9 +1271,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             "max_joint_step_rad"],
                         minimum_clearance_m=safety_clearance_m,
                         maximum_samples=collision_policy["max_collision_samples"],
-                        preview_return=lambda: prepare_motion.plan_hold_recovery(
-                            p, arm, joints, client, plan,
-                            minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M))
+                        preview_return=lambda *, jog_context: (
+                            prepare_motion.plan_hold_recovery(
+                                p, arm, joints, client, plan,
+                                minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M,
+                                jog_context=jog_context,
+                                hold_settle_tolerance_rad=math.radians(
+                                    SETTLE_TOLERANCE_DEG))))
                     previous_on_physics = on_physics
                     scripted_ci_jog_sent = False
                     scripted_ci_finish_sent = False
@@ -1661,6 +1665,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                     p, arm, joints, client, plan,
                                                     minimum_extra_clearance_m=(
                                                         safe_gui_jog.extra_clearance_m
+                                                        if options.gui_safe_jog else 0.0),
+                                                    jog_context=(
+                                                        safe_gui_jog.last_authorized_jog
+                                                        if safe_gui_jog is not None else None),
+                                                    hold_settle_tolerance_rad=(
+                                                        math.radians(SETTLE_TOLERANCE_DEG)
                                                         if options.gui_safe_jog else 0.0)))
                                             print(
                                                 "[HOLD C APF PHASE] runtime_recovery_planning_finished "
