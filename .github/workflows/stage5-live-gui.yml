@@ -465,6 +465,19 @@ jobs:
           "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
           python -m pip install numpy pybullet
           if ($LASTEXITCODE -ne 0) { throw "PyBullet installation failed" }
+      - name: Smoke-test read-only Stage5 Python resolution
+        shell: pwsh
+        run: |
+          . .\tools\resolve_stage5_python.ps1
+          $python = Resolve-Stage5Python -RepoRoot (Get-Location).Path
+          & $python -c "import sys, numpy, pybullet; print('resolver interpreter OK:', sys.executable)"
+          if ($LASTEXITCODE -ne 0) { throw "Selected Python cannot import simulation dependencies" }
+          try {
+            Resolve-Stage5Python -RequestedPython 'C:\no-stage5-python-here\python.exe' -RepoRoot (Get-Location).Path | Out-Null
+            throw "Invalid explicit Python path was not rejected"
+          } catch {
+            if ($_.Exception.Message -notmatch 'No existing Python interpreter') { throw }
+          }
       - name: Verify one-command production DLL plus C APF UART controlled recovery
         shell: pwsh
         run: |
