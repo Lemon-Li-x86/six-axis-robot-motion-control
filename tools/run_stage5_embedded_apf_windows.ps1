@@ -3,6 +3,7 @@
 # settling, no operator clicking and NEVER sends to any real motor device.
 param(
     [string]$Python = "",  # Auto-select an existing compatible Python unless explicitly overridden.
+    [string]$ExistingSitePackages = "",  # Explicitly reuse pre-existing CP311 package files, without modifying them.
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-windows-embedded-apf",
     [double]$TimeoutSeconds = 300,
@@ -14,8 +15,24 @@ if ([double]::IsNaN($TimeoutSeconds) -or
     $TimeoutSeconds -lt 30 -or $TimeoutSeconds -gt 1200) {
     throw "TimeoutSeconds must be finite and in [30, 1200] s"
 }
-. (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
-$resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$existingPythonLauncher = Join-Path $PSScriptRoot "stage5_existing_python.py"
+if ($ExistingSitePackages) {
+    if (-not $Python) {
+        throw "-ExistingSitePackages needs an explicit -Python interpreter path"
+    }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        throw "Selected Python executable does not exist: $Python"
+    }
+    $resolvedPython = $Python
+    $resolvedSitePackages = (Resolve-Path -LiteralPath $ExistingSitePackages -ErrorAction Stop).Path
+    & $resolvedPython $existingPythonLauncher --site-packages $resolvedSitePackages --probe
+    if ($LASTEXITCODE -ne 0) {
+        throw "Existing Python/NumPy/PyBullet import check failed without changing packages"
+    }
+} else {
+    . (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
+    $resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
 
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
@@ -37,7 +54,13 @@ try {
     } else {
         $argsList += "--full-route"
     }
-    & $resolvedPython @argsList
+    if ($ExistingSitePackages) {
+        $wrappedArgs = @($existingPythonLauncher, "--site-packages", $resolvedSitePackages,
+                         "--script", $argsList[0]) + @($argsList | Select-Object -Skip 1)
+        & $resolvedPython @wrappedArgs
+    } else {
+        & $resolvedPython @argsList
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "ARM embedded APF/IK route NOT PASS; preserve $OutputDir/result.json"
     }
