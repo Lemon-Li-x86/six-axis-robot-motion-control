@@ -115,7 +115,7 @@ GDB 在 QEMU ARM 固件读取 FreeRTOS task handle、任务 CPU 占比、Timer0 
 | 原 PDF 核心要求 | 当前已完成并有证据 | 无保留签收所缺条件 |
 |---|---|---|
 | **5.1 全层完整控制闭环** | QEMU ARM/C FreeRTOS UART→C规划/IK→PID→Bullet物理反馈、断帧/超时与重复按钮 CI | 最后 Windows 手动完整会话仍需亲自做一次 |
-| **5.2 固件内 C APF，静态长方体避障** | C APF/IK 真实运行在 FreeRTOS Trajectory；1 步 + PyBullet 全连杆门禁 + 实际运动已 PASS，主机侧原复杂场景整路 PASS | 严格“固件完整自主多段路径”的验收尚未证明；新增多步 CI 需真实全绿 |
+| **5.2 固件内 C APF，静态长方体避障** | FreeRTOS C APF/IK 真正反复运行 28 段、PyBullet 全连杆安全门禁逐段批准、真实 UART C PID 28/28 到位，最终 EE 0.80mm；场景定义高层 via | **软件仿真整路验收通过**；“无外部几何检查、无途经点、任意障碍均可自主绕行”不在本项目证明范围 |
 | **5.3 性能优化** | FreeRTOS task CPU A/B、降低 Monitor 栈扫描 CPU；FLASH −17,872B，RAM 0；IRQ/调度优先级经审查 | 目前 QEMU 控制周期 jitter 优化结果不一致，不能把“降低控制抖动”当成已证明 |
 | **5.4 排障与追踪** | GDB/FreeRTOS、Timer0、QEMU UART 错帧/丢帧/超时、Issue Log 和修复 CI | 真正实体设备异常注入并不在本项目软件仿真范围；最终同版本全工作流及 Windows 操作记录待封版 |
 
