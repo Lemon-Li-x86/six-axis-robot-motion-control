@@ -16,7 +16,7 @@
 | Stage 2 · 驱动与协议 | UART / Timer / GPIO、Ring Buffer、协议解析、关节状态抽象 | 已完成 |
 | Stage 3 · 运动学 | UR5 FK/IK、逆解筛选、连续角与关节限位 | 已完成 |
 | Stage 4 · 运动控制 | 梯形速度、三/五次多项式、笛卡尔直线/圆弧、PID、FreeRTOS 任务 | 核心回归通过，历史验收记录独立保存 |
-| Stage 5 · 集成与验证 | ARM FreeRTOS 内 C APF/IK、UART、PyBullet 28 段静态避障、GUI 安全点动、CPU/内存观测 | **指定场景的软件闭环 CI 通过**；本机连续 GUI 操作和部分性能目标仍有保留条件 |
+| Stage 5 · 集成与验证 | ARM FreeRTOS 内 C APF/IK、UART、PyBullet 静态避障（当前 4cm 障碍已生成 30 段）、GUI 安全点动、CPU/内存观测 | **指定场景的软件闭环 CI 通过**；本机连续 GUI 操作和部分性能目标仍有保留条件 |
 | Stage 6 · 综合应用 | 搬运任务、虚拟抓取/放置、多场景与长时运行、最终交付 | 尚未完成 |
 
 ### 当前可信的软件验证基线
@@ -32,7 +32,7 @@
 
 ### 仍需明确保留的技术边界
 
-- 静态 `blocked` 场景已有 **28/28** 个 ARM FreeRTOS C APF/IK 候选、逐段全连杆批准、UART ACK 与 PyBullet 实际到位；但场景包含指定的高层途经点，且**全连杆碰撞许可仍由 PyBullet 仿真主机负责**。这不是“固件独立对任意障碍自主导航”。
+- `blocked` 场景在 2026-11-01 将障碍物由 **2cm 改为 4cm**（只变更 JSON 中的 `half_extents_m`）。历史 2cm 验收是 **28/28** 段；[新尺寸下的 ARM C APF 完整路线测试](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 已完成 **30/30** 段的全连杆门禁、UART ACK 与 PyBullet 实际到位；具体段数由实际几何与 C 路径重新计算，**不属于固定协议要求**。该旧工作流另有旧尺寸硬编码的测试失败，后续综合 CI 须独立核验。场景仍含预设高层途经点、全连杆许可仍由 PyBullet 主机负责，不能据此声称对任意障碍无条件自主导航。
 - 同配置 ARM `.map` 对比显示 FLASH **105,256 B → 87,384 B（减少 17,872 B）**，RAM `.data+.bss` **33,796 B 不变**；Monitor 任务短窗口 CPU 占比有所降低。但多次 QEMU 的控制周期 P99 抖动结果方向不一致，**不能声称已证明持续降低抖动、WCET 或实体硬件实时性**。
 - Stage6 的完整搬运、抓取/放置语义与长时稳定性测试尚未完成。
 
@@ -46,7 +46,7 @@
          → ARM UART 关节请求 → FreeRTOS 轨迹 / PID / 限幅
          → PyBullet 关节物理反馈 → UART → ARM
 
-路径 B：真实 ARM FreeRTOS C APF/IK（完整 28 段 CI 与本机无头验收）
+路径 B：真实 ARM FreeRTOS C APF/IK（按实际场景动态确定段数；旧 2cm 为28段，现4cm已测得30段）
 PyBullet 当前六轴反馈 + 静态 AABB / 目标
          → UART 0x05 → ARM ProtocolRX 请求队列
          → ARM Trajectory Task：生产 C APF + FK / IK
@@ -84,7 +84,7 @@ docs/                架构、参数登记、阶段记录、性能与验收证�
 
 | 入口 | 做什么 |
 |---|---|
-| [`tools/run_stage5_embedded_apf_windows.ps1`](tools/run_stage5_embedded_apf_windows.ps1) | 自动构建 ARM 固件；无头运行 **固件内 C APF/IK 的完整 28 段路线**，审查全连杆安全和实际回位，并归档结果 |
+| [`tools/run_stage5_embedded_apf_windows.ps1`](tools/run_stage5_embedded_apf_windows.ps1) | 自动构建 ARM 固件；无头运行 **固件内 C APF/IK 的完整路线**（当前4cm场景实测30段，段数不写死），审查全连杆安全和实际回位，并归档结果 |
 | [`tools/run_stage5_live_windows.ps1`](tools/run_stage5_live_windows.ps1) | 构建所需固件/桥接，打开 PyBullet GUI，完成 **人工 SAFE JOG 连续回位** 与最终审计 |
 
 ### 1. 同步已验证的功能分支
