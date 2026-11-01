@@ -40,6 +40,9 @@ typedef struct {
     QueueHandle_t reference_queue;
     motion_stage4_config_t config;
     motion_stage4_diagnostics_t diagnostics;
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    motion_stage5_control_trace_t control_trace;
+#endif
     volatile uint8_t abort_requested; /* controller-to-planner cancellation */
     TaskHandle_t trajectory_handle;
     TaskHandle_t control_handle;
