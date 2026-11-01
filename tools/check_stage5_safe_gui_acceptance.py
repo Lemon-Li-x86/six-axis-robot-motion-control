@@ -59,6 +59,12 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
              for route in routes),
          "not every C recovery route completed")
     events = report.get("safe_gui_jog_events")
+    if two_step:
+        need(isinstance(events, list) and any(
+            isinstance(event, dict)
+            and event.get("event") == "safe_gui_jog_finish_requested"
+            for event in events),
+            "operator FINISH after second physical return missing")
     actual_steps = [
         event.get("displacement_deg")
         for event in (events if isinstance(events, list) else [])
