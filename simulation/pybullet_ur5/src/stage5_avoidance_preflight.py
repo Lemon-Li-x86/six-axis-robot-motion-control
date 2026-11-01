@@ -129,11 +129,16 @@ def preflight_joint_avoidance(
         ]
         start = point([v * 1000.0 for v in ee_m])
         end = point(goal_mm)
-        proposals = (Point * 12)()
+        c.robot_apf_bypass_capacity.restype = ctypes.c_size_t
+        candidate_capacity = c.robot_apf_bypass_capacity()
+        if not 1 <= candidate_capacity <= 256:
+            raise RejectedRoute("C bypass ABI reports invalid capacity")
+        proposals = (Point * candidate_capacity)()
         count = ctypes.c_size_t(0)
         status = c.robot_apf_generate_bypass_vias(
             ctypes.byref(start), ctypes.byref(end), ctypes.byref(bbox),
-            1, ctypes.byref(apf_config), proposals, 12, ctypes.byref(count))
+            1, ctypes.byref(apf_config), proposals, candidate_capacity,
+            ctypes.byref(count))
         if status:
             raise RejectedRoute(f"C bypass candidate geometry rejected: status={status}")
         if count.value > len(proposals):
