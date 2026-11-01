@@ -35,6 +35,7 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_obstacle_hold_recovery.py'
       - 'simulation/pybullet_ur5/src/stage5_avoidance_preflight.py'
       - 'simulation/pybullet_ur5/src/stage5_avoidance_uart_gate.py'
+      - 'simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
       - 'tools/tests/run_stage5_embedded_apf_uart.py'
