@@ -186,6 +186,10 @@ jobs:
           cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-avoidance-gui -DCMAKE_BUILD_TYPE=Debug
           cmake --build build/stage5-avoidance-gui --parallel 2
           ctest --test-dir build/stage5-avoidance-gui --output-on-failure
+      - name: Real Bullet/C APF regression for GUI +2deg after settled residual
+        run: |
+          STAGE5_APF_TEST_DLL="$PWD/build/stage5-avoidance-gui/libstage5_apf_bridge.so" \
+            python -m unittest discover -s tools/tests -p 'test_stage5_obstacle_hold_recovery.py' -v
       - name: Native GUI + real QEMU UART + guarded J6 +0.5deg recovery (scripted CI input)
         run: |
           timeout 210s xvfb-run -a -s "-screen 0 1280x800x24" \
@@ -276,6 +280,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows controlled recovery failed" }
           $a = Get-Content build/stage5-recovery-windows-ci/controlled_recovery_acceptance.json -Raw | ConvertFrom-Json
           if ($a.passed -ne $true) { throw "Windows controlled recovery evidence not PASS" }
+      - name: Validate GUI +2deg after 0.02deg HOLD residual on actual Windows Bullet/C DLL
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path build/stage5-avoidance-win -Recurse -File |
+            Where-Object { $_.Name -eq "stage5_apf_bridge.dll" -or
+                           $_.Name -eq "libstage5_apf_bridge.dll" } |
+            Select-Object -First 1
+          if ($null -eq $dll) { throw "C APF DLL missing for GUI 2deg safety regression" }
+          $env:STAGE5_APF_TEST_DLL = $dll.FullName
+          python -m unittest discover -s tools/tests -p 'test_stage5_obstacle_hold_recovery.py' -v
+          if ($LASTEXITCODE -ne 0) { throw "GUI +2deg recovery regression failed" }
       - name: Archive Windows controlled C APF/QEMU recovery evidence
         if: always()
         uses: actions/upload-artifact@v4
