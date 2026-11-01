@@ -91,6 +91,13 @@ try {
     } elseif ($liveExit -ne 0) {
         throw "Live control failed; inspect $OutputDir/worker.log"
     }
+    if ($RequireTwoStepJog) {
+        # Archive only a separately audited PASS. On failure the raw traces
+        # remain untouched for investigation in the output directory.
+        $archive = "$OutputDir.zip"
+        Compress-Archive -Path (Join-Path $OutputDir "*") -DestinationPath $archive -Force
+        Write-Host "[Stage5] Two-step Windows PASS, evidence archive: $archive"
+    }
 } finally {
     Pop-Location
 }
