@@ -2229,6 +2229,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     safe_gui_jog.applied >= 1 and
                     safe_gui_jog.applied == safe_gui_jog.completed ==
                     hold_recoveries and
+                    safe_gui_jog.refused == 0 and
+                    safe_gui_jog.finish_requested and
                     recovery_segments_settled >= safe_gui_jog.applied))
                 and sequencer.done
                 and feedback_acks >= 3
