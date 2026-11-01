@@ -44,12 +44,19 @@ try {
         -not $result.full_link_safe -or
         -not $result.joint_motion_submitted_only_after_gate -or
         $result.uart_checksum_errors -ne 0 -or
+        $result.runtime_full_link_queries -le 0 -or
         $result.new_apf_proposals -lt 3 -or
         $result.joint_motion_acks -lt 3) {
         throw "Embedded APF independent safety verdict NOT PASS; keep evidence"
     }
     if (-not $ThreeStepOnly -and -not $result.route_complete) {
         throw "Full static obstacle route was not reached by ARM C APF"
+    }
+    # At least the UR5 base and six moving links must be queried for
+    # every independently ACKed motion. Without this, the default
+    # Bullet linkIndexA=-1 checks ONLY the base, not the whole arm.
+    if ($result.runtime_full_link_queries -lt (7 * $result.joint_motion_acks)) {
+        throw "Runtime Bullet collision evidence did not cover every UR5 link"
     }
     $archive = "$OutputDir.zip"
     Compress-Archive -Path (Join-Path $OutputDir "*") -DestinationPath $archive -Force
