@@ -126,5 +126,14 @@ endif()
 if(NOT MSVC)
     target_link_libraries(stage5_apf_joint_route_host PRIVATE m)
 endif()
+# The identical production C function is linked into QEMU's Trajectory
+# task. Host test exercises its complete APF/FK/IK/rate path without RTOS.
+target_sources(stage5_apf_joint_route_host PRIVATE
+    ${FIRMWARE_ROOT}/application/services/stage5_apf_proposal.c)
+target_include_directories(stage5_apf_joint_route_host PRIVATE
+    ${FIRMWARE_ROOT}/application/services
+    ${FIRMWARE_ROOT}/communications
+    ${FIRMWARE_ROOT}/algorithms/control
+)
 add_test(NAME stage5_apf_joint_route_host
     COMMAND stage5_apf_joint_route_host)
