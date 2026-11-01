@@ -7,6 +7,7 @@ a fake physics API makes the default-base-only regression deterministic.
 from __future__ import annotations
 
 import math
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -17,7 +18,80 @@ from run_stage5_embedded_apf_uart import (
     describe_joint_tracking,
     decode_firmware_motion_diagnostic,
     MOTION_DIAGNOSTIC_SELECTORS,
+    summarize_stalled_control_trace,
 )
+
+
+class Stage5ControlTraceContractTests(unittest.TestCase):
+    def test_python_selectors_match_authoritative_c_protocol(self):
+        import qemu_uart_receiver as wire
+
+        header = (Path(__file__).resolve().parents[2] /
+                  "firmware/freertos_demo/communications/protocol.h")
+        defines = {
+            name: int(value)
+            for name, value in re.findall(
+                r"^#define\s+(DIAGNOSTICS_METRIC_[A-Z_]+)\s+(\d+)U\b",
+                header.read_text(encoding="utf-8"), re.MULTILINE,
+            )
+        }
+        fields = {
+            "trace_rtos_tick": "DIAGNOSTICS_METRIC_CONTROL_TICK",
+            "trace_control_dt_us": "DIAGNOSTICS_METRIC_CONTROL_DT_US",
+            "trace_reference_age_ticks": "DIAGNOSTICS_METRIC_REFERENCE_AGE_TICKS",
+            "trace_request_generation": "DIAGNOSTICS_METRIC_REQUEST_GENERATION",
+        }
+        bases = {
+            "trace_reference_raw": "DIAGNOSTICS_METRIC_REFERENCE_BASE",
+            "trace_feedback_raw": "DIAGNOSTICS_METRIC_FEEDBACK_BASE",
+            "trace_pid_correction_millideg": "DIAGNOSTICS_METRIC_PID_CORRECTION_BASE",
+            "trace_limiter_position_millicentideg": "DIAGNOSTICS_METRIC_LIMITER_POSITION_BASE",
+            "trace_command_raw": "DIAGNOSTICS_METRIC_COMMAND_BASE",
+        }
+        for key, macro in fields.items():
+            self.assertIn(macro, defines)
+            self.assertEqual(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS[key],
+                             defines[macro])
+        for key, macro in bases.items():
+            self.assertIn(macro, defines)
+            for joint in range(1, wire.JOINT_COUNT + 1):
+                self.assertEqual(
+                    wire.SIM_MOTION_DIAGNOSTIC_SELECTORS[f"{key}_j{joint}"],
+                    defines[macro] + joint - 1,
+                )
+        selectors = list(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS.values())
+        self.assertEqual(len(selectors), len(set(selectors)))
+
+    def test_reconstructs_stalled_trace_with_signed_joint_values(self):
+        from qemu_uart_receiver import JOINT_COUNT
+        metrics = {
+            "trace_rtos_tick": 812,
+            "trace_control_dt_us": 10000,
+            "trace_reference_age_ticks": 2,
+            "trace_request_generation": 3,
+        }
+        fields = (
+            "reference_raw", "feedback_raw", "pid_correction_millideg",
+            "limiter_position_millicentideg", "command_raw",
+        )
+        for f in fields:
+            for j in range(1, JOINT_COUNT + 1):
+                metrics[f"trace_{f}_j{j}"] = -j
+        result = summarize_stalled_control_trace(metrics)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["reference_raw"], [-1,-2,-3,-4,-5,-6])
+        self.assertEqual(result["control_dt_us"], 10000)
+        self.assertIs(result["coherent_across_axes"], False)
+        del metrics["trace_command_raw_j6"]
+        self.assertIsNone(summarize_stalled_control_trace(metrics))
+
+    def test_negative_trace_payload_sign_decodes(self):
+        self.assertEqual(
+            decode_firmware_motion_diagnostic(
+                "trace_pid_correction_millideg_j6",
+                bytes.fromhex("9cffffff"),
+            ), -100,
+        )
 
 
 class FirmwareDiagnosticDecodingTests(unittest.TestCase):
