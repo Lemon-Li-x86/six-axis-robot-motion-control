@@ -14,11 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
 
-from stage5_safe_gui_jog import JOG_MIN_DEG  # noqa: E402
+from stage5_safe_gui_jog import JOG_MIN_DEG, JOG_MAX_DEG  # noqa: E402
 from stage5_qemu_uart_visual_demo import SETTLE_TOLERANCE_DEG  # noqa: E402
 
 
-def evaluate(report: dict) -> list[str]:
+def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
     """Return reasons for NOT PASS, without weakening the production verdict."""
     failures: list[str] = []
     def need(ok: bool, message: str) -> None:
@@ -45,7 +45,8 @@ def evaluate(report: dict) -> list[str]:
     applied = report.get("safe_gui_jog_applied")
     completed = report.get("safe_gui_jog_completed")
     recovered = report.get("hold_recoveries")
-    need(type(applied) is int and applied > 0 and
+    expected = 2 if two_step else 1
+    need(type(applied) is int and applied == expected and
          applied == completed == recovered,
          "guarded GUI jog, C UART recovery and physical settlement counts differ")
     routes = report.get("obstacle_recovery_routes")
@@ -54,15 +55,20 @@ def evaluate(report: dict) -> list[str]:
              for route in routes),
          "not every C recovery route completed")
     events = report.get("safe_gui_jog_events")
-    need(isinstance(events, list) and any(
-        isinstance(event, dict)
+    actual_steps = [
+        event.get("displacement_deg")
+        for event in (events if isinstance(events, list) else [])
+        if isinstance(event, dict)
         and event.get("event") == "safe_gui_jog_applied"
         and event.get("joint") == 6
-        and isinstance(event.get("displacement_deg"), (int, float))
-        and math.isclose(event["displacement_deg"], JOG_MIN_DEG,
-                         rel_tol=0, abs_tol=1e-8)
-        for event in events or []),
-        "validated J6 +minimum-step jog event absent")
+    ]
+    required_steps = (JOG_MIN_DEG, JOG_MAX_DEG) if two_step else (JOG_MIN_DEG,)
+    need(len(actual_steps) == len(required_steps) and all(
+        isinstance(actual, (int, float)) and
+        math.isfinite(actual) and
+        math.isclose(actual, expected_step, rel_tol=0, abs_tol=1e-8)
+        for actual, expected_step in zip(actual_steps, required_steps)),
+        "J6 requested steps differ from independently required sequence")
     need(report.get("bad_checksum_frames") == 0 and
          report.get("bad_ack_frames") == 0,
          "UART checksum/ACK fault")
@@ -84,6 +90,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result", type=Path,
                         help="Stage5 output_dir/result.json")
+    parser.add_argument("--two-step", action="store_true",
+                        help="Require two physically recovered J6 moves: +0.5, +2deg")
     args = parser.parse_args()
     if not args.result.is_file():
         print(f"[STAGE5 GUI] NOT PASS: result.json missing: {args.result}")
@@ -95,12 +103,14 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f"[STAGE5 GUI] NOT PASS: invalid JSON: {exc}")
         return 1
-    failures = evaluate(data)
+    failures = evaluate(data, two_step=args.two_step)
     if failures:
         print("[STAGE5 GUI] NOT PASS: " + "; ".join(failures))
         print("Keep worker.log, uart_live.jsonl, observer.jsonl and result.json.")
         return 1
-    print("[STAGE5 GUI] PASS: native virtual GUI, J6 +0.5deg, C APF/IK, "
+    print("[STAGE5 GUI] PASS: native virtual GUI, "
+          + ("J6 +0.5deg then +2deg" if args.two_step else "J6 +0.5deg")
+          + ", C APF/IK, "
           "full-link clearance, UART ACK and physical settled recovery.")
     print("This does not certify physical six-axis robot hardware.")
     return 0
