@@ -57,6 +57,32 @@ def describe_joint_tracking(candidate_raw, observed_raw, commanded_raw) -> dict:
     }
 
 
+def decode_firmware_motion_diagnostic(metric_name: str, payload: bytes) -> int:
+    """Decode an existing UART diagnostic response, with signed fault code."""
+    if len(payload) != 4:
+        raise ValueError("firmware diagnostic response must be 4 bytes")
+    value = struct.unpack("<I", payload)[0]
+    if metric_name == "last_fault" and value >= (1 << 31):
+        value -= 1 << 32
+    return value
+
+
+# Existing firmware diagnostics selector registry, not a duplicated wire map.
+MOTION_DIAGNOSTIC_SELECTORS = tuple(
+    (name, wire.SIM_MOTION_DIAGNOSTIC_SELECTORS[name])
+    for name in (
+        "requests_accepted",
+        "trajectory_samples",
+        "controller_steps",
+        "controller_faults",
+        "planner_faults",
+        "feedback_stale_count",
+        "last_fault",
+        "monitoring_ticks",
+    )
+)
+
+
 def require_runtime_full_link_clearance(
     bullet, robot: int, obstacle: int, clearance_m: float, client: int,
 ) -> int:
@@ -196,6 +222,13 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
             settle=0
             max_change=0.0
             frames=0
+            previous_firmware_command=None
+            unchanged_firmware_command_frames=0
+            diagnostic_waiting=None
+            diagnostic_pending=[]
+            diagnostic_snapshot=None
+            diagnostic_leg=-1
+            diagnostic_snapshot_index=0
             current_motion_start_frame=0
             best_motion_error_deg=math.inf
             within_tolerance_frames=0
@@ -319,6 +352,12 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             wire.CMD_REQUEST_JOINT_MOVE,
                             bytes([motion_seq])+struct.pack("<6h",*candidate)))
                         move_sent=True
+                    elif command==wire.CMD_DIAGNOSTICS_RESPONSE and len(payload)==4:
+                        if diagnostic_waiting is not None and diagnostic_snapshot is not None:
+                            name, _selector=diagnostic_waiting
+                            diagnostic_snapshot["metrics"][name] = (
+                                decode_firmware_motion_diagnostic(name, payload))
+                            diagnostic_waiting=None
                     elif command==wire.CMD_JOINT_MOVE_ACK and len(payload)==2:
                         seq,status=struct.unpack("<Bb",payload)
                         if seq!=motion_seq or status!=0:
@@ -333,6 +372,11 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                     elif command==wire.CMD_SET_JOINT_TARGETS and len(payload)==12:
                         values=struct.unpack("<6h",payload)
                         frames+=1
+                        if values==previous_firmware_command:
+                            unchanged_firmware_command_frames+=1
+                        else:
+                            unchanged_firmware_command_frames=0
+                        previous_firmware_command=values
                         if move_ack==0:
                             p.setJointMotorControlArray(
                                 arm,joints,p.POSITION_CONTROL,
@@ -367,6 +411,7 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             diagnostics=describe_joint_tracking(
                                 candidate, observed, values)
                             diagnostics.update(
+                                unchanged_firmware_command_frames=unchanged_firmware_command_frames,
                                 leg_number=len(result["approved_legs"]),
                                 frames_since_ack=frames-current_motion_start_frame,
                                 last_max_error_deg=round(err,4),
@@ -375,6 +420,37 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                                 consecutive_settle_frames=settle,
                             )
                             result["last_motion_diagnostics"]=diagnostics
+                            current_leg=len(result["approved_legs"])
+                            # A stalled command must not silently masquerade
+                            # as a long move. Request existing on-ARM counters
+                            # through the read-only diagnostics UART opcode.
+                            # Capture twice so task activity can be compared.
+                            if (err>0.15 and
+                                    unchanged_firmware_command_frames>=200 and
+                                    not diagnostic_pending and
+                                    diagnostic_waiting is None and
+                                    (diagnostic_leg!=current_leg or
+                                     (diagnostic_snapshot_index==1 and
+                                      unchanged_firmware_command_frames>=700))):
+                                if diagnostic_leg!=current_leg:
+                                    diagnostic_leg=current_leg
+                                    diagnostic_snapshot_index=0
+                                diagnostic_snapshot_index+=1
+                                diagnostic_snapshot={
+                                    "leg_number":current_leg,
+                                    "frame":frames,
+                                    "snapshot_index":diagnostic_snapshot_index,
+                                    "metrics":{},
+                                }
+                                result.setdefault(
+                                    "firmware_runtime_diagnostics",[]
+                                ).append(diagnostic_snapshot)
+                                diagnostic_pending=list(MOTION_DIAGNOSTIC_SELECTORS)
+                            if diagnostic_waiting is None and diagnostic_pending:
+                                diagnostic_waiting=diagnostic_pending.pop(0)
+                                sock.sendall(frame(
+                                    wire.CMD_GET_DIAGNOSTICS,
+                                    bytes([diagnostic_waiting[1]])))
                             now=time.monotonic()
                             if now-last_progress_report>=15.0:
                                 print(
