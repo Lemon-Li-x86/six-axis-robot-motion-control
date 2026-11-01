@@ -48,7 +48,9 @@ class RealGuiAcceptanceTests(unittest.TestCase):
                      {"event":"safe_gui_jog_finish_requested"},
                  ])
         self.assertEqual(evaluate(x, two_step=True), [])
-        self.assertNotEqual(evaluate(x), [])
+        # A normal GUI can continue using buttons. Single minimum J6 trial
+        # must NOT reject an otherwise valid additional +2deg action.
+        self.assertEqual(evaluate(x), [])
         for tamper in ("safe_gui_jog_completed", "hold_recoveries"):
             y = dict(x)
             y[tamper] = 1
@@ -56,6 +58,50 @@ class RealGuiAcceptanceTests(unittest.TestCase):
         y = dict(x)
         y["safe_gui_jog_events"] = x["safe_gui_jog_events"][:1]
         self.assertNotEqual(evaluate(y, two_step=True), [])
+
+    def test_five_successful_jogs_do_not_exhaust_gui_or_acceptance(self):
+        x = good()
+        operations = [(6, 0.5), (6, 2.0), (6, 2.0),
+                      (1, -0.5), (4, 1.0), (2, -1.5), (6, -2.0)]
+        x.update(
+            safe_gui_jog_applied=len(operations),
+            safe_gui_jog_completed=len(operations),
+            hold_recoveries=len(operations),
+            safe_gui_jog_refused=0,
+            obstacle_recovery_routes=[
+                {"completed": True, "planned_segments": 1}
+                for _ in operations],
+            safe_gui_jog_events=[
+                {"event": "safe_gui_jog_applied", "joint": joint,
+                 "displacement_deg": step}
+                for joint, step in operations
+            ] + [{"event": "safe_gui_jog_finish_requested",
+                  "completed_recoveries": len(operations)}],
+        )
+        self.assertEqual(evaluate(x, two_step=True), [])
+        self.assertEqual(evaluate(x), [])
+        x["safe_gui_jog_completed"] -= 1
+        self.assertNotEqual(evaluate(x, two_step=True), [])
+
+    def test_uploaded_windows_five_clicks_three_returns_two_refusals_must_fail(self):
+        x = good()
+        x.update(
+            safe_gui_jog_applied=3, safe_gui_jog_completed=3,
+            hold_recoveries=3, safe_gui_jog_refused=2,
+            obstacle_recovery_routes=[
+                {"completed": True} for _ in range(3)],
+            safe_gui_jog_events=[
+                {"event": "safe_gui_jog_applied",
+                 "joint": 6, "displacement_deg": v}
+                for v in (0.5, 2.0, 2.0)
+            ] + [
+                {"event": "safe_gui_jog_rejected",
+                 "reason": "not_idle_or_recovery_pending_or_limit"}
+                for _ in range(2)
+            ] + [{"event": "safe_gui_jog_finish_requested"}],
+        )
+        self.assertNotEqual(evaluate(x), [])
+        self.assertNotEqual(evaluate(x, two_step=True), [])
 
     def test_previous_bug_pass_then_refused_second_click_must_fail(self):
         x = good()
