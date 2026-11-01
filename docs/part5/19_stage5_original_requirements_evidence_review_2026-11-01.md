@@ -54,7 +54,9 @@ Monitor 任务 / GDB / .map / 丢帧 / 故障日志
 
 **已通过真实 QEMU ARM C APF/IK 物理回路**：[Actions #41265049762](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41265049762)，工件 `stage5-embedded-arm-apf-verified-physical`。实际数据：ARM 产生 1 次 C APF/IK 候选；PyBullet 全连杆扫掠采样 5 次；测得最小净距 40.95mm；UART 单独运动请求 ACK 1 次，真实运动最大关节变化 4.38°，连续 15 帧到位，最终误差 0.07°，校验错误 0。**原 PDF“嵌入固件规划模块”从代码层已满足，且已实测单步规划—运动。**
 
-**保留区别**：这份工件验证的是 **ARM 内单次规划下一点**，不是完整复杂阻挡路线全部由 ARM 独立自主规划成功。原有被阻挡场景 4/4/28/28 的整条路仍由主机侧同源 C APF 路线规划与 ARM 轨迹执行。新增 `tools/tests/run_stage5_embedded_apf_uart.py --proposals N` 的迭代候选测试必须取得独立成功工件后，才可声称多次在线调整；未经数据证明不可写“整条自动绕障路线已经固件自主完成”。
+**完整路线新增实测**：[Actions #41266022023](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41266022023)，工件 `stage5-embedded-arm-apf-verified-physical/stage5-embedded-apf-uart-full/result.json`。在带长方体的 `blocked` 场景中，从原点根据 JSON 指定的中间目标到最终目标，**ARM FreeRTOS C APF/IK 反复规划 28 次**，28 次都分别经过 PyBullet 全连杆离散预检、得到单独 UART 运动 ACK 并物理反馈到位，`route_complete=true`，最终末端目标误差 **0.7977mm**、最大六轴末段误差 **0.05°**、协议校验错误 **0**。此实测满足“固件 C APF + 静态 AABB 场景整路迭代调整与执行”的软件仿真要求。
+
+**安全与自主性边界**：场景 JSON 指定 **via（高层途经目标）**，PyBullet 掌握外部全臂真实几何并批准每一步，因此不能写“固件可以完全独立发现任意障碍、决定全局绕行策略，也不依赖外部碰撞验证”。这仍是明确设计边界，而非固件 C APF 未运行。
 
 ## 3. 5.3 性能优化：CPU、RAM/FLASH、优先级与抖动
 
