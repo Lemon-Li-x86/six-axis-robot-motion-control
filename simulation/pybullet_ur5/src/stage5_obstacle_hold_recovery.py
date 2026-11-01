@@ -25,7 +25,7 @@ JOINT_COUNT = 6
 # Only a tiny locally requested joint jog may take the full-link-tested direct
 # return when C APF declares the Cartesian goal already reached. An arbitrary
 # far-away IK branch must NEVER exploit this exceptional zero-Cartesian-leg case.
-JOINT_ONLY_RETURN_MAX_RAD = math.radians(2.0)
+JOINT_ONLY_RETURN_MAX_RAD = math.radians(JOG_MAX_DEG)
 JOINT_ONLY_RETURN_MAX_SAMPLE_RAD = math.radians(0.25)
 
 
