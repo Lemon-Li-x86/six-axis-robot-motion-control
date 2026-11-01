@@ -177,8 +177,18 @@ class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
             self.assertGreater(visual[0][7][0], 0.8)
             self.assertLess(visual[0][7][1], 0.4)
             self.assertTrue(report["direct_cartesian_segment_blocked"])
-            self.assertEqual(report["obstacle_half_extents_m"], (0.01,)*3)
+            # The JSON scene is the single geometry source. Its size may
+            # change without hard-coded duplicates in the GUI physics tests.
+            expected_half = tuple(
+                float(v) for v in original_scene["obstacle"]["half_extents_m"]
+            )
+            self.assertEqual(report["obstacle_half_extents_m"], expected_half)
             lower, upper = p.getAABB(obstacle, physicsClientId=cid)
+            for index, half_extent in enumerate(expected_half):
+                self.assertAlmostEqual(
+                    upper[index] - lower[index], 2 * half_extent, places=6)
+                self.assertAlmostEqual(
+                    visual[0][3][index], 2 * half_extent, places=6)
             center = [(lo + hi) / 2 for lo, hi in zip(lower, upper)]
             for actual, expected in zip(center, report["obstacle_center_m"]):
                 self.assertAlmostEqual(actual, expected, places=6)
