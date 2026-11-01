@@ -64,7 +64,11 @@ sys.exit(1 if failed else 0)
             continue
         }
         try {
-            $details = & $candidate -c $probe 2>&1
+            # Native PyBullet prints a build banner to stderr even on SUCCESS.
+            # With ErrorActionPreference=Stop, 2>&1 can turn that benign banner
+            # into a terminating PowerShell NativeCommandError (false negative).
+            # The probe catches import failures and prints their details on stdout.
+            $details = & $candidate -c $probe 2>$null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[Stage5] Using existing Python: $($details | Select-Object -Last 1)"
                 return $candidate
