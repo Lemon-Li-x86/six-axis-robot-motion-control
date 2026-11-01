@@ -19,6 +19,7 @@ from stage5_avoidance_preflight import (
 )
 from stage5_collision_validation import validate_joint_path, InvalidPath
 from stage5_static_obstacle_probe import Config
+from stage5_safe_gui_jog import JOG_MIN_DEG, JOG_MAX_DEG, JOG_DEG_INCREMENT
 
 JOINT_COUNT = 6
 # Only a tiny locally requested joint jog may take the full-link-tested direct
@@ -28,12 +29,63 @@ JOINT_ONLY_RETURN_MAX_RAD = math.radians(2.0)
 JOINT_ONLY_RETURN_MAX_SAMPLE_RAD = math.radians(0.25)
 
 
+def _validated_gui_jog_from_settled_hold(
+    measured: Sequence[float], goal: Sequence[float],
+    context: dict | None, hold_settle_tolerance_rad: float,
+) -> bool:
+    """Authorize ONLY a recorded, single-axis GUI jog from settled HOLD.
+
+    The existing two-degree maximum bounds the actual GUI command, not the
+    sum of that command plus normal residual position-control tracking error.
+    This exception still requires complete full-link collision preflight for
+    the return path. Arbitrary IK branches never supply valid GUI intent.
+    """
+    if (not isinstance(context, dict) or
+            not math.isfinite(hold_settle_tolerance_rad) or
+            not 0.0 <= hold_settle_tolerance_rad <
+                math.radians(JOG_MIN_DEG)):
+        return False
+    start = context.get("start_joint_rad")
+    axis = context.get("axis")
+    delta = context.get("delta_rad")
+    if (not isinstance(start, (tuple, list)) or
+            len(start) != JOINT_COUNT or
+            type(axis) is not int or not 0 <= axis < JOINT_COUNT or
+            not isinstance(delta, (float, int)) or
+            not math.isfinite(delta) or
+            not all(isinstance(v, (float, int)) and math.isfinite(v)
+                    for v in start)):
+        return False
+    magnitude = abs(math.degrees(delta))
+    if (magnitude < JOG_MIN_DEG - 1e-8 or
+            magnitude > JOG_MAX_DEG + 1e-8 or
+            abs(magnitude / JOG_DEG_INCREMENT -
+                round(magnitude / JOG_DEG_INCREMENT)) > 1e-8):
+        return False
+    # Before the click, all six joints were already within the existing
+    # physical HOLD settlement budget, not on another IK branch.
+    if max(abs(a-b) for a,b in zip(start,goal)) > (
+            hold_settle_tolerance_rad + 1e-6):
+        return False
+    predicted = list(start)
+    predicted[axis] += delta
+    # During GUI preview state is exact; live recovery may include a small
+    # physical response error, bounded by that same HOLD acceptance budget.
+    if max(abs(a-b) for a,b in zip(predicted,measured)) > (
+            hold_settle_tolerance_rad + 1e-6):
+        return False
+    return max(abs(a-b) for a,b in zip(measured,goal)) <= (
+        JOINT_ONLY_RETURN_MAX_RAD + hold_settle_tolerance_rad + 1e-6)
+
+
 def plan_obstacle_hold_recovery(
     library: Path, physics, robot: int, joints: Sequence[int],
     obstacles: Sequence[int], client: int,
     original_goal_m: Sequence[float],
     exact_goal_joint_rad: Sequence[float], route_case: str,
     *, minimum_extra_clearance_m: float = 0.0,
+    jog_context: dict | None = None,
+    hold_settle_tolerance_rad: float = 0.0,
 ) -> dict:
     """Plan from ACTUAL live joint pose, fail closed until whole-arm tested.
 
@@ -105,8 +157,14 @@ def plan_obstacle_hold_recovery(
             shortcut_cartesian=scene.get("shortcut_cartesian", False),
         )
     except CartesianGoalAlreadyReached:
-        if max(abs(a - b) for a, b in zip(current, last)) > (
-                JOINT_ONLY_RETURN_MAX_RAD + 1e-6):
+        # Generic measured-pose recovery keeps the original hard 2deg
+        # bound. A GUI-requested 2deg click can start from a settled 0.02deg
+        # tracking residual; allow this ONLY with the verified single-axis
+        # GUI intent and its pre-click HOLD pose, not a global limit change.
+        if (max(abs(a-b) for a,b in zip(current,last)) >
+                JOINT_ONLY_RETURN_MAX_RAD + 1e-6 and
+                not _validated_gui_jog_from_settled_hold(
+                    current,last,jog_context,hold_settle_tolerance_rad)):
             raise RejectedRoute(
                 "C APF zero-Cartesian-leg return too far in joint space; "
                 "refusing unchecked IK-branch jump")
