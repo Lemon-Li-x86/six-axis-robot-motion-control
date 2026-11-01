@@ -20,12 +20,23 @@
 ```powershell
 git status --short
 git fetch origin
-git worktree add ..\\stage5-acceptance origin/feat/stage5-rtos-apf-closure-20261101
-cd ..\\stage5-acceptance
+git worktree add ..\stage5-acceptance origin/feat/stage5-rtos-apf-closure-20261101
+cd ..\stage5-acceptance
 git rev-parse --short HEAD
 ```
 
-确认 HEAD 与 PR #36 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：\n\n```powershell\npowershell -ExecutionPolicy Bypass -File .\\tools\\run_stage5_embedded_apf_windows.ps1 `\n  -Python python -Qemu qemu-system-arm `\n  -TimeoutSeconds 300 `\n  -OutputDir build/stage5-windows-embedded-apf\n```\n\n此命令必须 `passed=true`、`route_complete=true`、28/28（按该场景已知成功基线）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。\n\n随后运行**一次**原始避障 + 连续多次点动的完整 GUI 仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
+确认 HEAD 与 PR #36 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
+  -Python python -Qemu qemu-system-arm `
+  -TimeoutSeconds 300 `
+  -OutputDir build/stage5-windows-embedded-apf
+```
+
+此命令必须 `passed=true`、`route_complete=true`、28/28（按该场景已知成功基线）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
+
+随后运行**一次**原始避障 + 连续多次点动的完整 GUI 仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
