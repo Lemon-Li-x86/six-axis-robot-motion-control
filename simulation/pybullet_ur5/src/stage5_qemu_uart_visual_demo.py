@@ -1272,7 +1272,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     draw_avoidance_gui_evidence(p, avoidance_report)
                 if options.gui_safe_jog:
                     from stage5_avoidance_uart_gate import load_scene
-                    from stage5_safe_gui_jog import SafeGuiJog, JOG_EXTRA_CLEARANCE_M
+                    from stage5_safe_gui_jog import (
+                        SafeGuiJog, JOG_EXTRA_CLEARANCE_M,
+                        JOG_MIN_DEG, JOG_MAX_DEG,
+                    )
                     scene, collision_policy = load_scene(plan["route_case"])
                     safe_gui_jog = SafeGuiJog(
                         p, arm, joints, safety_obstacles, client,
