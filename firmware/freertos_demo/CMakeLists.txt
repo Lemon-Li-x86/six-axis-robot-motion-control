@@ -514,6 +514,19 @@ endif()
 target_compile_definitions(freertos_demo PRIVATE
     ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=$<BOOL:${ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT}>
 )
+# Delete unreachable ARM code and unreferenced globals at link time in
+# Stage5 integration builds. Stage4 frozen target remains unchanged.
+# Test both OFF and ON with exactly equal compiler, linker and feature flags;
+# never claim memory saving without the archived ELF/.map A/B.
+option(ROBOT_ENABLE_STAGE5_LINK_GC
+    "Enable ARM -ffunction-sections/-fdata-sections/--gc-sections"
+    ${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION})
+if(ROBOT_ENABLE_STAGE5_LINK_GC)
+    target_compile_options(freertos_demo PRIVATE
+        -ffunction-sections -fdata-sections)
+    target_link_options(freertos_demo PRIVATE "-Wl,--gc-sections")
+endif()
+
 if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
     if(NOT ROBOT_ENABLE_STAGE4_TASKS OR
        NOT ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT OR
