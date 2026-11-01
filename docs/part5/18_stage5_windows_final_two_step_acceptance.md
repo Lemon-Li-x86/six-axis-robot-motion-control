@@ -2,6 +2,8 @@
 
 **本次人工验收版本**：`fix/stage5-verdict-docs-20261101`（PR #37，基于 PR #36 的 ARM RTOS APF/IK 和 PR #35 的 GUI 修复；以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
 
+> **2026-11-01 场景更新：** `blocked` 原始场景障碍物由边长 **2cm → 4cm**，其 `half_extents_m` 改为 `[0.02,0.02,0.02]`。历史 2cm 的 ARM APF **28段**只能作为旧 SHA 证据；[4cm 场景实际完整 ARM C APF 路线](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 为 **30段**且全连杆门禁通过。路段数量由新几何重新计算，**不是安全阈值或硬编码验收标准**。一/三段诊断也改为从实际场景第一个 `via` 开始，不能将另一个无途经点的直接目标试验与正式任务混为一谈。最新跨平台 GUI/Windows CI 与本机验收须以当前 HEAD 独立核对。
+
 ## 原始大纲对照
 
 | Stage5 原 PDF 要求 | 已证实范围 | 仍须独立留证 |
@@ -34,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows
   -Qemu qemu-system-arm -TimeoutSeconds 300 `
   -OutputDir build/stage5-windows-embedded-apf
 
-# 只有整路 28/28 通过，才进入人工 GUI 操作
+# 只有按当前场景真实规划的完整路线全部通过，才进入人工 GUI 操作
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
   -Python $existing311 -ExistingSitePackages $existingPackages `
   -Qemu qemu-system-arm -Stage5RouteCase blocked `
@@ -67,7 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows
   -OutputDir build/stage5-windows-embedded-apf
 ```
 
-此命令必须 `passed=true`、`route_complete=true`、28/28（按该场景已知成功基线）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
+此命令必须 `passed=true`、`route_complete=true`、当前 4cm 场景的所有实际规划路段均经过验证（Linux CI 为 30 段）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
 
 随后运行**一次**原始避障 + 连续多次点动的完整 GUI 仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
 
