@@ -72,6 +72,10 @@ HOLD_STAGNANT_PERIOD_S = 0.5
 # slowly moving C plan merely because measured joint movement is small.
 HOLD_RETRY_COOLDOWN_S = 3.0
 HOLD_MAX_REPLAN_ATTEMPTS = 3
+# Stage5 native GUI only: old clear path needs at most one correction; an
+# APF route may need one more, but EVERY corrected obstacle leg is rechecked.
+GUI_ENDPOINT_REARMS_CLEAR = 1
+GUI_ENDPOINT_REARMS_OBSTACLE = 2
 HOLD_TRACE_LIFETIME_S = 10.0
 # Log costly UART batches at most once a second. Diagnostic-only, no pacing.
 UART_BATCH_WARNING_FRAMES = 24
@@ -446,18 +450,23 @@ def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bo
 
 def small_endpoint_rearm_ready(
     sequencer, measured: Sequence[int], stable_frames: int,
-    now: float,
+    now: float, *, max_rearms: int = GUI_ENDPOINT_REARMS_CLEAR,
 ) -> bool:
-    """Bounded GUI-only recovery gate; NEVER substitutes for physical settle."""
+    """Finite, improving GUI recovery; NEVER substitutes for physical settle."""
     if (not sequencer.accepted or sequencer.done or
-            sequencer.rearms_current_segment != 0 or
+            sequencer.rearms_current_segment >= max_rearms or
             sequencer.goal is None or
             stable_frames < SETTLE_FRAME_COUNT or
             now - sequencer.requested_at < HOLD_RETRY_COOLDOWN_S):
         return False
     error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                 for a,b in zip(sequencer.goal, measured))
-    return SETTLE_TOLERANCE_DEG < error <= HOLD_DEVIATION_TRIGGER_DEG
+    if not SETTLE_TOLERANCE_DEG < error <= HOLD_DEVIATION_TRIGGER_DEG:
+        return False
+    # Every retry must measurably reduce the residual vs. the previous rearm.
+    # The UART/measurement quantum is 0.01deg; non-improving loops fail closed.
+    prior = sequencer.last_rearm_error_deg
+    return prior is None or error <= prior - 1.0 / wire.JOINT_ANGLE_SCALE
 
 
 def execute_guarded_gui_jog(
@@ -504,6 +513,7 @@ class MotionSequencer:
         self.segment_final_errors_deg: list[float] = []
         self.endpoint_rearms = 0
         self.rearms_current_segment = 0
+        self.last_rearm_error_deg: float | None = None
 
     @property
     def done(self) -> bool:
@@ -528,20 +538,31 @@ class MotionSequencer:
         self.ack_pending = True
         self.settled_frames = 0
         self.rearms_current_segment = 0
+        self.last_rearm_error_deg = None
         payload = bytes((self.sequence,)) + struct.pack(
             "<" + str(wire.JOINT_COUNT) + "h", *self.goals[self.index]
         )
         return integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload)
 
-    def reissue_current_goal_from_feedback(self, now: float) -> bytes:
-        """One explicit closed-loop correction attempt, never a fake settle.
+    def reissue_current_goal_from_feedback(
+        self, now: float, *, max_rearms: int = GUI_ENDPOINT_REARMS_CLEAR,
+        measured_error_deg: float | None = None,
+    ) -> bytes:
+        """Finite new firmware command, never a fake physical-settle event.
 
-        The firmware must replan from fresh measured feedback and return a
-        new ACK. This does not advance segment index or relax arrival checks.
+        Only the caller can authorize an APF retry after a fresh, separate
+        full-link swept-sample preflight against the live Bullet obstacle.
         """
         if (self.index < 0 or self.done or not self.accepted or
-                self.ack_pending or self.rearms_current_segment >= 1):
+                self.ack_pending or self.rearms_current_segment >= max_rearms):
             raise RuntimeError("Current segment cannot be safely reissued")
+        if measured_error_deg is not None:
+            if (not math.isfinite(measured_error_deg) or
+                    measured_error_deg <= SETTLE_TOLERANCE_DEG or
+                    (self.last_rearm_error_deg is not None and
+                     measured_error_deg >
+                        self.last_rearm_error_deg - 1.0 / wire.JOINT_ANGLE_SCALE)):
+                raise RuntimeError("Endpoint residual did not improve")
         self.sequence = (self.sequence + 1) & 0xFF
         self.requested_at = now
         self.ack_pending = True
@@ -549,6 +570,7 @@ class MotionSequencer:
         self.settled_frames = 0
         self.endpoint_rearms += 1
         self.rearms_current_segment += 1
+        self.last_rearm_error_deg = measured_error_deg
         assert self.goal is not None
         payload = bytes((self.sequence,)) + struct.pack(
             "<" + str(wire.JOINT_COUNT) + "h", *self.goal)
@@ -1872,7 +1894,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         sock.sendall(sequencer.next_request(time.monotonic()))
                                 elif (not options.headless
                                       and sequencer.accepted and not sequencer.done
-                                      and sequencer.rearms_current_segment == 0
+                                      and sequencer.rearms_current_segment <
+                                          (GUI_ENDPOINT_REARMS_OBSTACLE if safety_obstacles
+                                           else GUI_ENDPOINT_REARMS_CLEAR)
                                       and sequencer.goal is not None):
                                     # A native GUI servo's velocity caps can
                                     # leave a small, physically stationary
@@ -1880,7 +1904,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     # original 0.15deg/15-frame acceptance:
                                     # explicitly ask the *real firmware* to
                                     # replan from the current measured pose.
-                                    # One attempt only, no obstacle scenario.
+                                    # A second attempt is allowed for a
+                                    # collision-preflighted APF leg only if
+                                    # the first correction improved feedback.
                                     if (endpoint_prev_feedback is not None and
                                             max(abs(x-y) for x,y in zip(
                                                 endpoint_prev_feedback, measured)) <= 1):
@@ -1891,9 +1917,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     endpoint_error = max(abs(x-y) /
                                         wire.JOINT_ANGLE_SCALE for x,y in zip(
                                             sequencer.goal, measured))
+                                    max_endpoint_rearms = (
+                                        GUI_ENDPOINT_REARMS_OBSTACLE if safety_obstacles
+                                        else GUI_ENDPOINT_REARMS_CLEAR)
                                     if small_endpoint_rearm_ready(
                                             sequencer, measured, endpoint_stable_frames,
-                                            time.monotonic()):
+                                            time.monotonic(),
+                                            max_rearms=max_endpoint_rearms):
                                         # The obstructed APF route must NOT
                                         # inherit the clear-scene rearm
                                         # permission. Validate the entire new
@@ -1934,7 +1964,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                             measured_error_deg=endpoint_error,
                                             source="fresh_physical_feedback",
                                             full_link_rearm_gate=gate_info,
-                                            max_rearms=1)
+                                            attempt=sequencer.rearms_current_segment+1,
+                                            max_rearms=max_endpoint_rearms)
                                         endpoint_rearm_events.append(event)
                                         audit.write(json.dumps(event) + "\n")
                                         print("[SEGMENT ENDPOINT REARM] "
@@ -1945,7 +1976,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         endpoint_stable_frames = 0
                                         endpoint_prev_feedback = None
                                         sock.sendall(sequencer.reissue_current_goal_from_feedback(
-                                            time.monotonic()))
+                                            time.monotonic(),
+                                            max_rearms=max_endpoint_rearms,
+                                            measured_error_deg=endpoint_error))
                                 else:
                                     endpoint_stable_frames = 0
                                     endpoint_prev_feedback = None
