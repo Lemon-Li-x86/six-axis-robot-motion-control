@@ -181,6 +181,25 @@ class GuardedJogTests(unittest.TestCase):
                 ctl.request_ci_scripted_j6_step(2.0)
             self.assertEqual(planner.call_count, 2)
 
+    def test_five_scripted_recoveries_are_independent_of_operator_lifetime(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            for i, step in enumerate((0.5, 2.0, 2.0, 2.0, 2.0)):
+                with self.subTest(move=i+1):
+                    e = ctl.request_ci_scripted_j6_step(
+                        step, max_scripted_steps=5)
+                    self.assertEqual(e["displacement_deg"], step)
+                    self.assertEqual(ctl.applied, i+1)
+                    self.assertFalse(ctl.available)
+                    ctl.complete_recovery()
+                    self.assertTrue(ctl.available)
+                    self.assertEqual(ctl.completed, i+1)
+        ctl.request_ci_finish(expected_recoveries=5)
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.refused, 0)
+        self.assertEqual(planner.call_count, 5)
+
     def test_ci_scripted_j6_rejected_when_collision_gate_fails(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
