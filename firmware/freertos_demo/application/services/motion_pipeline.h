@@ -40,6 +40,28 @@ typedef struct {
     robot_status_t last_fault;
 } motion_stage4_diagnostics_t;
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+/* Read-only Stage5 QEMU telemetry. Never used by motion/safety decisions.
+ * Joint units: raw centidegrees, PID correction: millidegrees,
+ * limiter internal position: millicentidegrees. */
+typedef struct {
+    uint32_t rtos_tick;
+    uint32_t control_dt_us;
+    uint32_t reference_age_ticks;
+    uint32_t request_generation;
+    int32_t reference_raw[ROBOT_JOINT_COUNT];
+    int32_t feedback_raw[ROBOT_JOINT_COUNT];
+    int32_t pid_correction_millideg[ROBOT_JOINT_COUNT];
+    int32_t limiter_position_millicentideg[ROBOT_JOINT_COUNT];
+    int32_t command_raw[ROBOT_JOINT_COUNT];
+    uint8_t valid;
+} motion_stage5_control_trace_t;
+
+/* Returns the last successful control-publication snapshot atomically. */
+robot_status_t motion_pipeline_get_stage5_control_trace(
+    motion_stage5_control_trace_t *out);
+#endif
+
 /* Must be called once before vTaskStartScheduler, AFTER motor_state_init.
  * Called only when ROBOT_ENABLE_STAGE4_TASKS is enabled. No automatic move.
  */
