@@ -354,3 +354,16 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 
 - **2026-11-01 初版**：从当前真实 Git 树、PR #37（文档前 HEAD `5dcec15`）、Stage4 归档分支、Stage5 两个 CI 工件、现有 Windows 脚本与验收文档核对写成。包含真实目录与“本轮 PR 修改”标记、本机 Python 扩展兼容、当前未完成事项以及进入下一轮会话的操作规则。
 - **下次更新需填写**：新 HEAD SHA、对应 CI URL/结论、Windows `result.json` 路径及结果、GUI 五次完整操作事实、仍 OPEN 的问题、是否允许升级 Stage6。
+
+
+## 9. 5.3 最新续作（2026-11-01；请以本节的新证据替换上面旧性能快照）
+
+**最新实验事实不改变旧 Stage4 封版，也不能假设本机已经运行。** 细节报告：[5.3 重复性能 A/B 和边界](docs/part5/20_stage5_5_3_repeated_performance_evidence_2026-11-01.md)。
+
+- 修改文件：`application/tasks/monitor_task.c`、`tests/qemu_target/stage4_rtos_selftest.c`；新增 `tools/run_stage5_perf_repeats.sh`、`tools/aggregate_stage5_perf_repeats.py`、`tools/tests/test_stage5_perf_repeats.py`；修改 `.github/workflows/stage5-cpu-trace.yml`。这些是 **Stage5 QEMU 性能测量和自测**，并未更改生产 PID、速度/加速度、UART 格式和关节安全限位。
+- 关键测量根因：原 `1200ms` 健康测试结束就冻结 Timer0 抖动，但 CPU 快照继续涵盖后续故障测试。已改为同一健康阶段终点冻结 CPU/Timer0，并在性能 CI 两种配置使用 `ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=5000`。**计时缓冲仍只保留每任务最近128次**，不能宣称 CPU 和 P99 完全同长度的5秒统计。
+- [性能测试成功 Run #41308538374](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41308538374)（测量代码 SHA `e5e6dbc92449a06522dec42aafa279223b2325f1`），6 个完整交错 A/B 对；[原始工件](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41308538374/artifacts/13084018842)。
+- **可签收**：Monitor CPU 6/6 组较低，中位数 `0.05%→0.02%`；当前同提交 FLASH `106464→88600 B`、RAM `33936→33936 B`。之前 `105256→87384 B` 是另一提交的同配置 A/B，不能跨提交对比静态占用。
+- **必须保留差距**：Control P99 抖动 `0.04448→0.01978ms`（中位数），Trajectory `0.07128→0.02732ms`，各自 **5/6 组改善但 1/6 组退化**；Monitor P99 `0.03376→0.05538ms`，**5/6 组退化**。不能写“所有任务抖动持续下降”“已证明硬件 WCET”或“5.3 无保留全部完成”。5.3 已做量化优化和重现实验，但**降低控制周期抖动的普适/长期证明仍是未解决的验收边界**。
+- **接下来如果继续做 5.3**：先以新工件验证每组实际控制负载和 p99 对照，再决定是否实施独立的调度/ISR 级改动；不能仅凭某一组数据直接改变优先级、核心控制算法、QEMU Tick 频率或宽松化通过条件。新的修改要先立可复现的因果假设并独立跑同提交负载 A/B。
+- 新会话应查看当前 PR #37 HEAD/CI。此节中的 `e5e6dbc9` 是**实验提交标识**，不是保证永远有效的分支 HEAD。
