@@ -1,6 +1,6 @@
 # Stage 5 Windows 操作员验收：按钮可重复，独立 C/UART 回位
 
-**版本**：`feat/stage5-rtos-apf-closure-20261101`（PR #36，在 PR #35 的 GUI 修复之上新增固件内 APF/IK；请以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
+**本次人工验收版本**：`fix/stage5-verdict-docs-20261101`（PR #37，基于 PR #36 的 ARM RTOS APF/IK 和 PR #35 的 GUI 修复；以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
 
 ## 原始大纲对照
 
@@ -20,14 +20,14 @@
 **多 worktree 的 Python 选择（2026-11-01 修订）**：两个 Windows 验收脚本均自动检查**现有**解释器能否实际导入 NumPy 与 PyBullet（`requirements.txt` 声明了 `numpy<2`，但检查器不修改、不强制安装版本），优先尝试当前工作树的 `.venv`，再尝试 Windows `py` 已安装解释器，最后检查 `python` 命令。**不安装任何东西，不新建环境**。不要传 `-Python python` 来强制选用另一个工作树已激活的旧 `.venv`。如需坚持使用已验收过的解释器，显式传 `-Python 'C:\path\to\working\python.exe'`；指定解释器若不能导入依赖则立即终止，不会默默改用另一个版本。
 
 ```powershell
-git status --short
+git status --short  # 如有未保存修改，先停止，不能覆盖
 git fetch origin
-git worktree add ..\stage5-acceptance origin/feat/stage5-rtos-apf-closure-20261101
-cd ..\stage5-acceptance
+# 直接在已经存在的 stage5-acceptance 工作树里切到 PR #37
+git switch --detach origin/fix/stage5-verdict-docs-20261101
 git rev-parse --short HEAD
 ```
 
-确认 HEAD 与 PR #36 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：
+确认 HEAD 与 PR #37 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
@@ -70,6 +70,6 @@ Compress-Archive -Path .\build\stage5-windows-final-2step\* `
 - `Stage5 live QEMU PyBullet observer`：`native-gui-no-drag-xvfb`、`native-gui-scripted-j6-xvfb`、`native-gui-j6-two-step-xvfb` 及新增 `native-gui-j6-five-repeat-xvfb` 都必须 PASS。新增五次测试完整串行调用真实 C APF、QEMU/FreeRTOS UART、五次物理反馈回位、碰撞和时钟门禁；脚本化点击**不是** Windows 鼠标操作的替代。
 - Windows/Linux 单测、ARM 固件回归、Windows C APF DLL、两平台 QEMU 实际 UART 和 Windows 控制回位均须 PASS，且必须对应**同一提交 HEAD**。
 - 不得降低 0.15°、安全净距或修改 UR5/驱动/PID 参数来刷绿。仍保留 Stage5 原大纲 5.2/5.3 范围差距，不能把此 GUI 验收作为“完整自主固件 APF + CPU/内存优化全部完成”的证明。
-- PR #36 在最新提交 CI 与 Windows 连续至少五次成功前保持 Draft；PR #35 是下层 GUI 修复基线，`main` 与历史 Stage4 快照不改动。
+- PR #37 在最新提交 CI 与 Windows 连续至少五次成功前保持 Draft；PR #35 是下层 GUI 修复基线，`main` 与历史 Stage4 快照不改动。
 
 **签收条件**：同一代码版本的 ARM 固件内 APF 整路测试、逐连杆运行时监测、GUI 和固件回归门禁通过 + Windows 同一轮至少五次合法点动无拒绝、全部真实回位。5.3 的抖动改善仍须单独提供可重复高负载数据，否则阶段结论必须保留该性能限制，不能声称全面优化或实体工业机器人安全认证。
