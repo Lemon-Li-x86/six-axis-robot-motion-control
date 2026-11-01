@@ -71,6 +71,12 @@ def load_scene(route_case: str) -> tuple[dict, dict]:
         raise ValueError("shortcut_cartesian must be a boolean")
     if type(scene.get("automatic_bypass", False)) is not bool:
         raise ValueError("automatic_bypass must be a boolean")
+    margin = scene.get("planning_extra_clearance_mm", 0)
+    if (type(margin) not in (float, int) or not math.isfinite(margin)
+            or margin < 0):
+        raise ValueError("planning_extra_clearance_mm must be finite and nonnegative")
+    if margin and not scene.get("automatic_bypass", False):
+        raise ValueError("extra planning clearance requires automatic bypass mode")
     policy = catalog["preflight"]
     if not (math.isfinite(policy["max_joint_step_rad"]) and
             policy["max_joint_step_rad"] > 0 and
@@ -196,7 +202,9 @@ def make_avoidance_preflight(
                                 if shortcut_override is None
                                 else shortcut_override),
             minimum_full_link_clearance_m=(
-                scene["minimum_full_link_clearance_mm"] / 1000.0))
+                (scene["minimum_full_link_clearance_mm"]
+                 + scene.get("planning_extra_clearance_mm", 0.0))
+                / 1000.0))
         result.update(
             obstacle_ids=[obstacle],
             route_case=route_case,
