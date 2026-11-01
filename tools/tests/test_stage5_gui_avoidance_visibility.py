@@ -159,17 +159,33 @@ class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
             original_scene, _ = load_scene("blocked")
             sample_plan = {
                 "joint_waypoints_rad": [tuple([0.0] * 6), tuple([0.0] * 6)],
-                "static_collision_clearance_m":
-                    original_scene["minimum_full_link_clearance_mm"] / 1000.0,
+                "static_collision_clearance_m": (
+                    original_scene["minimum_full_link_clearance_mm"]
+                    + original_scene.get("planning_extra_clearance_mm", 0.0)
+                ) / 1000.0,
                 "cartesian_route_mm": [[0.0, 0.0, 0.0]],
             }
             with patch("stage5_avoidance_uart_gate._direct_is_blocked",
                        return_value=True), patch(
                 "stage5_avoidance_uart_gate.preflight_joint_avoidance",
-                return_value=sample_plan):
+                return_value=sample_plan) as planner:
                 prepare = make_avoidance_preflight(Path("unused-c-library"),
                                                     "blocked")
                 report = prepare(p, arm, joints, cid)
+            if original_scene.get("automatic_bypass", False):
+                self.assertTrue(planner.call_args.kwargs["automatic_bypass"])
+                self.assertEqual(planner.call_args.kwargs["via_points_mm"], ())
+                self.assertAlmostEqual(
+                    planner.call_args.kwargs["minimum_full_link_clearance_m"],
+                    (original_scene["minimum_full_link_clearance_mm"]
+                     + original_scene.get("planning_extra_clearance_mm", 0))
+                    / 1000.0)
+                self.assertAlmostEqual(
+                    report["static_collision_clearance_m"],
+                    original_scene["minimum_full_link_clearance_mm"] / 1000.0)
+                self.assertGreater(
+                    report["planning_static_collision_clearance_m"],
+                    report["static_collision_clearance_m"])
             obstacle = report["obstacle_ids"][0]
             visual = p.getVisualShapeData(obstacle, physicsClientId=cid)
             self.assertTrue(visual, "Red blocker must be visible in native GUI")
