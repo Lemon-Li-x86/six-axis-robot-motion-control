@@ -13,6 +13,37 @@
 
 详情见 [原大纲 24 项审计](../project_plan_progress_audit_2026-10-31.md)、[Stage5 原始 5.1–5.4 严格审计](19_stage5_original_requirements_evidence_review_2026-11-01.md)、[技术测试和性能量测](15_stage5_exit_review_2026-10-30.md)、[参数登记簿](01_parameter_register.md)。
 
+## 既有 CPython 3.11 + 旧虚拟环境扩展兼容运行（不修改任何环境）
+
+当原项目 `.venv` 的解释器是 Python 3.10，但 `.venv/Lib/site-packages` 的 NumPy 与 PyBullet 扩展实为 `cp311-win_amd64.pyd` 时，不能再用 `.venv/Scripts/python.exe` 启动仿真。**不应新建/替换该虚拟环境，也不应将系统 Python 3.11 当作已经安装所有依赖的环境。**
+
+本次 Windows 实测已确认：现有 `C:\Users\29753\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe` 添加旧 `.venv/Lib/site-packages` 到运行时 `sys.path` 后，可导入旧 NumPy 2.4.6 和 PyBullet 3.2.7。此项是**导入检查证据，不是完整场景验收**。仓库新增的 `-ExistingSitePackages` 是**显式选择项**，测试入口借助 `tools/stage5_existing_python.py` 仅在该 Python 进程中扩展导入路径，使用可被 Windows `multiprocessing.spawn` 正确导入的 GUI 模块名，不执行 pip、不改解释器、不写文件到环境目录、也不设置永久 `PYTHONPATH`。
+
+在 `stage5-acceptance` 工作树运行，先固定当前 Git HEAD；以下是人工确认后才可开始的两个实测命令：
+
+```powershell
+$existing311 = 'C:\Users\29753\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe'
+$existingPackages = 'D:\1_ToGo\Robo\code\six-axis-robot-motion-control\.venv\Lib\site-packages'
+
+# 仅导入检查，不修改依赖
+& $existing311 .\tools\stage5_existing_python.py --site-packages $existingPackages --probe
+if ($LASTEXITCODE -ne 0) { throw 'Existing dependency imports failed' }
+
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
+  -Python $existing311 -ExistingSitePackages $existingPackages `
+  -Qemu qemu-system-arm -TimeoutSeconds 300 `
+  -OutputDir build/stage5-windows-embedded-apf
+
+# 只有整路 28/28 通过，才进入人工 GUI 操作
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
+  -Python $existing311 -ExistingSitePackages $existingPackages `
+  -Qemu qemu-system-arm -Stage5RouteCase blocked `
+  -SafeJog -RequireTwoStepJog -SafeJogHoldSeconds 600 `
+  -OutputDir build/stage5-windows-final-2step
+```
+
+首次 GUI 验收仍按照下面的原始 J6 `+0.5°`、`+2°`、后续至少三次可重复点动和 `FINISH` 程序执行，不能用导入成功代替物理到位。若后续 `numpy` 2.4.6 与其他生产依赖不兼容，**记录完整错误即可**，不得更改依赖或降低安全阈值来让验收通过。
+
 ## 提交与环境预检
 
 使用已安装的 arm-none-eabi-gcc、CMake、QEMU、Python+PyBullet、Windows PowerShell。先确认本地代码没有待保存改动。**不要**在有未提交修改时执行覆盖、`reset --hard` 或清理整个 build 目录。
