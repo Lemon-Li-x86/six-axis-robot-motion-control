@@ -138,6 +138,14 @@
 #define TASK_PERIOD_MONITOR_MS \
     FW_DEFAULT_TASK_PERIOD_MONITOR_MS
 
+/* Scan all RTOS task stacks less often than the monitor tick. The scan is
+ * O(allocated stack words); high water marks cannot improve after startup,
+ * so cached minimum stack-free values remain conservative between samples.
+ * The complete interval comes from robot_defaults.json alone. */
+#define TASK_MONITOR_STACK_SCAN_INTERVAL \
+    (FW_DEFAULT_STAGE5_MONITOR_STACK_SAMPLE_MS / TASK_PERIOD_MONITOR_MS)
+
+
 
 /*
  * ProtocolTX 默认周期。
