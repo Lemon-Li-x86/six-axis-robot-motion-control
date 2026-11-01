@@ -62,7 +62,13 @@ def decode_firmware_motion_diagnostic(metric_name: str, payload: bytes) -> int:
     if len(payload) != 4:
         raise ValueError("firmware diagnostic response must be 4 bytes")
     value = struct.unpack("<I", payload)[0]
-    if metric_name == "last_fault" and value >= (1 << 31):
+    if (metric_name == "last_fault" or metric_name.startswith((
+            "trace_reference_raw_j",
+            "trace_feedback_raw_j",
+            "trace_pid_correction_millideg_j",
+            "trace_limiter_position_millicentideg_j",
+            "trace_command_raw_j",
+        ))) and value >= (1 << 31):
         value -= 1 << 32
     return value
 
@@ -80,7 +86,40 @@ MOTION_DIAGNOSTIC_SELECTORS = tuple(
         "last_fault",
         "monitoring_ticks",
     )
+) + tuple(
+    (name, selector)
+    for name, selector in wire.SIM_MOTION_DIAGNOSTIC_SELECTORS.items()
+    if name.startswith("trace_")
 )
+
+
+def summarize_stalled_control_trace(metrics: dict) -> dict | None:
+    """Group six-axis QEMU-only trace selectors; never alter motion outcome."""
+    groups=(
+        "reference_raw", "feedback_raw", "pid_correction_millideg",
+        "limiter_position_millicentideg", "command_raw",
+    )
+    scalars=(
+        "rtos_tick", "control_dt_us", "reference_age_ticks",
+        "request_generation",
+    )
+    keys=[f"trace_{name}" for name in scalars]
+    keys += [
+        f"trace_{name}_j{axis}"
+        for name in groups for axis in range(1, wire.JOINT_COUNT+1)
+    ]
+    if any(name not in metrics for name in keys):
+        return None
+    result={name:metrics[f"trace_{name}"] for name in scalars}
+    result.update({
+        name:[metrics[f"trace_{name}_j{axis}"]
+              for axis in range(1, wire.JOINT_COUNT+1)]
+        for name in groups
+    })
+    # The selector replies are acquired sequentially over UART, not at a
+    # single instant. Only interpret them for a verified stalled command.
+    result["coherent_across_axes"]=False
+    return result
 
 
 def require_runtime_full_link_clearance(
@@ -358,6 +397,11 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             diagnostic_snapshot["metrics"][name] = (
                                 decode_firmware_motion_diagnostic(name, payload))
                             diagnostic_waiting=None
+                            if not diagnostic_pending:
+                                snapshot_trace=summarize_stalled_control_trace(
+                                    diagnostic_snapshot["metrics"])
+                                if snapshot_trace is not None:
+                                    diagnostic_snapshot["control_trace"]=snapshot_trace
                     elif command==wire.CMD_JOINT_MOVE_ACK and len(payload)==2:
                         seq,status=struct.unpack("<Bb",payload)
                         if seq!=motion_seq or status!=0:
