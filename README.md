@@ -2,7 +2,7 @@
 
 基于 **ARM Cortex-M4、FreeRTOS、QEMU 和 PyBullet** 的 UR5 六轴机器人运动控制项目。使用 C 实现运动学、轨迹规划和 PID 控制，通过 QEMU 运行嵌入式固件，并在 PyBullet 中完成运动仿真与反馈验证。
 
-**当前进度（2026-11-01）：Stage 1–4 核心已验收；Stage 5 静态 C APF/IK → QEMU/FreeRTOS → UART → PyBullet 全臂闭环与 Windows 原生 J6 +0.5° 已有通过证据，旧 Linux GUI `six_axis` 三段收敛已通过受控回位复测。针对 Windows 同一轮先 +0.5° 回位、再 +2° 曾被错误拒绝的缺陷，修复位于 [PR #35](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/35)，等待独立双动作 CI 及新的 Windows 操作员验收。按 [有保留结项报告](docs/part5/17_stage5_final_acceptance_2026-10-31.md) 归档，原 PDF 要求的固件运行时完整 APF 自主规划及系统性 CPU/内存/IRQ 优化尚未无保留签收；Stage 6 搬运任务未完成。** 本项目仅为软件仿真，不使用实体机器人。
+**当前进度（2026-11-01）：Stage 1–4 核心已验收。Stage5 的控制闭环、长方体障碍的 ARM FreeRTOS 内生产 C APF/IK 28 段在线规划与逐段 PyBullet 全连杆核验、C UART PID 物理回位已获端到端通过证据；QEMU FreeRTOS/GDB CPU、抖动和 ELF .map 的同编译配置 A/B 证据也已保留，FLASH 实测裁剪 17,872B，RAM 未变。旧 GUI 的三次按钮寿命上限及虚假 PASS 已在 PR #35 修复、Linux 5 次连续 QEMU GUI CI 通过；Windows 实际鼠标交互仍须本机复测。控制周期抖动优化方向在不同 QEMU 短窗口不一致，不能无保留宣称实时性全面改善。Stage6 尚未完成。** 本项目仅软件仿真，不连接实体工业机器人。
 
 ## 项目进度
 
@@ -12,12 +12,12 @@
 | Stage 2 · 驱动与协议 | UART / Timer / GPIO 驱动、Ring Buffer、协议解析、六轴电机状态抽象 | 已完成 |
 | Stage 3 · 运动学 | UR5 正逆运动学、IK 选解、连续角处理、关节限位 | 已完成 |
 | Stage 4 · 运动控制 | 三次/五次多项式、梯形速度、笛卡尔直线/圆弧轨迹、六轴增量式 PID、FreeRTOS 控制任务 | 核心验收通过，封版候选 |
-| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 GUI 3/3 修复 CI 已通过，PR #35 双动作 Windows +0.5°/+2° 待本机复验，原 PDF 5.2/5.3 有实现缺口 |
+| Stage 5 · 系统集成 | ARM FreeRTOS 真 C APF/IK 28/28、PyBullet 全连杆/UART/PID；GDB CPU/抖动和 ARM map A/B；Windows GUI 连续点动 | **软件仿真核心闭环与静态整路避障通过**；CPU/FLASH优化量化通过；控制抖动稳定改善和 Windows 真人交互待严格签收 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
 **第五阶段原始 PDF 严格收尾审查（2026-11-01）**：新增 [5.1–5.4 逐条实现、真实 QEMU UART APF、FreeRTOS CPU/抖动与 ARM .map A/B 报告](docs/part5/19_stage5_original_requirements_evidence_review_2026-11-01.md)，代码在 [PR #36](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/36)。ARM 内 C APF/IK 已在真实 FreeRTOS 轨迹任务执行，先返回候选，再经 PyBullet 全连杆门禁授权原有 C PID 物理运动。ARM 单步、连续三次及给定静态 `blocked` 场景**整路 28/28 段固件 C APF/IK 规划→全连杆核验→UART C PID 到位**已有真实成功工件（[整路 CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41266022023)）；控制抖动长期可重复改善仍缺一致证据，不得虚构 WCET 或实体安全认证。原生 GUI 连续五次使用与现场记录见 Stage5 验收指南；无实体机器人硬件安全认证。**
 
-**请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。Stage5 最后一次 Windows 原生 GUI 验收请按 **[J6 0.5° 后再 2° 双操作员验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md)** 执行，同一轮运行必须两次真实 C/UART 回位，不能以 0.5° 成功掩盖 2° 被拒绝。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
+**请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。Stage5 Windows 连续五次操作员 GUI 验收请按 **[J6 0.5°、2° 和更多重复点动验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md)** 执行，同一轮运行必须两次真实 C/UART 回位，不能以 0.5° 成功掩盖 2° 被拒绝。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
 
 ## 系统架构
 
