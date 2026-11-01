@@ -43,6 +43,9 @@ on:
       - 'docs/part5/18_stage5_windows_final_two_step_acceptance.md'
       - 'README.md'
       - 'tools/tests/test_readme_links.py'
+      - 'tools/stage5_existing_python.py'
+      - 'tools/tests/test_stage5_existing_python.py'
+      - 'tools/run_stage5_embedded_apf_windows.ps1'
       - 'simulation/pybullet_ur5/src/qemu_uart_receiver.py'
   pull_request:
     branches: [main]
@@ -71,6 +74,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
           python -m unittest discover -s tools/tests -p 'test_readme_links.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_existing_python.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
