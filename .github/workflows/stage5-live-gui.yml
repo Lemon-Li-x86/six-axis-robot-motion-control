@@ -424,6 +424,46 @@ jobs:
             build/stage5-embedded-apf-uart-full/*
           if-no-files-found: ignore
 
+  windows-embedded-apf-first-leg-diagnostic:
+    # Windows integration regression: deliberately report real FAIL if the
+    # reference/PID/limiter trace does not physically settle, preserving logs.
+    # Ephemeral GitHub runner packages are unrelated to the user's local venv.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+      - name: Install QEMU and pre-existing user-compatible Bullet ABI on CI
+        shell: pwsh
+        run: |
+          choco install qemu --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "QEMU install failed" }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+          python -m pip install numpy==2.4.6 pybullet==3.2.7
+          if ($LASTEXITCODE -ne 0) { throw "CI PyBullet wheel install failed" }
+      - name: Build QEMU FreeRTOS firmware
+        shell: pwsh
+        run: |
+          cmake --preset stage5-live-uart
+          if ($LASTEXITCODE -ne 0) { throw "Configure failed" }
+          cmake --build --preset stage5-live-uart
+          if ($LASTEXITCODE -ne 0) { throw "Firmware build failed" }
+      - name: Capture Windows first-leg C control trace with actual QEMU
+        shell: pwsh
+        run: |
+          python tools/tests/run_stage5_embedded_apf_uart.py --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf --timeout-s 70 --proposals 1 --output-dir build/stage5-windows-arm-control-trace
+          if ($LASTEXITCODE -ne 0) { throw "Embedded APF physical verdict FAIL (trace retained)" }
+      - name: Preserve Windows ARM trace even when first-leg verdict fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-windows-arm-control-trace
+          path: build/stage5-windows-arm-control-trace/*
+          if-no-files-found: ignore
+
   native-firmware-regression:
     runs-on: ubuntu-latest
     steps:
