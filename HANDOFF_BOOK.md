@@ -4,7 +4,7 @@
 >
 > 最新操作入口：[README](README.md) · [Stage5 Windows 操作员验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md) · [Stage5 原始要求审计](docs/part5/19_stage5_original_requirements_evidence_review_2026-11-01.md) · [参数登记簿](docs/part5/01_parameter_register.md) · [Stage5 Issue Log](docs/part5/02_integration_issue_log.md)。
 
-> **场景变更（2026-11-01，注意历史数值已过期）**：当前 `simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json` 的 `blocked` 障碍物从 2cm 边长放大到 **4cm**（`half_extents_m=[0.02,0.02,0.02]`）。历史 2cm 场景的 **28/28** 是旧提交证据，不是新的固定段数。[首次4cm ARM C APF 完整路线测试](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 实际 **30段**、`route_complete=true` 且全连杆门禁通过；该旧CI有测试曾写死2cm而失败，相关测试已按场景 JSON 调整。短程 C APF 诊断应从配置的第一段 `via` 开始，而非绕过场景定义直接朝最后终点规划；若未通过安全门禁必须拒绝动作。后续同提交跨平台完整 CI 状态需重新核查。保留原来的真实物理日志，不修改 PID、APF安全净距或固件限位。
+> **最新 blocked 场景与真实 CI 边界（2026-11-01）**：最初 2cm 边长障碍是历史 **28/28** 段；放大到 4cm 后，ARM 内 C APF 重新规划为 **30/30** 段并通过全连杆门禁（[Actions #41311516679](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679)），但原生 GUI 的真实运动期间有一次物理净距约9.4–9.8mm，低于不变的10mm要求，**因此4cm整体不合格，不能冒称 Stage5 全绿**。当前原始场景已试改为 **3cm**，`half_extents_m=[0.015,0.015,0.015]`，需查看[3cm完整跨平台 CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 与本机日志。旧二/四厘米的28/30路段不是固定验收阈值，路线取当前 JSON 实际计算结果。另修复 GUI 可视/碰撞几何测试的旧2cm硬编码；一/三提案短测须从场景真实第一个via起步，不得为绕过碰撞门禁改变安全阈值。
 
 ## 0. 给接手者的十条硬约束
 
@@ -38,7 +38,7 @@
 | [Stage5 CI：5dcec15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41305051218) | **completed / success** | 这是 README 更新后、创建本书前的 CI 记录 |
 | [Native firmware CI：5dcec15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41305055339) | **completed / success** | 与同 SHA 对齐 |
 | [Stage5 控制修复 CI：23d1faa](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41299105613) | **13/13 Jobs PASS** | 已含 Linux/Windows 集成、UART/ARM APF、GUI 回归 |
-| Windows 本机最终验收 | **尚未在当前控制修复提交取得新的完整 PASS 记录** | 需要用户本机按当前 JSON 动态规划完整路线（现4cm CI为30段）+ 人工 GUI 五次连续回位 |
+| Windows 本机最终验收 | **尚未在当前控制修复提交取得新的完整 PASS 记录** | 需要用户本机按当前 JSON 动态规划完整路线（当前3cm待核验，4cm固件30段但GUI未过）+ 人工 GUI 五次连续回位 |
 | [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) | 2026-11-01 检索时仍 **open** | 旧 `six_axis` 首段不收敛历史 Issue；现有 CI 修复成功≠Issue 管理状态已关闭 |
 | Stage6 | 尚未实现/验收最终搬运作业 | 不要把 Stage5 全绿等同整个项目完工 |
 
@@ -214,7 +214,7 @@ GUI/静态场景 → 宿主同源 C APF/IK 候选
              → 人工 SAFE JOG → 独立安全批准及真实 C/UART 回位
 ```
 
-### 路径 B：固件内 C APF 完整路线（旧2cm 28段，新4cm 30段）
+### 路径 B：固件内 C APF 完整路线（旧2cm 28段；4cm固件30段但GUI净距未过；目前3cm待核验）
 
 ```text
 PyBullet 当前真实六轴反馈 + 静态 AABB / 目标
@@ -256,7 +256,7 @@ PyBullet 当前真实六轴反馈 + 静态 AABB / 目标
 
 ### 4.2 保留项（不要涂绿）
 
-- Windows 本机**人工**原生 GUI：先完成当前场景对应的真实 ARM 整路（4cm场景实测30段），然后原始主机 APF 4/4、J6 `+0.5°`、`+2.0°`、另外至少三次合法点动（总计至少五次），每次等待 `RETURN COMPLETE`，最终点击 `SAFE JOG FINISH/EXIT`；记录实际点击数、`safe_gui_jog_refused=0`、物理收敛、零故障。此项目**暂未在当前版本完成**。
+- Windows 本机**人工**原生 GUI：先完成当前场景对应的真实 ARM 整路（目前3cm路段数待核验），然后原始主机 APF 4/4、J6 `+0.5°`、`+2.0°`、另外至少三次合法点动（总计至少五次），每次等待 `RETURN COMPLETE`，最终点击 `SAFE JOG FINISH/EXIT`；记录实际点击数、`safe_gui_jog_refused=0`、物理收敛、零故障。此项目**暂未在当前版本完成**。
 - Stage5 原 5.3 的“稳定降低控制周期 jitter”：多轮 QEMU 短窗口 A/B 有改善也有退化，尚无同负载可重复的长期改善证据、实体 WCET 或硬件保证。FLASH 基线 `105256 → 87384 B`、RAM `33796 → 33796 B`，仅可如实说明这些指标。
 - [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) 仍 open；后续若关闭，应附同 SHA 可复现测试/证据，不要凭一次成功自动关闭。
 - **Stage6** 尚未实现：虚拟抓取/放置、原点→抓取→避障→放置→返回、多场景故障、长时运行、交付归档。接口要求见 [Stage6 设计契约](docs/part6/00_stage6_interface_and_acceptance_contract.md)。
@@ -311,7 +311,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 
 ### 5.3 成功判据与故障证据
 
-- `run_stage5_embedded_apf_windows.ps1`：`result.json` 必须 `passed=true`、`route_complete=true`、已批准航段均真实 ACK + 物理到位、`full_link_safe=true`、`joint_motion_submitted_only_after_gate=true`、`uart_checksum_errors=0`、`runtime_full_link_queries >= 7*joint_motion_acks`。旧2cm场景历史验收为28段；最新4cm场景已在Linux CI完成30段，实际段数随规划结果变化。
+- `run_stage5_embedded_apf_windows.ps1`：`result.json` 必须 `passed=true`、`route_complete=true`、已批准航段均真实 ACK + 物理到位、`full_link_safe=true`、`joint_motion_submitted_only_after_gate=true`、`uart_checksum_errors=0`、`runtime_full_link_queries >= 7*joint_motion_acks`。旧2cm历史验收为28段；4cm在Linux固件CI完成30段但GUI违反10mm净距；当前3cm重新验收，段数随规划结果变化。
 - `run_stage5_live_windows.ps1`：必须人工看见原始 4/4 航点完成、按钮 READY、每次独立回位与最终 FINISH；拒绝/未完成的任何一次点动不能获得 PASS。已配置的默认连续稳定收敛判据为 0.15°、15 个反馈帧。
 - 失败优先收集：`build/<output>/result.json`、`worker.log`、`worker_exit.json`（如有）、`joint_trace.csv`、`uart_live.jsonl`、`qemu_stderr.log` 和程序终端输出。不能只报告“exit 1”。
 - GUI 有 **真实操作** 和 CI 下 **自动脚本点击** 两种不同验证，不得互相冒充。既有脚本可能在 PASS 后生成 ZIP，失败时不能把旧 ZIP 当作新结果。
