@@ -469,6 +469,16 @@ jobs:
         shell: pwsh
         run: |
           . .\tools\resolve_stage5_python.ps1
+          # Regression for the user's registered uv/Astral interpreter format.
+          $astral = 'C:\Users\Example\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe'
+          $astralLine = '-V:Astral/CPython3.11.15 ' + $astral
+          if ((Get-Stage5PythonPathFromLauncherLine -Line $astralLine) -ne $astral) {
+            throw "Astral/uv launcher path was not recognized"
+          }
+          $active = 'D:\repo\.venv\Scripts\python.exe'
+          if ((Get-Stage5PythonPathFromLauncherLine -Line ('*               ' + $active)) -ne $active) {
+            throw "Active virtualenv launcher path was not recognized"
+          }
           $python = Resolve-Stage5Python -RepoRoot (Get-Location).Path
           & $python -c "import sys, numpy, pybullet; print('resolver interpreter OK:', sys.executable)"
           if ($LASTEXITCODE -ne 0) { throw "Selected Python cannot import simulation dependencies" }
