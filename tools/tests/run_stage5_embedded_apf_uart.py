@@ -559,6 +559,10 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
         if qemu.poll() is None: qemu.terminate()
         try: qemu.wait(timeout=3)
         except subprocess.TimeoutExpired: qemu.kill()
+        if not result["passed"] and result.get("firmware_runtime_diagnostics"):
+            snapshots=result["firmware_runtime_diagnostics"]
+            print("[Stage5] ARM control trace on failure:",
+                  json.dumps(snapshots,ensure_ascii=False),flush=True)
         (output_dir/"result.json").write_text(
             json.dumps(result,indent=2),encoding="utf-8")
     return result
