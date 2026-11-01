@@ -79,6 +79,17 @@ static void geometric_bypass_candidates(void)
             &vias[i],&goal,&box,1U,apf.clearance_mm,&blocked)==ROBOT_STATUS_OK);
         CHECK(blocked==0U);
     }
+    /* Enlarging the obstacle changes the candidates, no fixed pose reused. */
+    {
+        const robot_apf_aabb_t larger={{{-110.0,-20.0,-20.0}},
+                                       {{-70.0,20.0,20.0}}};
+        const robot_apf_point_t old_first=vias[0];
+        CHECK(robot_apf_generate_bypass_vias(
+            &start,&goal,&larger,1U,&apf,vias,
+            ROBOT_APF_BYPASS_MAX_CANDIDATES,&count)==ROBOT_STATUS_OK);
+        CHECK(count>0U);
+        CHECK(vias[0].mm[2]>old_first.mm[2]);
+    }
     /* A wider box must permit farther geometry-derived detour rings.
      * This is NOT a safety bypass: all links remain independently gated. */
     {
@@ -93,17 +104,6 @@ static void geometric_bypass_candidates(void)
                             6.0*apf.maximum_step_mm) found_far=1U;
         }
         CHECK(found_far==1U);
-    }
-    /* Enlarging the obstacle changes the candidates, no fixed pose reused. */
-    {
-        const robot_apf_aabb_t larger={{{-110.0,-20.0,-20.0}},
-                                       {{-70.0,20.0,20.0}}};
-        const robot_apf_point_t old_first=vias[0];
-        CHECK(robot_apf_generate_bypass_vias(
-            &start,&goal,&larger,1U,&apf,vias,
-            ROBOT_APF_BYPASS_MAX_CANDIDATES,&count)==ROBOT_STATUS_OK);
-        CHECK(count>0U);
-        CHECK(vias[0].mm[2]>old_first.mm[2]);
     }
 }
 static void bypass_rejects_unsupported_or_invalid_without_writing_buffer(void)
