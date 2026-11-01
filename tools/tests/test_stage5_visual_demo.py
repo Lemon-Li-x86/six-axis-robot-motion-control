@@ -34,6 +34,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
     assess_clock_alignment,
+    assess_captured_clock_alignment,
     assess_monitor_clock_window,
     joint_feedback_frame,
     canonical_physical_feedback,
@@ -226,6 +227,50 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertGreater(ratio, 3.0)
         self.assertEqual(assess_clock_alignment(None, 100, 0.020),
                          (None, False))
+
+    def test_delayed_uart_diagnostics_use_paired_physics_epoch(self) -> None:
+        # Reproduced from failing Linux run 41296865567. Three segments all
+        # settled with zero RTOS faults, but 50+ later diagnostics still
+        # advanced PyBullet targets. Old calculation compared 345 planning
+        # samples from near frame 690 with final frame 972, a false failure.
+        for final_frames in (972, 937):
+            stale_ratio, stale_passed = assess_clock_alignment(
+                345, final_frames, 0.020)
+            self.assertFalse(stale_passed)
+            self.assertLess(stale_ratio, 0.75)
+            captured_ratio, captured_passed = assess_captured_clock_alignment(
+                (345, 690), 0.020)
+            self.assertTrue(captured_passed)
+            self.assertAlmostEqual(captured_ratio, 1.0)
+
+        # A monitor tick near frame 735 is NOT comparable to a later
+        # final frame 972. Matching capture epochs avoids false skew.
+        baseline = (13, 118)
+        stale, stale_passed = assess_monitor_clock_window(
+            baseline, 75, 972, 0.1)
+        self.assertFalse(stale_passed)
+        self.assertTrue(assess_monitor_clock_window(
+            baseline, 75, 735, 0.1)[1])
+        # GUI observed 28 monitor ticks near frame 90 and 93 near frame 724.
+        self.assertTrue(assess_monitor_clock_window(
+            (28, 90), 93, 724, 0.1)[1])
+
+    def test_missing_or_unequal_epoch_still_fails_closed(self) -> None:
+        self.assertEqual(
+            assess_captured_clock_alignment(None, 0.020), (None, False))
+        for samples, frames, expected_pass in (
+            (345, 690, True),
+            (345, 972, False),
+            (345, 100, False),   # Guest time advances much faster than Bullet.
+            (0, 690, False),
+            (345, 0, False),
+        ):
+            with self.subTest(samples=samples, frames=frames):
+                ratio, passed = assess_captured_clock_alignment(
+                    (samples, frames), 0.020)
+                self.assertEqual(passed, expected_pass)
+                if expected_pass:
+                    self.assertAlmostEqual(ratio, 1.0)
 
     def test_gui_native_substeps_preserve_physics_interval_and_reduce_api_calls(self) -> None:
         """Native GUI gets one API call per UART frame, with 1ms internal steps."""
