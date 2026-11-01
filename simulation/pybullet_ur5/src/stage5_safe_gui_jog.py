@@ -156,6 +156,9 @@ class SafeGuiJog:
         if self.available or self.completed >= self.applied:
             raise RuntimeError("Safe jog recovery completion without an in-flight jog")
         self.completed += 1
+        # A completed C/UART physical return consumes its one-shot GUI
+        # authorization. It must not authorize a later unrelated disturbance.
+        self.last_authorized_jog = None
         self.available = self.applied < JOG_MAX_SUCCESSES
 
     def status_text(self, done: bool) -> str:
