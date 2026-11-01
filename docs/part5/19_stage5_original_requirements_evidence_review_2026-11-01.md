@@ -110,6 +110,43 @@ GDB 在 QEMU ARM 固件读取 FreeRTOS task handle、任务 CPU 占比、Timer0 
 
 根因与修复细节见 [项目 Stage5 问题追踪](02_integration_issue_log.md)。
 
+## 5. Windows 本机一次性仿真验收命令
+
+在 PowerShell 打开的正确仓库中，**先运行 `git status --short` 确认本地无未保存修改**。保留原分支，可在独立 worktree 检查本阶段：
+
+```powershell
+git fetch origin
+git worktree add .stage5-final origin/feat/stage5-rtos-apf-closure-20261101
+cd .stage5-final
+git rev-parse --short HEAD
+```
+
+**（A）非交互式固件内 C APF：完整静态长方体绕行 28 段；QEMU ARM/FreeRTOS、逐段 PyBullet 全连杆门禁、真实 C/UART 和物理到位：**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\\tools\\run_stage5_embedded_apf_windows.ps1 `
+  -Python python `
+  -Qemu qemu-system-arm `
+  -TimeoutSeconds 300 `
+  -OutputDir build/stage5-windows-embedded-apf
+```
+
+要求 `result.json` 的 `passed=true`、`route_complete=true`、`joint_motion_acks=new_apf_proposals`，全部 `approved_legs[].settled=true`，`uart_checksum_errors=0`，最终 `final_cartesian_error_mm` 小于场景 C APF tolerance + 1mm（数值上真实 CI 为 0.80mm）。完整 PASS 自动打包 `build/stage5-windows-embedded-apf.zip`。
+
+**（B）交互式 Windows GUI：等待旧静态场景 4/4 到位，然后 J6 +0.5° 回位→+2° 回位，再继续至少三次合法按钮并分别等待 RETURN COMPLETE，最后点击 FINISH。**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\\tools\\run_stage5_live_windows.ps1 `
+  -Python python `
+  -Qemu qemu-system-arm `
+  -Stage5RouteCase blocked `
+  -SafeJog -RequireTwoStepJog `
+  -SafeJogHoldSeconds 600 `
+  -OutputDir build/stage5-windows-final-2step
+```
+
+此 GUI 路径按设计仍使用主机同源 C APF 整条路，**不能拿 GUI 路径的结果替换（A）真实 ARM 内 APF 的工件**；（A）也不能代替（B）的真人鼠标交互验证。所有失败日志在 `build/` 下，不删除或用“跳过碰撞检查”制造 PASS。切记本仓库是软件仿真，**这些命令不能直接驱动实体机器人的伺服电机**。
+
 ## 5. 严格签收表和最终交付
 
 | 原 PDF 核心要求 | 当前已完成并有证据 | 无保留签收所缺条件 |
