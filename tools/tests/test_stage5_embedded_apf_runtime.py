@@ -28,11 +28,11 @@ class FirmwareDiagnosticDecodingTests(unittest.TestCase):
 
     def test_unsigned_counters_and_signed_last_fault(self):
         self.assertEqual(decode_firmware_motion_diagnostic(
-            "controller_steps", b"\\x34\\x12\\x00\\x00"), 4660)
+            "controller_steps", bytes.fromhex("34120000")), 4660)
         self.assertEqual(decode_firmware_motion_diagnostic(
-            "last_fault", b"\\xff\\xff\\xff\\xff"), -1)
+            "last_fault", bytes.fromhex("ffffffff")), -1)
         with self.assertRaisesRegex(ValueError, "4 bytes"):
-            decode_firmware_motion_diagnostic("last_fault", b"\\x01")
+            decode_firmware_motion_diagnostic("last_fault", bytes.fromhex("01"))
 
 
 class MotionDiagnosticTests(unittest.TestCase):
