@@ -9,7 +9,9 @@ param(
     [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
     [switch]$RawRoute,
     [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn",
-    [switch]$SafeJog
+    [switch]$SafeJog,
+    # Stage5 final user-visible acceptance: real J6 +0.5 followed by +2.
+    [switch]$RequireTwoStepJog
 )
 $ErrorActionPreference = "Stop"
 if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
