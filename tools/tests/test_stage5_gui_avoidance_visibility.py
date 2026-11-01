@@ -223,8 +223,12 @@ class Stage5GuiAvoidanceSafetyTests(unittest.TestCase):
         self.assertEqual(larger["obstacle"]["half_extents_m"],
                          [0.025, 0.025, 0.025])
         self.assertEqual(larger["goal_offset_mm"], baseline["goal_offset_mm"])
-        self.assertEqual(larger["obstacle"]["center_offset_ee_mm"],
-                         baseline["obstacle"]["center_offset_ee_mm"])
+        self.assertEqual(larger["obstacle"]["center_offset_ee_mm"][0],
+                         baseline["obstacle"]["center_offset_ee_mm"][0])
+        # Lateral shift is an experimental *placement*, not a fake via.
+        # The direct EE line still crosses the physical 5 cm obstacle.
+        self.assertLess(abs(larger["obstacle"]["center_offset_ee_mm"][1]),
+                        larger["obstacle"]["half_extents_m"][1] * 1000.0)
         self.assertTrue(larger["expect_direct_blocked"])
         self.assertTrue(larger["automatic_bypass"])
         self.assertNotIn("via_offsets_ee_mm", larger)

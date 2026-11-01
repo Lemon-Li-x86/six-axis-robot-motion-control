@@ -85,7 +85,7 @@
       "obstacle": {
         "center_offset_ee_mm": [
           -90,
-          0,
+          12.5,
           0
         ],
         "half_extents_m": [

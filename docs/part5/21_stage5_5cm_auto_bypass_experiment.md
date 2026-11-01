@@ -1,6 +1,6 @@
 # Stage5 5 cm 自动绕行实验（不替换已验收 3 cm 基线）
 
-本实验始于已验收的 `ab2efaf`（PR #37）代码，独立分支 `experiment/stage5-5cm-auto-bypass-20261101`。原 `blocked` 仍为 3 cm；新增 `blocked_large` 立方体边长为 **5 cm**，中心和起终点均与基线一致。
+本实验始于已验收的 `ab2efaf`（PR #37）代码，独立分支 `experiment/stage5-5cm-auto-bypass-20261101`。原 `blocked` 仍为 3 cm；新增 `blocked_large` 立方体边长为 **5 cm**，起终点和沿程中心位置与基线一致；为了保持全连杆可行空间，障碍物向 EE 的 +Y 方向偏移 12.5 mm，仍实际截断起终点直线。
 
 - 单一配置来源：`simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json`。
 - 不设置 `via_offsets_ee_mm`。GUI 通过 C `robot_apf_generate_bypass_vias` 生成候选，再用真实 C APF/IK 与 PyBullet 全连杆预检逐条否决或许可。
@@ -41,3 +41,7 @@ CI：独立 `Stage5 experimental 5cm obstacle` 工作流使用 Linux QEMU + 原�
 首次 [Linux 5 cm 实机物理仿真](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41318424618) **FAIL**：原 C 只找到 8 条几何候选，全部由原有全连杆 13 mm 规划门禁拒绝。测试中存在 12.967 mm 的近门槛距离，**不得放松门槛或报告成功**。
 
 第二轮只扩大 C 几何绕行搜索：每个侧向从 3 圈扩至 5 圈（查询 C 中单一容量声明），新增远距离候选仍必须逐条通过生产 C APF/IK、全连杆与真实 UART。独立 CI 结论决定 5 cm 是否可运行。
+
+## 位置诊断结论（仅预检，尚非实际到位证明）
+
+[无动作的 Bullet DIRECT 扫描](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41319131531) 对 15 个 5cm 障碍位置运行真实 C APF/IK 及全连杆 13mm 预检，**仅 `center_offset_ee_mm=[-90,12.5,0]` 通过**（选中第 3 个 C 几何候选，规划最小净距约 13.0006 mm）。原来的 [-90,0,0] 位置 16 条候选仍全部被拒。该位置变化仅编辑场景 JSON，保持尺寸、算法参数、10mm 运行时要求及 3mm 规划余量不变；必须继续进行完整 QEMU/ARM UART/PyBullet 物理执行验证。
