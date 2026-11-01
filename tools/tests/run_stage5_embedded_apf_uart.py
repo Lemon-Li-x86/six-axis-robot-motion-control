@@ -32,7 +32,10 @@ from stage4_dynamic_closed_loop import (  # noqa: E402
 from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
-def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
+def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
+        *, required_proposals: int = 1) -> dict:
+    if not isinstance(required_proposals, int) or not 1 <= required_proposals <= 6:
+        raise ValueError("on-firmware APF integration step count must be 1..6")
     import pybullet as p
     scene, policy = load_scene("blocked")
     box = scene["obstacle"]
@@ -48,10 +51,22 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
     apf_fields = ("attraction_gain", "repulsion_gain",
                   "influence_distance_mm", "clearance_mm",
                   "maximum_step_mm", "goal_tolerance_mm")
-    proposal_payload = struct.pack(
-        "<B9h6f", 51, *offsets, *bounds_min, *bounds_max,
-        *(float(apf[name]) for name in apf_fields))
-    assert len(proposal_payload)==43
+    # Each request carries an offset relative to the *current* physical EE;
+    # keep both the static world obstacle and absolute Cartesian goal fixed.
+    # The host does not calculate APF forces, C IK branches or trajectories.
+    def apf_payload(seq: int, current_ee, absolute_goal, obstacle_center):
+        goal_delta=[round((absolute_goal[i]-current_ee[i])*1000)
+                    for i in range(3)]
+        lo=[round((obstacle_center[i]-box["half_extents_m"][i]-
+                   current_ee[i])*1000) for i in range(3)]
+        hi=[round((obstacle_center[i]+box["half_extents_m"][i]-
+                   current_ee[i])*1000) for i in range(3)]
+        values=(*goal_delta,*lo,*hi)
+        if any(not -32768 <= v <= 32767 for v in values):
+            raise ValueError("obstacle/goal offsets exceed explicit UART i16 mm range")
+        return struct.pack(
+            "<B9h6f", seq, *values,
+            *(float(apf[name]) for name in apf_fields))
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir/"result.json").unlink(missing_ok=True)
     port = vacant_tcp_port()
@@ -63,7 +78,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
     client = -1
     result = {
         "passed": False, "scope": "ARM_FreeRTOS_C_APF_IK_UART_Bullet_full_link",
-        "new_apf_proposals": 0, "proposal_status": None,
+        "new_apf_proposals": 0, "required_apf_proposals": required_proposals,
+        "proposal_status": None, "approved_legs": [],
         "joint_motion_acks": 0, "physical_settled_frames": 0,
         "full_link_safe": False, "joint_motion_submitted_only_after_gate": False,
         "uart_checksum_errors": 0,
@@ -91,6 +107,7 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
                               computeForwardKinematics=True,
                               physicsClientId=client)[4]
             box_center=[ee[i]+center_mm[i]/1000 for i in range(3)]
+            absolute_goal=[ee[i]+offsets[i]/1000 for i in range(3)]
             shape=p.createCollisionShape(
                 p.GEOM_BOX,halfExtents=box["half_extents_m"],
                 physicsClientId=client)
@@ -100,6 +117,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
             parser=FrameStream()
             feedback_acks=0
             proposal_sent=False
+            proposal_seq=51
+            motion_seq=52
             move_sent=False
             move_ack=None
             candidate=None
@@ -126,18 +145,23 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
                         feedback_acks+=1
                         if feedback_acks>=3 and not proposal_sent:
                             # This is the ONLY source of the APF/IK waypoint.
+                            current_ee=p.getLinkState(
+                                arm,p.getNumJoints(arm,physicsClientId=client)-1,
+                                computeForwardKinematics=True,
+                                physicsClientId=client)[4]
                             sock.sendall(frame(
                                 wire.CMD_REQUEST_APF_JOINT_PROPOSAL,
-                                proposal_payload))
+                                apf_payload(proposal_seq,current_ee,
+                                            absolute_goal,box_center)))
                             proposal_sent=True
                     elif (command==wire.CMD_APF_JOINT_PROPOSAL_RESPONSE and
                           len(payload)==27):
                         seq,status,*values=struct.unpack("<Bb3f6hB",payload)
-                        if seq!=51 or status!=0:
+                        if seq!=proposal_seq or status!=0:
                             raise RuntimeError(
                                 f"ARM C APF/IK rejected proposal {seq=} {status=}")
-                        if result["new_apf_proposals"]!=0:
-                            raise RuntimeError("Unexpected duplicate C APF response")
+                        if move_sent:
+                            raise RuntimeError("Unexpected APF proposal while motion active")
                         xyz=values[:3]
                         candidate=tuple(int(x) for x in values[3:9])
                         reached=int(values[9])
@@ -156,12 +180,20 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
                             maximum_samples=policy["max_collision_samples"],
                             physics_client_id=client)
                         result.update(
-                            new_apf_proposals=1, proposal_status=status,
+                            new_apf_proposals=result["new_apf_proposals"]+1,
+                            proposal_status=status,
                             proposed_joint_raw=list(candidate),
                             proposed_cartesian_mm=list(xyz),
                             proposal_goal_reached=bool(reached),
                             full_link_gate=safe,
                         )
+                        result["approved_legs"].append({
+                            "proposal_seq":proposal_seq,
+                            "motion_seq":motion_seq,
+                            "target_raw":list(candidate),
+                            "full_link_gate":safe,
+                            "ack":False,"settled":False,
+                        })
                         if not safe["passed"]:
                             raise RuntimeError("ARM proposed path fails full-link gate")
                         if move_sent:
@@ -169,14 +201,15 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
                         result["joint_motion_submitted_only_after_gate"]=True
                         sock.sendall(frame(
                             wire.CMD_REQUEST_JOINT_MOVE,
-                            bytes([52])+struct.pack("<6h",*candidate)))
+                            bytes([motion_seq])+struct.pack("<6h",*candidate)))
                         move_sent=True
                     elif command==wire.CMD_JOINT_MOVE_ACK and len(payload)==2:
                         seq,status=struct.unpack("<Bb",payload)
-                        if seq!=52 or status!=0:
+                        if seq!=motion_seq or status!=0:
                             raise RuntimeError(
                                 f"ARM rejected full-link-approved waypoint: {seq=} {status=}")
                         result["joint_motion_acks"]+=1
+                        result["approved_legs"][-1]["ack"]=True
                         move_ack=status
                     elif command==wire.CMD_SET_JOINT_TARGETS and len(payload)==12:
                         values=struct.unpack("<6h",payload)
@@ -210,15 +243,39 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float) -> dict:
                                     for a,b in zip(observed,candidate))
                             settle=settle+1 if err<=0.15 else 0
                             if settle>=15 and max_change>=0.20:
-                                result.update(
-                                    passed=True,physical_settled_frames=settle,
-                                    max_motion_deg=max_change,
-                                    final_error_deg=err,full_link_safe=True,
-                                    uart_checksum_errors=parser.bad_checksum,
-                                    received_target_frames=frames,
-                                    feedback_acks=feedback_acks,
-                                )
-                                break
+                                result["approved_legs"][-1]["settled"]=True
+                                result["approved_legs"][-1]["final_error_deg"]=err
+                                if result["new_apf_proposals"]>=required_proposals:
+                                    result.update(
+                                        passed=True,physical_settled_frames=settle,
+                                        max_motion_deg=max_change,
+                                        final_error_deg=err,full_link_safe=True,
+                                        uart_checksum_errors=parser.bad_checksum,
+                                        received_target_frames=frames,
+                                        feedback_acks=feedback_acks,
+                                    )
+                                    break
+                                # This is the only transition to the next
+                                # on-ARM C APF/IK step. Re-observe the actual
+                                # new EE and ask the same embedded planner
+                                # with re-based goal/box offsets. Never issue
+                                # a new move before physical settlement.
+                                proposal_seq=(proposal_seq+2)&255
+                                motion_seq=(motion_seq+2)&255
+                                proposal_sent=True
+                                move_sent=False
+                                move_ack=None
+                                candidate=None
+                                settle=0
+                                current_ee=p.getLinkState(
+                                    arm,p.getNumJoints(
+                                        arm,physicsClientId=client)-1,
+                                    computeForwardKinematics=True,
+                                    physicsClientId=client)[4]
+                                sock.sendall(frame(
+                                    wire.CMD_REQUEST_APF_JOINT_PROPOSAL,
+                                    apf_payload(proposal_seq,current_ee,
+                                                absolute_goal,box_center)))
                 if result["passed"]: break
             if not result["passed"]:
                 raise TimeoutError(
@@ -247,9 +304,12 @@ def main():
     parser.add_argument("--output-dir",required=True,type=Path)
     parser.add_argument("--qemu",default="qemu-system-arm")
     parser.add_argument("--timeout-s",type=float,default=105.0)
+    parser.add_argument("--proposals",type=int,default=1,
+                        help="number of repeated firmware C APF physical steps")
     args=parser.parse_args()
     if not args.elf.is_file(): parser.error("ELF missing")
-    result=run(args.elf,args.output_dir,args.qemu,args.timeout_s)
+    result=run(args.elf,args.output_dir,args.qemu,args.timeout_s,
+               required_proposals=args.proposals)
     print(json.dumps(result,indent=2))
     if not result["passed"]: raise SystemExit(1)
 
