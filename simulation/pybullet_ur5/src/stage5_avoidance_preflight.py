@@ -35,6 +35,33 @@ class CartesianGoalAlreadyReached(RejectedRoute):
     """
 
 
+def select_bypass_candidate(candidate_vias, try_route):
+    """Bounded ordered retries; never authorize a failed safety preflight.
+
+    try_route must be the existing complete C APF/IK/full-link gate.
+    Kept separate from geometry generation to test fallback deterministically.
+    """
+    if not candidate_vias:
+        candidate_vias = [()]  # C reports no obstruction: ordinary route
+    failures = []
+    for index, via in enumerate(candidate_vias):
+        try:
+            route = try_route(via)
+        except RejectedRoute as error:
+            failures.append({"candidate": index, "reason": str(error)})
+            continue
+        if not route.get("passed", False):
+            failures.append({"candidate": index, "reason": "preflight did not pass"})
+            continue
+        route["automatic_bypass"] = True
+        route["bypass_candidates_attempted"] = index + 1
+        route["bypass_candidate_rejections"] = failures
+        return route
+    raise RejectedRoute(
+        f"all {len(candidate_vias)} C geometry bypass candidates failed "
+        f"the unchanged C APF/IK/full-link gate: {failures}")
+
+
 class JointPositions(ctypes.Structure):
     _fields_ = [("value", ctypes.c_int32 * JOINT_COUNT)]
 
@@ -112,12 +139,8 @@ def preflight_joint_avoidance(
         if count.value > len(proposals):
             raise RejectedRoute("C bypass candidate count exceeded output capacity")
         candidate_vias = [tuple(proposals[i].mm) for i in range(count.value)]
-        if not candidate_vias:
-            candidate_vias = [()]  # direct route when the C geometry permits
-        failures = []
-        for index, via in enumerate(candidate_vias):
-            try:
-                route = preflight_joint_avoidance(
+        def try_candidate(via):
+            return preflight_joint_avoidance(
                     library, physics, robot_id, obstacle_ids, joint_indices,
                     end_link, goal_mm,
                     apf_config=apf_config,
@@ -134,16 +157,7 @@ def preflight_joint_avoidance(
                     shortcut_cartesian=shortcut_cartesian,
                     automatic_bypass=False,
                 )
-            except RejectedRoute as error:
-                failures.append({"candidate": index, "reason": str(error)})
-                continue
-            route["automatic_bypass"] = True
-            route["bypass_candidates_attempted"] = index + 1
-            route["bypass_candidate_rejections"] = failures
-            return route
-        raise RejectedRoute(
-            f"all {len(candidate_vias)} C geometry bypass candidates failed "
-            f"the unchanged C APF/IK/full-link gate: {failures}")
+        return select_bypass_candidate(candidate_vias, try_candidate)
     # Cartesian APF point clearance and physical link clearance are
     # different constraints. An EE point does not include wrist/link volume.
     # Preserve the original API default for callers that did not specify
