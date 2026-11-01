@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
-from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES, JOG_MIN_DEG
+from stage5_safe_gui_jog import SafeGuiJog, JOG_MIN_DEG
 
 
 def valid_return():
@@ -53,7 +53,7 @@ class ButtonBullet:
 
 def jog(physics=None, limit=math.pi, preview_return=None):
     p = physics or ButtonBullet()
-    validator = preview_return or Mock(side_effect=lambda: valid_return())
+    validator = preview_return or Mock(side_effect=lambda **kwargs: valid_return())
     policy = SafeGuiJog(
         p, 0, range(6), [1], 0,
         [(-limit, limit) for _ in range(6)],
@@ -90,7 +90,9 @@ class GuardedJogTests(unittest.TestCase):
                    return_value=safe_gate()):
             ctl(p, 0, range(6), 0, True, False)
         self.assertIn("BUSY", ctl.status_text(True))
+        self.assertIsNotNone(ctl.last_authorized_jog)
         ctl.complete_recovery()
+        self.assertIsNone(ctl.last_authorized_jog)
         self.assertIn("RETURN COMPLETE", ctl.status_text(True))
         self.assertIn("returned=1", ctl.status_text(True))
 
@@ -118,6 +120,25 @@ class GuardedJogTests(unittest.TestCase):
                     math.radians(.25))
                 planner.assert_called_once()
 
+    def test_two_degree_jog_passes_actual_pre_click_pose_to_return_planner(self):
+        p, ctl, planner = jog()
+        p.widgets[ctl.axis_widget] = 6.0
+        p.widgets[ctl.step_widget] = 2.0
+        p.angles[5] = math.radians(14.17)
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, list(range(6)), 0, True, False)
+        self.assertEqual(ctl.applied, 1)
+        self.assertEqual(ctl.events[-1]["displacement_deg"], 2.0)
+        context = planner.call_args.kwargs["jog_context"]
+        self.assertEqual(context["axis"], 5)
+        self.assertAlmostEqual(math.degrees(context["delta_rad"]), 2.0)
+        self.assertAlmostEqual(math.degrees(
+            context["start_joint_rad"][5]), 14.17)
+        self.assertEqual(ctl.last_authorized_jog, context)
+        self.assertAlmostEqual(math.degrees(p.angles[5]), 16.17)
+
     def test_ci_scripted_j6_uses_real_preflight_and_requires_uart_settlement(self):
         p, ctl, planner = jog()
         # GUI selection is J1, but CI's explicit scope is J6 at minimum step.
@@ -136,6 +157,48 @@ class GuardedJogTests(unittest.TestCase):
         ctl.request_ci_finish()
         self.assertTrue(ctl.finish_requested)
         self.assertEqual(ctl.completed, 1)
+
+    def test_ci_sequential_j6_half_then_two_requires_each_real_return(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            first = ctl.request_ci_scripted_j6_step(0.5)
+            self.assertEqual(first["displacement_deg"], 0.5)
+            with self.assertRaisesRegex(RuntimeError, "settled idle HOLD"):
+                ctl.request_ci_scripted_j6_step(2.0)
+            ctl.complete_recovery()
+            self.assertIsNone(ctl.last_authorized_jog)
+            second = ctl.request_ci_scripted_j6_step(2.0)
+            self.assertEqual(second["displacement_deg"], 2.0)
+            with self.assertRaisesRegex(RuntimeError, "completed real C recovery"):
+                ctl.request_ci_finish(expected_recoveries=2)
+            ctl.complete_recovery()
+            ctl.request_ci_finish(expected_recoveries=2)
+            self.assertEqual(ctl.completed, 2)
+            self.assertEqual(ctl.applied, 2)
+            self.assertTrue(ctl.finish_requested)
+            with self.assertRaisesRegex(RuntimeError, "settled idle HOLD"):
+                ctl.request_ci_scripted_j6_step(2.0)
+            self.assertEqual(planner.call_count, 2)
+
+    def test_five_scripted_recoveries_are_independent_of_operator_lifetime(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            for i, step in enumerate((0.5, 2.0, 2.0, 2.0, 2.0)):
+                with self.subTest(move=i+1):
+                    e = ctl.request_ci_scripted_j6_step(
+                        step, max_scripted_steps=5)
+                    self.assertEqual(e["displacement_deg"], step)
+                    self.assertEqual(ctl.applied, i+1)
+                    self.assertFalse(ctl.available)
+                    ctl.complete_recovery()
+                    self.assertTrue(ctl.available)
+                    self.assertEqual(ctl.completed, i+1)
+        ctl.request_ci_finish(expected_recoveries=5)
+        self.assertTrue(ctl.finish_requested)
+        self.assertEqual(ctl.refused, 0)
+        self.assertEqual(planner.call_count, 5)
 
     def test_ci_scripted_j6_rejected_when_collision_gate_fails(self):
         p, ctl, planner = jog()
@@ -193,18 +256,28 @@ class GuardedJogTests(unittest.TestCase):
         self.assertEqual(ctl.applied, before)
         planner.assert_called_once()
 
-    def test_finish_after_maximum_completed_recoveries(self):
+    def test_finish_after_many_completed_recoveries(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
                    return_value=safe_gate()):
-            for cycle in range(JOG_MAX_SUCCESSES):
-                p.click(ctl.buttons[1])
+            for cycle in range(8):
+                sign = (1, -1)[cycle % 2]
+                p.click(ctl.buttons[sign])
                 ctl(p, 0, range(6), cycle, True, False)
+                self.assertEqual(ctl.applied, cycle + 1)
+                self.assertFalse(ctl.available)
                 ctl.complete_recovery()
-        self.assertFalse(ctl.available)
+                self.assertTrue(ctl.available)
+        self.assertEqual(ctl.completed, 8)
+        self.assertEqual(ctl.refused, 0)
+        self.assertIn("jog again", ctl.status_text(True))
         p.click(ctl.finish_widget)
-        ctl(p, 0, range(6), 5, True, False)
+        ctl(p, 0, range(6), 9, True, False)
         self.assertTrue(ctl.finish_requested)
+        p.click(ctl.buttons[1])
+        ctl(p, 0, range(6), 10, True, False)
+        self.assertEqual(ctl.applied, 8)
+        self.assertEqual(ctl.events[-1]["reason"], "session_ending")
 
     def test_joint_limit_rejects_before_gate_or_planner(self):
         p, ctl, planner = jog(limit=math.radians(40.5))
@@ -254,15 +327,14 @@ class GuardedJogTests(unittest.TestCase):
             gate.assert_not_called()
         self.assertEqual(ctl.applied, 0)
         planner.assert_not_called()
-        self.assertEqual(ctl.events[-1]["reason"],
-                         "not_idle_or_recovery_pending_or_limit")
+        self.assertEqual(ctl.events[-1]["reason"], "not_in_hold")
 
     def test_multiple_recoveries_only_rearm_after_actual_completion(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
                    return_value=safe_gate()):
-            for cycle in range(JOG_MAX_SUCCESSES):
-                p.widgets[ctl.axis_widget] = cycle + 1
+            for cycle in range(7):
+                p.widgets[ctl.axis_widget] = 1 + cycle % 6
                 p.click(ctl.buttons[1])
                 ctl(p, 0, range(6), cycle, True, False)
                 self.assertEqual(ctl.applied, cycle+1)
@@ -271,13 +343,19 @@ class GuardedJogTests(unittest.TestCase):
                 ctl(p, 0, range(6), cycle+.01, True, False)
                 self.assertEqual(ctl.applied, cycle+1)
                 self.assertEqual(ctl.events[-1]["reason"],
-                                 "not_idle_or_recovery_pending_or_limit")
+                                 "recovery_in_progress")
                 ctl.complete_recovery()
+                self.assertTrue(ctl.available)
                 self.assertEqual(ctl.completed, cycle+1)
-        self.assertFalse(ctl.available)
-        p.click(ctl.buttons[1])
-        ctl(p, 0, range(6), 10, True, False)
-        self.assertEqual(ctl.applied, JOG_MAX_SUCCESSES)
+        p.click(ctl.buttons[-1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, range(6), 10, True, False)
+        self.assertEqual(ctl.applied, 8)
+        ctl.complete_recovery()
+        self.assertTrue(ctl.available)
+        self.assertEqual(ctl.completed, 8)
+        self.assertEqual(ctl.refused, 7)  # Actual busy clicks, not cap.
         with self.assertRaises(RuntimeError):
             ctl.complete_recovery()
 
@@ -340,7 +418,7 @@ class RealPhysicsJogGateTests(unittest.TestCase):
             limits = [(max(-math.pi,p.getJointInfo(robot,j,physicsClientId=cid)[8]),
                        min(math.pi,p.getJointInfo(robot,j,physicsClientId=cid)[9]))
                       for j in joints]
-            validator = Mock(side_effect=lambda: valid_return())
+            validator = Mock(side_effect=lambda **kwargs: valid_return())
             ctl = SafeGuiJog(
                 proxy, robot, joints, [obstacle], cid, limits,
                 maximum_joint_step_rad=math.radians(3),

@@ -59,3 +59,22 @@
 - **Linux 同物理模型 J6 脚本化 GUI 自动回位通过**：同一 CI Run 的 `native-gui-scripted-j6-xvfb` 独立 PASS，注意脚本输入不代表 Windows 鼠标事件覆盖。
 - **遗留窗口偶发无响应**：历史 GUI 断连日志不能证明窗口消息循环死锁；已补充 Windows 原生窗口健康探测、按钮接收记录和有限退出，仍保留复现观察，不虚构根因。
 - **签收策略**：Stage5 静态避障主链路 **有保留结项**，全 GUI 兼容性不签收；[Stage 5 最终签收与 Stage 6 交接](17_stage5_final_acceptance_2026-10-31.md) 是最新权威结论。PR #33 保留 Draft 直到未通过的门禁问题解释并修复。
+
+
+## S5-011（2026-11-01）：Windows 连续 SAFE GUI JOG +2° 被零笛卡尔路程保护误拒绝
+
+- **原始现场证据**：用户上传 `stage5-final-acceptance.zip`，第一次 J6 +0.5° 已完成真实 C APF/UART 回位，HOLD 实测误差约 0.02°，随后同一窗口第二次请求 J6 +2° 被 `recovery_preflight_failed` 拒绝；`C APF zero-Cartesian-leg return too far in joint space`。出站的全连杆碰撞预检**通过**，不是碰撞故障。
+- **具体根因**：第二次点击前实际 J6 14.17°，原 HOLD 关节目标 J6 14.15°；合法 +2.00° 点动后，与原目标的最大差变成 2.02°。原 C APF 笛卡尔终点已到时的“无授权任意 IK 跳变不得超过 2°”通用保护把合法 GUI 关节增量与前次跟踪余差混为一谈。
+- **修复**：`stage5_safe_gui_jog.py` 记录按原有限位/净距和 C 回位预检确认为安全的**单关节**操作员点击（起始六关节、J6 轴、离散 0.5–2° 原始增量），通过 `stage5_avoidance_uart_gate.py` 只传给 `stage5_obstacle_hold_recovery.py` 的零笛卡尔路径特殊分支。要求点击前姿态在原有 0.15° HOLD 到位容差内；偏移后的实测状态必须与点击增量一致；**真正的每段全连杆离散碰撞检查、原始速度/限位/样本预算及 C/UART ACK 不变**。对没有合法 GUI 授权的普通三度跳变及错误 IK 分支仍原样拒绝。实际恢复完成后销毁该授权。
+- **防复发**：添加与真实 PyBullet/生产 C APF 接驳的 0.02° HOLD 残差 +2° 回位测试及伪造授权/3° 跳变负例，Linux/Windows CI 同时运行；新增 Linux Xvfb 原生 GUI 0.5°→回位→2°→回位自动闭环测试；Windows `-RequireTwoStepJog` 参数与独立 `--two-step` 审核要求 J6 两次成功，任何被拒绝的点动都使最终 PASS 无效，杜绝“0.5° PASS 掩盖 2° 拒绝”。
+- **状态**：修复代码已在 PR #35；必须等待同提交的自动化结果及 Windows 同一轮实际鼠标复测才可关闭此项。完整流程及不可省略的判据见 [18 号 Windows 验收指南](18_stage5_windows_final_two_step_acceptance.md)。
+
+
+## S5-012（2026-11-01）：GUI 点动次数错误封顶、拒绝仍被判 PASS、第二次回位末端残差
+
+- **现场输入证据**：Windows 操作员提供 `stage5-windows-final-2step.zip`；同一运行 `safe_gui_jog_applied=3`、`safe_gui_jog_completed=3`、`hold_recoveries=3`，但 5 次点击中第 4、5 次 `safe_gui_jog_rejected`，原因为 `not_idle_or_recovery_pending_or_limit`；QEMU 控制/规划故障计数均为零，碰撞净距通过，原报告居然 `passed: true`。此故障不是用户误操作，也不是末端物理碰撞。
+- **根因 A（交互设计）**：SAFE GUI JOG 的 `JOG_MAX_SUCCESSES=3` 对整个 UI 会话封顶，把临时 CI 样本次数泄露为用户按钮终身次数；即使前一次 C/UART 已实测回位，按钮也不再可用。
+- **根因 B（验收误判）**：原运行裁决仅检查 `applied == completed == hold_recoveries` 且 `applied >= 1`，未统计后续被拒绝的按钮；独立 checker 又将 `expected=1/2` 误写成严格**总动作数**而不是**规定前缀**，导致正常多次点动不合格或错误地掩盖问题。
+- **根因 C（集成联调）**：过去 Linux 原生 GUI 双次真实 C APF/UART 回位的 CI，第二次 J6 +2° 固件已 ACK 但停在距 HOLD 约 0.42° 并保持 BUSY；同一末端收敛问题需要受控的真实反馈闭环纠偏，而不是延长 timeout 或放宽误差门禁。
+- **修改**：正常操作按钮无会话成功次数限制；只有 `BUSY`、非 HOLD、FINISH/CANCEL、关节机械限位、全臂离散碰撞或生产 C 回程预检失败会拒绝。每次真实 UART ACK + 物理稳定到位后重新 READY，合法点击无次数耗尽。生产裁决直接要求 `refused==0`、FINISH 事件和所有物理回位完成；独立 checker 的两步验收仅规定前缀 `J6 +0.5°，J6 +2°`，**其后无限合法动作继续计数，且必须 100% 回位**。新增 `native-gui-j6-five-repeat-xvfb` 从同一 QEMU/FreeRTOS/PyBullet 真实循环验证 `[+0.5,+2,+2,+2,+2]` 并核对每次动作及全连杆净距。第二次回位独立新增最多 2 次、有改善且碰撞校验通过的实测端点重规划，原 0.15° 到位标准保持不变。
+- **当前状态**：修改在 PR #35，`main`/Stage4 未更改。**仅在相同 HEAD 的 Windows/Linux、双步和五次连续集成 CI 均 PASS，再完成用户本机五次按钮验收后才关闭**。GUI 回归修复不等于原 PDF 5.2 固件内完整 APF 或 5.3 全部性能优化已经完成。

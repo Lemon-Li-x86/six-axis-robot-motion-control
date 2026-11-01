@@ -72,6 +72,10 @@ HOLD_STAGNANT_PERIOD_S = 0.5
 # slowly moving C plan merely because measured joint movement is small.
 HOLD_RETRY_COOLDOWN_S = 3.0
 HOLD_MAX_REPLAN_ATTEMPTS = 3
+# Stage5 native GUI only: old clear path needs at most one correction; an
+# APF route may need one more, but EVERY corrected obstacle leg is rechecked.
+GUI_ENDPOINT_REARMS_CLEAR = 1
+GUI_ENDPOINT_REARMS_OBSTACLE = 2
 HOLD_TRACE_LIFETIME_S = 10.0
 # Log costly UART batches at most once a second. Diagnostic-only, no pacing.
 UART_BATCH_WARNING_FRAMES = 24
@@ -123,6 +127,10 @@ class DemoOptions:
     # CI opt-in only: scripts exactly one guarded J6 minimum-step jog in
     # native p.GUI; NEVER used by operator runs or on real motors.
     ci_scripted_safe_jog: bool = False
+    # Independent CI-only test: physical 0.5deg return followed by 2deg.
+    ci_scripted_safe_jog_two_step: bool = False
+    # CI only: repeatedly exercise five actual C/UART returns in one GUI.
+    ci_scripted_safe_jog_repeat: bool = False
 
 
 class Stage5GuiDisconnectedError(RuntimeError):
@@ -211,6 +219,38 @@ def assess_clock_alignment(trajectory_samples: int | None,
         return None, False
     ratio = (trajectory_samples * trajectory_period_s) / (target_frames * FEEDBACK_STEP_S)
     return ratio, abs(ratio - 1.0) <= CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR
+
+
+def assess_monitor_clock_window(
+    baseline: tuple[int, int] | None,
+    final_monitor_ticks: int | None,
+    final_target_frames: int,
+    monitor_period_s: float,
+) -> tuple[float | None, bool]:
+    """Compare two *simultaneous* RTOS/physics snapshots, not boot-time ticks.
+
+    Monitoring starts when FreeRTOS boots, several seconds BEFORE the native
+    GUI loads URDF, constructs collision geometry and begins physics. Raw
+    monitoring_ticks/target_frames therefore compares different epochs.
+    A first live UART monitoring sample fixes a common epoch for both clocks;
+    every later tick and feedback frame must still pass the unchanged
+    fraction tolerance. Missing, nonadvancing, or implausible timestamps fail.
+    """
+    if (baseline is None or final_monitor_ticks is None or
+            type(final_monitor_ticks) is not int or
+            not 0 <= final_monitor_ticks <= 0xFFFFFFFF):
+        return None, False
+    start_ticks, start_frames = baseline
+    if (type(start_ticks) is not int or
+            not 0 <= start_ticks <= 0xFFFFFFFF or
+            type(start_frames) is not int or start_frames < 1 or
+            final_target_frames <= start_frames):
+        return None, False
+    elapsed_ticks = (final_monitor_ticks - start_ticks) & 0xFFFFFFFF
+    if not 0 < elapsed_ticks < 0x80000000:
+        return None, False
+    return assess_clock_alignment(
+        elapsed_ticks, final_target_frames - start_frames, monitor_period_s)
 
 
 def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
@@ -444,10 +484,39 @@ def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bo
             or (gui_safe_jog and safe_gui_jog_recovery_pending(jog)))
 
 
+def small_endpoint_rearm_ready(
+    sequencer, measured: Sequence[int], stable_frames: int,
+    now: float, *, max_rearms: int = GUI_ENDPOINT_REARMS_CLEAR,
+    full_link_preflight_required: bool = False,
+) -> bool:
+    """Finite, improving GUI recovery; NEVER substitutes for physical settle."""
+    if (not sequencer.accepted or sequencer.done or
+            sequencer.rearms_current_segment >= max_rearms or
+            sequencer.goal is None or
+            stable_frames < SETTLE_FRAME_COUNT or
+            now - sequencer.requested_at < HOLD_RETRY_COOLDOWN_S):
+        return False
+    error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
+                for a,b in zip(sequencer.goal, measured))
+    if not (error > SETTLE_TOLERANCE_DEG):
+        return False
+    if not full_link_preflight_required and error > HOLD_DEVIATION_TRIGGER_DEG:
+        return False
+    # A larger residual in an APF leg requires an independent, fresh
+    # measured-pose -> current-goal full-link check before UART submission.
+    # HOLD_DEVIATION_TRIGGER_DEG is not a collision or motion safety limit.
+    # Every retry must measurably reduce the residual vs. the previous rearm.
+    # The UART/measurement quantum is 0.01deg; non-improving loops fail closed.
+    prior = sequencer.last_rearm_error_deg
+    return prior is None or error <= prior - 1.0 / wire.JOINT_ANGLE_SCALE
+
+
 def execute_guarded_gui_jog(
     jog, bullet, arm, joints, stamp, done, ending,
     motor_forces_nm, gui_motor_velocity_caps,
     *, ci_scripted_trigger: bool = False,
+    ci_scripted_step_deg: float | None = None,
+    ci_max_scripted_steps: int = 2,
 ) -> None:
     """Preserve an authorized injected pose until the C UART recovery takes over.
 
@@ -457,10 +526,15 @@ def execute_guarded_gui_jog(
     """
     previous_applied = jog.applied
     jog(bullet, arm, joints, stamp, done, ending)
-    if ci_scripted_trigger:
+    if ci_scripted_trigger or ci_scripted_step_deg is not None:
         if not done or ending:
             raise RuntimeError("Scripted CI jog outside idle HOLD")
-        jog.request_ci_scripted_j6_half_degree()
+        if ci_scripted_step_deg is not None:
+            jog.request_ci_scripted_j6_step(
+                ci_scripted_step_deg,
+                max_scripted_steps=ci_max_scripted_steps)
+        else:
+            jog.request_ci_scripted_j6_half_degree()
     if jog.applied > previous_applied:
         displaced_rad = tuple(
             bullet.getJointState(arm, joint, physicsClientId=jog.client)[0]
@@ -486,6 +560,9 @@ class MotionSequencer:
         self.completed = 0
         self.requested_at = 0.0
         self.segment_final_errors_deg: list[float] = []
+        self.endpoint_rearms = 0
+        self.rearms_current_segment = 0
+        self.last_rearm_error_deg: float | None = None
 
     @property
     def done(self) -> bool:
@@ -501,14 +578,51 @@ class MotionSequencer:
             raise RuntimeError("Previous motion has not settled")
         if self.index + 1 >= len(self.goals):
             raise RuntimeError("No remaining motion segment")
+        # Never reuse a UART sequence consumed by a corrective request.
+        # With no retries this remains first_sequence + segment index.
+        self.sequence = (self.first_sequence if self.index < 0
+                         else (self.sequence + 1) & 0xFF)
         self.index += 1
-        self.sequence = (self.first_sequence + self.index) & 0xFF
         self.requested_at = now
         self.ack_pending = True
         self.settled_frames = 0
+        self.rearms_current_segment = 0
+        self.last_rearm_error_deg = None
         payload = bytes((self.sequence,)) + struct.pack(
             "<" + str(wire.JOINT_COUNT) + "h", *self.goals[self.index]
         )
+        return integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload)
+
+    def reissue_current_goal_from_feedback(
+        self, now: float, *, max_rearms: int = GUI_ENDPOINT_REARMS_CLEAR,
+        measured_error_deg: float | None = None,
+    ) -> bytes:
+        """Finite new firmware command, never a fake physical-settle event.
+
+        Only the caller can authorize an APF retry after a fresh, separate
+        full-link swept-sample preflight against the live Bullet obstacle.
+        """
+        if (self.index < 0 or self.done or not self.accepted or
+                self.ack_pending or self.rearms_current_segment >= max_rearms):
+            raise RuntimeError("Current segment cannot be safely reissued")
+        if measured_error_deg is not None:
+            if (not math.isfinite(measured_error_deg) or
+                    measured_error_deg <= SETTLE_TOLERANCE_DEG or
+                    (self.last_rearm_error_deg is not None and
+                     measured_error_deg >
+                        self.last_rearm_error_deg - 1.0 / wire.JOINT_ANGLE_SCALE)):
+                raise RuntimeError("Endpoint residual did not improve")
+        self.sequence = (self.sequence + 1) & 0xFF
+        self.requested_at = now
+        self.ack_pending = True
+        self.accepted = False
+        self.settled_frames = 0
+        self.endpoint_rearms += 1
+        self.rearms_current_segment += 1
+        self.last_rearm_error_deg = measured_error_deg
+        assert self.goal is not None
+        payload = bytes((self.sequence,)) + struct.pack(
+            "<" + str(wire.JOINT_COUNT) + "h", *self.goal)
         return integration.frame(wire.CMD_REQUEST_JOINT_MOVE, payload)
 
     def acknowledge(self, payload: bytes) -> None:
@@ -940,8 +1054,15 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError(
             "Guarded GUI jog requires native GUI, active HOLD and C APF; "
             "unrestricted native picking remains forbidden")
-    if options.ci_scripted_safe_jog and not options.gui_safe_jog:
+    if (options.ci_scripted_safe_jog or
+            options.ci_scripted_safe_jog_two_step or
+            options.ci_scripted_safe_jog_repeat) and not options.gui_safe_jog:
         raise ValueError("Scripted native GUI CI fixture requires guarded GUI jog")
+    if sum(bool(x) for x in (
+            options.ci_scripted_safe_jog,
+            options.ci_scripted_safe_jog_two_step,
+            options.ci_scripted_safe_jog_repeat)) > 1:
+        raise ValueError("CI must select exactly one native GUI jog script")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -949,8 +1070,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError("Feedback period must be divisible by the physics step")
 
     sequencer = MotionSequencer(SCENARIOS[options.scenario])
+    endpoint_prev_feedback: tuple[int, ...] | None = None
+    endpoint_stable_frames = 0
+    endpoint_rearm_events: list[dict] = []
     trace = deque(maxlen=6000) if options.interactive_hold else []
     diagnostic_values: dict[str, int] = {}
+    first_monitor_clock_sample: tuple[int, int] | None = None
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
     firmware_defaults = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -962,6 +1087,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     avoidance_report: dict | None = None
     recovery_plan_report: dict | None = None
     recovery_sequencer: MotionSequencer | None = None
+    # Independent measured-feedback endpoint tracking for the C APF recovery
+    # path; original mission sequencer already has its own separate tracker.
+    recovery_endpoint_previous: tuple[int, ...] | None = None
+    recovery_endpoint_stable_frames = 0
+    recovery_endpoint_rearm_events: list[dict] = []
     recovery_attempted = False
     recovery_segments_settled = 0
     recovery_sequence_next = None
@@ -1047,6 +1177,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             if prepare_motion is not None else "original_unobstructed_hold"),
         gui_safe_jog=options.gui_safe_jog,
         ci_scripted_safe_jog=options.ci_scripted_safe_jog,
+        ci_scripted_safe_jog_two_step=options.ci_scripted_safe_jog_two_step,
+        ci_scripted_safe_jog_repeat=options.ci_scripted_safe_jog_repeat,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1155,7 +1287,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     draw_avoidance_gui_evidence(p, avoidance_report)
                 if options.gui_safe_jog:
                     from stage5_avoidance_uart_gate import load_scene
-                    from stage5_safe_gui_jog import SafeGuiJog, JOG_EXTRA_CLEARANCE_M
+                    from stage5_safe_gui_jog import (
+                        SafeGuiJog, JOG_EXTRA_CLEARANCE_M,
+                        JOG_MIN_DEG, JOG_MAX_DEG,
+                    )
                     scene, collision_policy = load_scene(plan["route_case"])
                     safe_gui_jog = SafeGuiJog(
                         p, arm, joints, safety_obstacles, client,
@@ -1164,15 +1299,21 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                             "max_joint_step_rad"],
                         minimum_clearance_m=safety_clearance_m,
                         maximum_samples=collision_policy["max_collision_samples"],
-                        preview_return=lambda: prepare_motion.plan_hold_recovery(
-                            p, arm, joints, client, plan,
-                            minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M))
+                        preview_return=lambda *, jog_context: (
+                            prepare_motion.plan_hold_recovery(
+                                p, arm, joints, client, plan,
+                                minimum_extra_clearance_m=JOG_EXTRA_CLEARANCE_M,
+                                jog_context=jog_context,
+                                hold_settle_tolerance_rad=math.radians(
+                                    SETTLE_TOLERANCE_DEG))))
                     previous_on_physics = on_physics
                     scripted_ci_jog_sent = False
                     scripted_ci_finish_sent = False
+                    scripted_ci_steps_sent = 0
 
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
                         nonlocal scripted_ci_jog_sent, scripted_ci_finish_sent
+                        nonlocal scripted_ci_steps_sent
                         if previous_on_physics is not None:
                             previous_on_physics(
                                 bullet, body, axes, stamp, done, ending)
@@ -1183,10 +1324,26 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         # Latch before calling the planner, fail closed if rejected.
                         if ci_inject:
                             scripted_ci_jog_sent = True
+                        ci_two_step_deg = None
+                        ci_sequence = (
+                            (JOG_MIN_DEG, JOG_MAX_DEG, JOG_MAX_DEG,
+                             JOG_MAX_DEG, JOG_MAX_DEG)
+                            if options.ci_scripted_safe_jog_repeat
+                            else (JOG_MIN_DEG, JOG_MAX_DEG)
+                            if options.ci_scripted_safe_jog_two_step else ())
+                        if (ci_sequence and done and not ending
+                                and scripted_ci_steps_sent < len(ci_sequence)
+                                and safe_gui_jog.available
+                                and safe_gui_jog.applied == safe_gui_jog.completed):
+                            ci_two_step_deg = ci_sequence[scripted_ci_steps_sent]
+                            scripted_ci_steps_sent += 1
                         execute_guarded_gui_jog(
                             safe_gui_jog, bullet, body, axes, stamp, done, ending,
                             motor_forces_nm, gui_motor_velocity_caps,
-                            ci_scripted_trigger=ci_inject)
+                            ci_scripted_trigger=ci_inject,
+                            ci_scripted_step_deg=ci_two_step_deg,
+                            ci_max_scripted_steps=(5 if options.ci_scripted_safe_jog_repeat
+                                                   else 2))
                         if (options.ci_scripted_safe_jog
                                 and scripted_ci_jog_sent
                                 and not scripted_ci_finish_sent
@@ -1194,12 +1351,22 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 and safe_gui_jog.completed == 1):
                             safe_gui_jog.request_ci_finish()
                             scripted_ci_finish_sent = True
+                        if ((options.ci_scripted_safe_jog_two_step or
+                             options.ci_scripted_safe_jog_repeat)
+                                and scripted_ci_steps_sent == len(ci_sequence)
+                                and not scripted_ci_finish_sent
+                                and safe_gui_jog.applied == len(ci_sequence)
+                                and safe_gui_jog.completed == len(ci_sequence)):
+                            safe_gui_jog.request_ci_finish(
+                                expected_recoveries=len(ci_sequence))
+                            scripted_ci_finish_sent = True
                     on_physics = guarded_jog_callback
                     print(
                         "[SAFE GUI JOG] C APF obstacle scene: use left panel "
                         "SAFE APF JOG +/- buttons and J1..J6 selector. "
-                        "Use during HOLD; 0.5..2.0deg increments, up to 3 "
-                        "complete returns per run. Outbound AND return routes "
+                        "Use during HOLD; 0.5..2.0deg increments, repeat "
+                        "after each confirmed C/UART physical return. "
+                        "Outbound AND return routes "
                         "are checked BEFORE application. "
                         "Original mouse dragging remains OFF; "
                         "FINISH/EXIT validates or cancels; console Q can exit.",
@@ -1554,6 +1721,12 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                                     p, arm, joints, client, plan,
                                                     minimum_extra_clearance_m=(
                                                         safe_gui_jog.extra_clearance_m
+                                                        if options.gui_safe_jog else 0.0),
+                                                    jog_context=(
+                                                        safe_gui_jog.last_authorized_jog
+                                                        if safe_gui_jog is not None else None),
+                                                    hold_settle_tolerance_rad=(
+                                                        math.radians(SETTLE_TOLERANCE_DEG)
                                                         if options.gui_safe_jog else 0.0)))
                                             print(
                                                 "[HOLD C APF PHASE] runtime_recovery_planning_finished "
@@ -1571,6 +1744,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                             recovery_sequencer = MotionSequencer(
                                                 recovery_goals,
                                                 first_sequence=recovery_sequence_next)
+                                            recovery_endpoint_previous = None
+                                            recovery_endpoint_stable_frames = 0
                                             recovery_route_events.append(dict(
                                                 first_sequence=recovery_sequence_next,
                                                 planned_segments=len(recovery_goals),
@@ -1801,6 +1976,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     if recovery_sequencer.done:
                                         recovery_sequence_next = (
                                             recovery_sequencer.sequence + 1) & 0xff
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
                                         recovery_route_events[-1]["completed"] = True
                                         recovery_sequencer = None
                                         recovery_settled = SETTLE_FRAME_COUNT
@@ -1815,13 +1992,194 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         print("[HOLD C APF] All validated recovery "
                                               "segments settled", flush=True)
                                     else:
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
                                         sock.sendall(recovery_sequencer.next_request(
                                             time.monotonic()))
+                                elif (recovery_sequencer is not None
+                                      and options.gui_safe_jog
+                                      and recovery_sequencer.accepted
+                                      and not recovery_sequencer.ack_pending
+                                      and recovery_sequencer.goal is not None):
+                                    # The original-path endpoint correction
+                                    # does not apply to *new* C APF recovery
+                                    # requests. Native GUI motor velocity caps
+                                    # can still stall a legitimate joint-only
+                                    # return (CI J6 +2deg: residual 0.42deg).
+                                    # Require an observed steady pose, then
+                                    # request a finite, improving *real* ARM
+                                    # trajectory from fresh measured feedback.
+                                    if (recovery_endpoint_previous is not None and
+                                            max(abs(a-b) for a,b in zip(
+                                                recovery_endpoint_previous,
+                                                measured)) <= 1):
+                                        recovery_endpoint_stable_frames += 1
+                                    else:
+                                        recovery_endpoint_stable_frames = 0
+                                    recovery_endpoint_previous = tuple(measured)
+                                    if small_endpoint_rearm_ready(
+                                            recovery_sequencer, measured,
+                                            recovery_endpoint_stable_frames,
+                                            time.monotonic(),
+                                            max_rearms=GUI_ENDPOINT_REARMS_OBSTACLE,
+                                            full_link_preflight_required=True):
+                                        # Never re-arm by guessing a straight
+                                        # line near a live obstacle. Re-check
+                                        # actual URDF links using the same
+                                        # jog clearance and sample granularity
+                                        # as the initial C APF preview.
+                                        from stage5_collision_validation import (
+                                            validate_joint_path)
+                                        from stage5_avoidance_uart_gate import load_scene
+                                        from stage5_safe_gui_jog import (
+                                            JOG_MAX_SAMPLE_STEP_RAD)
+                                        _, recovery_policy = load_scene(
+                                            plan["route_case"])
+                                        start_rad = tuple(
+                                            math.radians(v /
+                                                wire.JOINT_ANGLE_SCALE)
+                                            for v in measured)
+                                        goal_rad = tuple(
+                                            math.radians(v /
+                                                wire.JOINT_ANGLE_SCALE)
+                                            for v in recovery_sequencer.goal)
+                                        rearm_gate = validate_joint_path(
+                                            p, arm, safety_obstacles, joints,
+                                            [start_rad, goal_rad],
+                                            maximum_joint_step_rad=min(
+                                                recovery_policy["max_joint_step_rad"],
+                                                JOG_MAX_SAMPLE_STEP_RAD),
+                                            clearance_m=safety_clearance_m +
+                                                safe_gui_jog.extra_clearance_m,
+                                            maximum_samples=recovery_policy[
+                                                "max_collision_samples"],
+                                            physics_client_id=client)
+                                        if not rearm_gate["passed"]:
+                                            raise RuntimeError(
+                                                "HOLD C APF endpoint correction "
+                                                "refused by full-link safety: " +
+                                                str(rearm_gate["collision"]))
+                                        error = max(abs(a-b) /
+                                            wire.JOINT_ANGLE_SCALE
+                                            for a,b in zip(
+                                                recovery_sequencer.goal, measured))
+                                        event = {
+                                            "event": "hold_C_apf_endpoint_rearm",
+                                            "sequence_next": (
+                                                recovery_sequencer.sequence+1)&0xff,
+                                            "attempt": (
+                                                recovery_sequencer.rearms_current_segment+1),
+                                            "measured_error_deg": error,
+                                            "full_link_gate": rearm_gate,
+                                        }
+                                        audit.write(json.dumps(event) + "\n")
+                                        recovery_endpoint_rearm_events.append(event)
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
+                                        sock.sendall(
+                                            recovery_sequencer.reissue_current_goal_from_feedback(
+                                                time.monotonic(),
+                                                max_rearms=GUI_ENDPOINT_REARMS_OBSTACLE,
+                                                measured_error_deg=error))
                                 if sequencer.observe(measured):
+                                    endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = None
                                     print(f"[SETTLED] Segment {sequencer.completed}/"
                                           f"{len(sequencer.goals)}")
                                     if not sequencer.done:
                                         sock.sendall(sequencer.next_request(time.monotonic()))
+                                elif (not options.headless
+                                      and sequencer.accepted and not sequencer.done
+                                      and sequencer.rearms_current_segment <
+                                          (GUI_ENDPOINT_REARMS_OBSTACLE if safety_obstacles
+                                           else GUI_ENDPOINT_REARMS_CLEAR)
+                                      and sequencer.goal is not None):
+                                    # A native GUI servo's velocity caps can
+                                    # leave a small, physically stationary
+                                    # endpoint residual. Never waive the
+                                    # original 0.15deg/15-frame acceptance:
+                                    # explicitly ask the *real firmware* to
+                                    # replan from the current measured pose.
+                                    # A second attempt is allowed for a
+                                    # collision-preflighted APF leg only if
+                                    # the first correction improved feedback.
+                                    if (endpoint_prev_feedback is not None and
+                                            max(abs(x-y) for x,y in zip(
+                                                endpoint_prev_feedback, measured)) <= 1):
+                                        endpoint_stable_frames += 1
+                                    else:
+                                        endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = tuple(measured)
+                                    endpoint_error = max(abs(x-y) /
+                                        wire.JOINT_ANGLE_SCALE for x,y in zip(
+                                            sequencer.goal, measured))
+                                    max_endpoint_rearms = (
+                                        GUI_ENDPOINT_REARMS_OBSTACLE if safety_obstacles
+                                        else GUI_ENDPOINT_REARMS_CLEAR)
+                                    if small_endpoint_rearm_ready(
+                                            sequencer, measured, endpoint_stable_frames,
+                                            time.monotonic(),
+                                            max_rearms=max_endpoint_rearms,
+                                            full_link_preflight_required=bool(
+                                                safety_obstacles)):
+                                        # The obstructed APF route must NOT
+                                        # inherit the clear-scene rearm
+                                        # permission. Validate the entire new
+                                        # measured-pose -> same-goal segment
+                                        # against actual PyBullet links first.
+                                        gate_info = None
+                                        if safety_obstacles:
+                                            from stage5_collision_validation import (
+                                                validate_joint_path)
+                                            from stage5_avoidance_uart_gate import load_scene
+                                            _, collision_policy = load_scene(
+                                                plan["route_case"])
+                                            start_rad = tuple(
+                                                math.radians(v /
+                                                    wire.JOINT_ANGLE_SCALE)
+                                                for v in measured)
+                                            goal_rad = tuple(
+                                                math.radians(v /
+                                                    wire.JOINT_ANGLE_SCALE)
+                                                for v in sequencer.goal)
+                                            gate_info = validate_joint_path(
+                                                p, arm, safety_obstacles, joints,
+                                                [start_rad, goal_rad],
+                                                maximum_joint_step_rad=collision_policy[
+                                                    "max_joint_step_rad"],
+                                                clearance_m=safety_clearance_m,
+                                                maximum_samples=collision_policy[
+                                                    "max_collision_samples"],
+                                                physics_client_id=client)
+                                            if not gate_info["passed"]:
+                                                raise RuntimeError(
+                                                    "Small endpoint rearm refused by "
+                                                    "full-link safety preflight: "
+                                                    + str(gate_info["collision"]))
+                                        event = dict(
+                                            event="segment_endpoint_rearm_requested",
+                                            segment=sequencer.index+1,
+                                            measured_error_deg=endpoint_error,
+                                            source="fresh_physical_feedback",
+                                            full_link_rearm_gate=gate_info,
+                                            attempt=sequencer.rearms_current_segment+1,
+                                            max_rearms=max_endpoint_rearms)
+                                        endpoint_rearm_events.append(event)
+                                        audit.write(json.dumps(event) + "\n")
+                                        print("[SEGMENT ENDPOINT REARM] "
+                                              f"segment={sequencer.index+1} "
+                                              f"error={endpoint_error:.3f}deg; "
+                                              "new firmware planning request; "
+                                              "not yet settled", flush=True)
+                                        endpoint_stable_frames = 0
+                                        endpoint_prev_feedback = None
+                                        sock.sendall(sequencer.reissue_current_goal_from_feedback(
+                                            time.monotonic(),
+                                            max_rearms=max_endpoint_rearms,
+                                            measured_error_deg=endpoint_error))
+                                else:
+                                    endpoint_stable_frames = 0
+                                    endpoint_prev_feedback = None
                                 if options.frame_delay_s > 0:
                                     time.sleep(options.frame_delay_s)
                             elif (command == wire.CMD_JOINT_STATE_ACK and
@@ -1874,6 +2232,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     diagnostics_pending)
                                 diagnostic_values[diagnostics_pending] = (
                                     struct.unpack("<I", payload)[0])
+                                if (diagnostics_pending == "monitoring_ticks" and
+                                        first_monitor_clock_sample is None and
+                                        target_frames > 0):
+                                    # Both measurements are observed in this
+                                    # SAME UART callback, after GUI preparation.
+                                    first_monitor_clock_sample = (
+                                        diagnostic_values[diagnostics_pending],
+                                        target_frames)
                                 audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
                                     value=diagnostic_values[diagnostics_pending],
                                     wall_s=time.monotonic()-start_wall)) + "\n")
@@ -1953,16 +2319,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             trajectory_ratio, trajectory_aligned = assess_clock_alignment(
                 diagnostic_values.get("trajectory_samples"), target_frames,
                 trajectory_period_s)
-            monitor_ratio, monitor_aligned = assess_clock_alignment(
+            monitor_ratio, _ = assess_clock_alignment(
                 diagnostic_values.get("monitoring_ticks"), target_frames,
                 monitor_period_s)
-            # A short APF route has a larger fraction of idle/settle time;
-            # Monitor ticks include it, while planner samples do not.
+            monitor_window_ratio, monitor_window_aligned = (
+                assess_monitor_clock_window(
+                    first_monitor_clock_sample,
+                    diagnostic_values.get("monitoring_ticks"),
+                    target_frames, monitor_period_s))
+            # Monitor is a continuously running RTOS task, including during
+            # GUI/URDF/APF preparation before the *first* physics frame.
+            # For APF also cover idle HOLD via the monitor tick counter, but
+            # subtract the live first-sample epoch; never compare raw
+            # power-on lifetime to a shorter PyBullet execution lifetime.
             clock_ratio, clock_aligned = (
                 (trajectory_ratio, trajectory_aligned) if prepare_motion is None
-                else (monitor_ratio, monitor_aligned))
+                else (monitor_window_ratio, monitor_window_aligned))
             clock_reference = (
-                "trajectory_samples" if prepare_motion is None else "monitoring_ticks")
+                "trajectory_samples" if prepare_motion is None
+                else "monitoring_ticks_live_window")
             passed = (
                 clock_aligned
                 and (not options.gui_safe_jog or (
@@ -1970,6 +2345,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     safe_gui_jog.applied >= 1 and
                     safe_gui_jog.applied == safe_gui_jog.completed ==
                     hold_recoveries and
+                    safe_gui_jog.refused == 0 and
+                    safe_gui_jog.finish_requested and
                     recovery_segments_settled >= safe_gui_jog.applied))
                 and sequencer.done
                 and feedback_acks >= 3
@@ -1995,6 +2372,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "obstacle_recovery_preflight": recovery_plan_report,
                 "obstacle_recovery_segments_settled": recovery_segments_settled,
                 "obstacle_recovery_routes": recovery_route_events,
+                "obstacle_recovery_endpoint_rearms":
+                    recovery_endpoint_rearm_events,
                 "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
                 "physical_ee_goal_error_at_hold_entry_mm":
                     settled_ee_goal_error_mm,
@@ -2006,6 +2385,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     bool(collision_scans) if prepare_motion is not None else None),
                 "segments_requested": len(sequencer.goals),
                 "segments_settled": sequencer.completed,
+                "segment_endpoint_rearms": sequencer.endpoint_rearms,
+                "segment_endpoint_rearm_events": endpoint_rearm_events,
                 "segment_final_errors_deg": sequencer.segment_final_errors_deg,
                 "max_final_segment_error_deg": max(
                     sequencer.segment_final_errors_deg, default=None
@@ -2015,11 +2396,17 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
                 "rtos_trajectory_to_physics_time_ratio": trajectory_ratio,
                 "rtos_monitor_to_physics_time_ratio": monitor_ratio,
+                "rtos_monitor_live_window_ratio": monitor_window_ratio,
+                "rtos_monitor_live_window_baseline": (
+                    list(first_monitor_clock_sample)
+                    if first_monitor_clock_sample is not None else None),
                 "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
-                "clock_alignment_note": "Planning task sample count times configured period; "
-                                        "not a hardware-tick precision measurement",
+                "clock_alignment_note": (
+                    "Planning samples and live-epoch monitoring deltas are "
+                    "compared against physically advanced UART feedback frames; "
+                    "raw RTOS monitor lifetime since boot is diagnostic only."),
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
@@ -2093,7 +2480,10 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     except BaseException as error:
         failure = dict(passed=False, error=repr(error),
             target_frames=target_frames, feedback_acks=feedback_acks,
-            segments_settled=sequencer.completed, diagnostics=diagnostic_values,
+            segments_settled=sequencer.completed,
+            segment_endpoint_rearms=sequencer.endpoint_rearms,
+            segment_endpoint_rearm_events=endpoint_rearm_events,
+            diagnostics=diagnostic_values,
             physical_ee_at_hold_entry_m=settled_ee_xyz_m,
             physical_ee_goal_error_at_hold_entry_mm=settled_ee_goal_error_mm,
             planned_route_minimum_full_link_clearance_m=(

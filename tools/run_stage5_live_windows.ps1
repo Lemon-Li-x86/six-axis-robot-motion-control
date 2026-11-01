@@ -9,9 +9,14 @@ param(
     [ValidateSet("", "clear", "blocked")][string]$Stage5RouteCase = "",
     [switch]$RawRoute,
     [ValidateSet("single-turn", "urdf")][string]$GuiJointTravel = "single-turn",
-    [switch]$SafeJog
+    [switch]$SafeJog,
+    # Stage5 final user-visible acceptance: real J6 +0.5 followed by +2.
+    [switch]$RequireTwoStepJog
 )
 $ErrorActionPreference = "Stop"
+if ($RequireTwoStepJog -and -not $SafeJog) {
+    throw "-RequireTwoStepJog needs -SafeJog, blocked C APF route and active HOLD"
+}
 if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
     throw "-SafeJog requires -Stage5RouteCase blocked, active HOLD and no -ObserveHold"
 }
@@ -75,13 +80,23 @@ try {
     if ($SafeJog) {
         # Audit the persisted physical evidence separately. Cancellation,
         # incomplete UART return or GUI disconnection must never count as PASS.
-        & $Python tools/check_stage5_safe_gui_acceptance.py (Join-Path $OutputDir "result.json")
+        $auditArgs = @("tools/check_stage5_safe_gui_acceptance.py",
+                        (Join-Path $OutputDir "result.json"))
+        if ($RequireTwoStepJog) { $auditArgs += "--two-step" }
+        & $Python @auditArgs
         $auditExit = $LASTEXITCODE
         if ($liveExit -ne 0 -or $auditExit -ne 0) {
             throw "SAFE GUI JOG NOT PASS. Keep $OutputDir logs; inspect worker.log."
         }
     } elseif ($liveExit -ne 0) {
         throw "Live control failed; inspect $OutputDir/worker.log"
+    }
+    if ($RequireTwoStepJog) {
+        # Archive only a separately audited PASS. On failure the raw traces
+        # remain untouched for investigation in the output directory.
+        $archive = "$OutputDir.zip"
+        Compress-Archive -Path (Join-Path $OutputDir "*") -DestinationPath $archive -Force
+        Write-Host "[Stage5] Two-step Windows PASS, evidence archive: $archive"
     }
 } finally {
     Pop-Location

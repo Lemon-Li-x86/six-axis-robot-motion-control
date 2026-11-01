@@ -209,6 +209,8 @@ def capture_worker(
     c_apf_library=None, route_case="clear", raw_route=False,
     gui_joint_travel=DEFAULT_GUI_JOINT_TRAVEL_MODE,
     gui_safe_jog=False, ci_scripted_safe_jog=False,
+    ci_scripted_safe_jog_two_step=False,
+    ci_scripted_safe_jog_repeat=False,
 ) -> None:
     """Run actual ARM/FreeRTOS control and the only PyBullet physics client."""
     options = DemoOptions(
@@ -220,6 +222,8 @@ def capture_worker(
         gui_joint_travel=gui_joint_travel,
         gui_safe_jog=gui_safe_jog,
         ci_scripted_safe_jog=ci_scripted_safe_jog,
+        ci_scripted_safe_jog_two_step=ci_scripted_safe_jog_two_step,
+        ci_scripted_safe_jog_repeat=ci_scripted_safe_jog_repeat,
     )
     hold_at = None
     peak_error_deg = 0.0
@@ -446,6 +450,8 @@ def run_live(
     gui_joint_travel: str = DEFAULT_GUI_JOINT_TRAVEL_MODE,
     gui_safe_jog: bool = False,
     ci_scripted_safe_jog: bool = False,
+    ci_scripted_safe_jog_two_step: bool = False,
+    ci_scripted_safe_jog_repeat: bool = False,
 ) -> dict:
     """Observe the physics worker; never create another PyBullet robot."""
     if not elf.is_file():
@@ -488,8 +494,13 @@ def run_live(
         raise ValueError(
             "SAFE GUI JOG requires native GUI, blocked C APF/IK, "
             "interactive HOLD and no headless disturbance mode")
-    if ci_scripted_safe_jog and not gui_safe_jog:
+    if (ci_scripted_safe_jog or ci_scripted_safe_jog_two_step or
+            ci_scripted_safe_jog_repeat) and not gui_safe_jog:
         raise ValueError("CI scripted GUI jog requires explicit --safe-gui-jog")
+    if sum(bool(x) for x in (ci_scripted_safe_jog,
+                            ci_scripted_safe_jog_two_step,
+                            ci_scripted_safe_jog_repeat)) > 1:
+        raise ValueError("Choose only one CI scripted jog mode")
     if c_apf_library is not None and not c_apf_library.is_file():
         raise FileNotFoundError(f"C APF/IK library not found: {c_apf_library}")
     if c_apf_library is not None and test_disturbance:
@@ -517,7 +528,8 @@ def run_live(
             diagnostics_timeout_s, observe_hold,
             str(c_apf_library.resolve()) if c_apf_library else None,
             route_case, raw_route, gui_joint_travel, gui_safe_jog,
-            ci_scripted_safe_jog,
+            ci_scripted_safe_jog, ci_scripted_safe_jog_two_step,
+            ci_scripted_safe_jog_repeat,
         ),
         name="stage5-qemu-uart-pybullet-physics",
     )
@@ -808,6 +820,12 @@ def main() -> int:
         help="CI-only: one collision-checked J6 +0.5deg in native p.GUI and "
              "automatically finish after real UART ACK + settled recovery; "
              "does not test human mouse input")
+    parser.add_argument("--ci-scripted-safe-jog-two-step", action="store_true",
+        help="CI-only: J6 +0.5deg settled C return, then J6 +2deg settled "
+             "C return in the same native GUI; not human mouse input")
+    parser.add_argument("--ci-scripted-safe-jog-repeat", action="store_true",
+        help="CI-only: J6 +0.5, +2, +2, +2, +2deg with all FIVE real C UART "
+             "returns. Catch any button lifetime cap; not operator input")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "build/stage5-live-qemu-gui")
     parser.add_argument("--timeout-s", type=float, default=210.0)
@@ -837,7 +855,9 @@ def main() -> int:
              args.diagnostics_timeout_s, args.observe_hold,
              args.stage5_c_apf_library, args.stage5_route_case,
              args.stage5_raw_route, args.gui_joint_travel,
-             args.safe_gui_jog, args.ci_scripted_safe_jog)
+             args.safe_gui_jog, args.ci_scripted_safe_jog,
+             args.ci_scripted_safe_jog_two_step,
+             args.ci_scripted_safe_jog_repeat)
     return 0
 
 

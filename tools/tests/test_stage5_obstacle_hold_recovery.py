@@ -193,6 +193,84 @@ class RealCRecoveryTest(unittest.TestCase):
             self.arm, joint, physicsClientId=self.client)[0]
             for joint in self.joints))
 
+    def test_gui_j6_two_degrees_from_settled_002deg_residual_is_not_an_ik_jump(self):
+        """Reproduce Windows user 0.5deg return, then +2deg at J6 14.17deg.
+
+        The generic 2deg cap must still reject any unexplained 2.02deg
+        jump. Only the pre-click settled pose + exact authorized GUI delta
+        can explain it. Full-link PyBullet path checking stays mandatory.
+        """
+        p = self.p
+        for j, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, j, angle,
+                              physicsClientId=self.client)
+        p.resetJointState(
+            self.arm, self.joints[5],
+            self.final_goal[5] + math.radians(0.02),
+            physicsClientId=self.client)
+        before = tuple(p.getJointState(
+            self.arm, j, physicsClientId=self.client)[0]
+            for j in self.joints)
+        candidate = list(before)
+        candidate[5] += math.radians(2.0)
+        p.resetJointState(
+            self.arm, self.joints[5], candidate[5],
+            physicsClientId=self.client)
+        authorized = dict(start_joint_rad=before,
+                          axis=5, delta_rad=math.radians(2.0))
+        def run(jog_context=None):
+            with patch("stage5_obstacle_hold_recovery.preflight_joint_avoidance",
+                       side_effect=CartesianGoalAlreadyReached(
+                           "C APF goal already reached")):
+                return plan_obstacle_hold_recovery(
+                    self.dll, p, self.arm, self.joints, self.obstacles,
+                    self.client, self.original["cartesian_goal_m"],
+                    self.final_goal, "blocked",
+                    minimum_extra_clearance_m=0.002,
+                    jog_context=jog_context,
+                    hold_settle_tolerance_rad=math.radians(0.15))
+        with self.assertRaisesRegex(RejectedRoute, "too far in joint space"):
+            run()
+        route = run(authorized)
+        self.assertTrue(route["passed"])
+        self.assertEqual(route["C_apf_ik_joint_segments"], 0)
+        self.assertEqual(len(route["joint_waypoints_rad"]), 2)
+        self.assertGreaterEqual(route["minimum_measured_full_link_clearance_m"], .012)
+        self.assertEqual(tuple(route["joint_waypoints_rad"][-1]),
+                         tuple(self.final_goal))
+        self.assertAlmostEqual(
+            math.degrees(route["start_joint_rad"][5]-self.final_goal[5]), 2.02)
+        self.assertEqual(tuple(p.getJointState(
+            self.arm, j, physicsClientId=self.client)[0]
+            for j in self.joints), tuple(candidate))
+
+    def test_forged_gui_jog_context_cannot_bypass_zero_leg_jump_gate(self):
+        p = self.p
+        for j, angle in zip(self.joints, self.final_goal):
+            p.resetJointState(self.arm, j, angle,
+                              physicsClientId=self.client)
+        # A distant pose 3deg from goal is not an authorized 2deg click.
+        p.resetJointState(self.arm, self.joints[5],
+                          self.final_goal[5] + math.radians(3.0),
+                          physicsClientId=self.client)
+        no_start = dict(start_joint_rad=tuple(self.final_goal),
+                        axis=5, delta_rad=math.radians(2.0))
+        wrong_axis = dict(start_joint_rad=tuple(self.final_goal),
+                          axis=4, delta_rad=math.radians(2.0))
+        too_large = dict(start_joint_rad=tuple(self.final_goal),
+                         axis=5, delta_rad=math.radians(3.0))
+        for intent in (no_start, wrong_axis, too_large):
+            with self.subTest(intent=intent):
+                with patch("stage5_obstacle_hold_recovery.preflight_joint_avoidance",
+                           side_effect=CartesianGoalAlreadyReached("C goal reached")):
+                    with self.assertRaisesRegex(RejectedRoute, "too far in joint space"):
+                        plan_obstacle_hold_recovery(
+                            self.dll,p,self.arm,self.joints,self.obstacles,
+                            self.client,self.original["cartesian_goal_m"],
+                            self.final_goal,"blocked",
+                            jog_context=intent,
+                            hold_settle_tolerance_rad=math.radians(0.15))
+
     def test_zero_C_cartesian_waypoints_cannot_excuse_large_joint_jump(self):
         p = self.p
         for joint, angle in zip(self.joints, self.final_goal):

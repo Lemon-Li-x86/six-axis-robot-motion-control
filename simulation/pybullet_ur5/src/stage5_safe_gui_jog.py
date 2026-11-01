@@ -24,7 +24,6 @@ JOG_MAX_SAMPLE_STEP_RAD = math.radians(0.25)
 JOG_MIN_DEG = 0.5
 JOG_MAX_DEG = 2.0
 JOG_DEG_INCREMENT = 0.5
-JOG_MAX_SUCCESSES = 3
 
 
 def set_native_gui_status(text: str) -> bool:
@@ -78,7 +77,7 @@ class SafeGuiJog:
         obstacles: Sequence[int], client: int,
         joint_limits_rad: Sequence[tuple[float, float]],
         *, maximum_joint_step_rad: float, minimum_clearance_m: float,
-        maximum_samples: int, preview_return: Callable[[], dict],
+        maximum_samples: int, preview_return: Callable[..., dict],
     ):
         if (len(joints) != 6 or len(joint_limits_rad) != 6 or
                 not obstacles or not callable(preview_return) or
@@ -95,6 +94,7 @@ class SafeGuiJog:
         self.minimum_clearance_m = minimum_clearance_m
         self.maximum_samples = maximum_samples
         self.preview_return = preview_return
+        self.last_authorized_jog: dict | None = None
         self.extra_clearance_m = JOG_EXTRA_CLEARANCE_M
         self.events: list[dict] = []
         self.applied = 0
@@ -155,7 +155,13 @@ class SafeGuiJog:
         if self.available or self.completed >= self.applied:
             raise RuntimeError("Safe jog recovery completion without an in-flight jog")
         self.completed += 1
-        self.available = self.applied < JOG_MAX_SUCCESSES
+        # A completed C/UART physical return consumes its one-shot GUI
+        # authorization. It must not authorize a later unrelated disturbance.
+        self.last_authorized_jog = None
+        # The operator may jog again after every actual settled C/UART return.
+        # Only in-flight recovery and FINISH/CANCEL lock inputs, not a click
+        # counter. Independent collision, URDF and C route gates still apply.
+        self.available = not (self.finish_requested or self.cancel_requested)
 
     def status_text(self, done: bool) -> str:
         """Persistent feedback; a small completed jog can be hard to see."""
@@ -171,7 +177,7 @@ class SafeGuiJog:
                 "safe_gui_jog_rejected", "safe_gui_jog_finish_rejected"):
             phase = "REFUSED: " + self.events[-1]["reason"]
         elif self.completed:
-            phase = "RETURN COMPLETE: click FINISH"
+            phase = "RETURN COMPLETE: jog again or FINISH"
         else:
             phase = "READY: choose joint/step, click +/-"
         return (f"SAFE JOG {phase} | applied={self.applied} "
@@ -184,8 +190,9 @@ class SafeGuiJog:
             axis, step_deg = (
                 self._selection() if selection is None else selection)
             if selection is not None and not (
-                    axis == len(self.joints) - 1 and step_deg == JOG_MIN_DEG):
-                raise ValueError("CI scripted jog permits only final joint at minimum step")
+                    axis == len(self.joints) - 1 and
+                    step_deg in (JOG_MIN_DEG, JOG_MAX_DEG)):
+                raise ValueError("CI scripted jog permits only J6 at 0.5 or 2deg")
         except (ValueError, TypeError) as error:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "invalid_selection", "detail": str(error), "sign": sign}
@@ -230,7 +237,15 @@ class SafeGuiJog:
                     physicsClientId=self.client)
             print("[SAFE GUI JOG PHASE] c_return_preview_started", flush=True)
             preview_started = time.monotonic()
-            preview = self.preview_return()
+            # This intent is only authorized if BOTH C return and outbound
+            # full-arm preflights pass. It captures the actual pre-click
+            # settled pose, avoiding the mistaken 2.02deg-vs-2.00deg gate.
+            jog_intent = {
+                "start_joint_rad": tuple(current),
+                "axis": axis,
+                "delta_rad": math.radians(sign * step_deg),
+            }
+            preview = self.preview_return(jog_context=jog_intent)
             print(
                 "[SAFE GUI JOG PHASE] c_return_preview_finished "
                 f"wall_s={time.monotonic()-preview_started:.3f}",
@@ -250,10 +265,12 @@ class SafeGuiJog:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "recovery_preflight_failed", **base}
 
-        # The only permanent state change follows all checks.
+        # The only permanent state change follows all checks. The same
+        # proven GUI intent is supplied at runtime for fresh-pose C planning.
         p.resetJointState(
             self.robot, self.joints[axis], targetValue=candidate[axis],
             targetVelocity=0.0, physicsClientId=self.client)
+        self.last_authorized_jog = jog_intent
         return {
             "event": "safe_gui_jog_applied", **base,
             "required_clearance_m": required,
@@ -265,16 +282,25 @@ class SafeGuiJog:
         }
 
     def request_ci_scripted_j6_half_degree(self) -> dict:
-        """Opt-in integration fixture: identical collision/C preview as GUI click.
+        """Preserve the existing single 0.5deg CI integration fixture."""
+        return self.request_ci_scripted_j6_step(JOG_MIN_DEG)
 
-        No UART request, motor bypass, fake feedback or alternate planner.
-        Deliberately not called in the ordinary GUI user path.
+    def request_ci_scripted_j6_step(
+        self, step_deg: float, *, max_scripted_steps: int = 2,
+    ) -> dict:
+        """CI fixture: one real physical J6 +0.5 or +2deg, never fake UART.
+
+        Each consecutive request requires the previous C/UART physical
+        recovery to have settled and returned to the actual HOLD pose.
         """
-        if (self.applied != 0 or not self.available or
+        if (step_deg not in (JOG_MIN_DEG, JOG_MAX_DEG) or
+                not self.available or self.applied != self.completed or
+                not 1 <= max_scripted_steps <= 5 or
+                self.applied >= max_scripted_steps or
                 self.finish_requested or self.cancel_requested):
-            raise RuntimeError("CI jog may only be injected once from idle HOLD")
+            raise RuntimeError("CI J6 jog requires fresh settled idle HOLD")
         event = self._authorize(
-            1, selection=(len(self.joints) - 1, JOG_MIN_DEG))
+            1, selection=(len(self.joints) - 1, step_deg))
         if event["event"] == "safe_gui_jog_applied":
             self.applied += 1
             self.available = False
@@ -289,12 +315,14 @@ class SafeGuiJog:
                 + str(event))
         return event
 
-    def request_ci_finish(self):
-        """Require a settled real C/UART recovery before ending CI GUI HOLD."""
-        if (self.applied != 1 or self.completed != 1
-                or self.available is False or self.finish_requested
+    def request_ci_finish(self, *, expected_recoveries: int = 1):
+        """Require all real C/UART recoveries before ending CI GUI HOLD."""
+        if (expected_recoveries not in (1, 2, 5) or
+                self.applied != expected_recoveries or
+                self.completed != expected_recoveries or
+                self.available is False or self.finish_requested
                 or self.cancel_requested):
-            raise RuntimeError("CI finish requires one completed real C recovery")
+            raise RuntimeError("CI finish requires completed real C recovery for every scripted step")
         self.finish_requested = True
         event = {"event": "safe_gui_jog_finish_requested",
                  "source": "ci_scripted_native_gui_jog",
@@ -334,10 +362,14 @@ class SafeGuiJog:
                                 "poll": self.polls})
             print("[SAFE GUI INPUT] " + str(self.events[-1]), flush=True)
             if (not done or ending or self.finish_requested
-                    or self.cancel_requested or not self.available or
-                    self.applied >= JOG_MAX_SUCCESSES):
+                    or self.cancel_requested or not self.available):
+                reason = (
+                    "not_in_hold" if not done else
+                    "session_ending" if (ending or self.finish_requested
+                                         or self.cancel_requested) else
+                    "recovery_in_progress")
                 event = {"event": "safe_gui_jog_rejected", "sign": sign,
-                         "reason": "not_idle_or_recovery_pending_or_limit"}
+                         "reason": reason}
                 self.refused += 1
             else:
                 event = self._authorize(sign)

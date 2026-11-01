@@ -34,6 +34,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
     assess_clock_alignment,
+    assess_monitor_clock_window,
     joint_feedback_frame,
     canonical_physical_feedback,
     closest_physical_motor_targets,
@@ -43,6 +44,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     hold_continuous_goal_raw,
     hold_replan_allowed,
     hold_recovery_requested,
+    small_endpoint_rearm_ready,
     execute_guarded_gui_jog,
     HOLD_STAGNANT_PERIOD_S,
     HOLD_RETRY_COOLDOWN_S,
@@ -190,6 +192,28 @@ class QmpClockGateTests(unittest.TestCase):
 
 
 class MotionSequencerTests(unittest.TestCase):
+    def test_monitor_clock_must_use_same_live_epoch_as_physics(self):
+        # This reproduces the measured QEMU 155 monitor ticks / 1011 Bullet
+        # frames failure: raw 15.5s since boot vs 10.11s since GUI startup.
+        raw, raw_passed = assess_clock_alignment(155, 1011, 0.1)
+        self.assertFalse(raw_passed)
+        self.assertGreater(raw, 1.25)
+        # First UART diagnostic was sampled after GUI preparation; compare
+        # actual elapsed RTOS and physically stepped feedback frames.
+        ratio, passed = assess_monitor_clock_window(
+            (63, 90), 155, 1011, 0.1)
+        self.assertTrue(passed)
+        self.assertAlmostEqual(ratio, 9.2 / 9.21)
+        for baseline, final_tick, frames in (
+            (None, 155, 1011),
+            ((63, 90), None, 1011),
+            ((63, 90), 63, 1011),
+            ((63, 90), 155, 90),
+            ((63, 90), 200, 91),  # Unreal time amplification.
+        ):
+            self.assertEqual(assess_monitor_clock_window(
+                baseline, final_tick, frames, 0.1)[1], False)
+
     def test_physics_time_must_match_firmware_trajectory_samples(self) -> None:
         # DIRECT reference: 319 * 20ms ~= 640 * 10ms physical integration.
         ratio, accepted = assess_clock_alignment(319, 640, 0.020)
@@ -271,6 +295,125 @@ class MotionSequencerTests(unittest.TestCase):
             self.assertEqual(runner.completed, index + 1)
         self.assertTrue(runner.done)
         self.assertEqual(len(runner.segment_final_errors_deg), 3)
+
+    def test_small_endpoint_rearm_gate_rejects_early_large_or_settled_cases(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        residual = tuple(v + 24 for v in goal)  # 0.24deg is outside 0.15deg.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 2.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT - 1, 4.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, tuple(v + 60 for v in goal), SETTLE_FRAME_COUNT, 4.0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, goal, SETTLE_FRAME_COUNT, 4.0))
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0))
+        runner.reissue_current_goal_from_feedback(now=4.0)
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 7.0))
+
+    def test_static_apf_larger_stalled_error_must_not_be_mistaken_for_hold(self):
+        runner = MotionSequencer((SCENARIOS["six_axis"][0],))
+        goal = runner.goals[0]
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        # Actual blocked-path Linux trace: segment 3 stopped ~0.64deg
+        # away from the production C goal. This is not a settled motion.
+        residual = tuple(v + 64 for v in goal)
+        for _ in range(SETTLE_FRAME_COUNT * 2):
+            self.assertFalse(runner.observe(residual))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0, max_rearms=2))
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0,
+            max_rearms=2, full_link_preflight_required=True))
+        self.assertEqual(runner.completed, 0)
+        # At this point the production GUI caller must validate the actual
+        # full-link sweep and may only then issue this *real* new UART frame.
+        packet = runner.reissue_current_goal_from_feedback(
+            4.0, max_rearms=2, measured_error_deg=0.64)
+        self.assertEqual(packet[4], 42)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        # A stationary but NON-improving residual is never authorized again.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 8.0,
+            max_rearms=2, full_link_preflight_required=True))
+
+    def test_collision_gated_second_endpoint_rearm_must_improve_and_reack(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        first = tuple(v + 50 for v in goal)
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 4.0, max_rearms=2))
+        runner.reissue_current_goal_from_feedback(
+            4.0, max_rearms=2, measured_error_deg=0.50)
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        # No second retry if the physical residual did not improve.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        second = tuple(v + 19 for v in goal)
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, second, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        packet = runner.reissue_current_goal_from_feedback(
+            8.0, max_rearms=2, measured_error_deg=0.19)
+        self.assertEqual(packet[4], 43)
+        self.assertEqual(runner.endpoint_rearms, 2)
+        runner.acknowledge(struct.pack("<Bb", 43, 0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, second, SETTLE_FRAME_COUNT, 12.0, max_rearms=2))
+        within = tuple(v + 7 for v in goal)
+        for _ in range(SETTLE_FRAME_COUNT - 1):
+            self.assertFalse(runner.observe(within))
+        self.assertTrue(runner.observe(within))
+        self.assertEqual(runner.completed, 1)
+        self.assertLessEqual(runner.segment_final_errors_deg[0], 0.15)
+
+    def test_one_measured_endpoint_rearm_requires_real_second_ack_and_settle(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=1.0)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=1.5)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        residual = tuple(value + 24 for value in goal)
+        for _ in range(SETTLE_FRAME_COUNT * 2):
+            self.assertFalse(runner.observe(residual))
+        self.assertEqual(runner.completed, 0)
+        packet = runner.reissue_current_goal_from_feedback(now=4.0)
+        self.assertEqual(packet[4], 42)
+        self.assertEqual(packet[5:17], struct.pack("<6h", *goal))
+        self.assertEqual(runner.index, 0)
+        self.assertEqual(runner.endpoint_rearms, 1)
+        self.assertFalse(runner.accepted)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=4.1)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        for _ in range(SETTLE_FRAME_COUNT-1):
+            self.assertFalse(runner.observe(goal))
+        self.assertTrue(runner.observe(goal))
+        self.assertTrue(runner.done)
+        self.assertEqual(runner.segment_final_errors_deg, [0.0])
+
+    def test_rearm_is_not_allowed_after_success_or_again_on_same_segment(self):
+        runner = MotionSequencer((SCENARIOS["joint_sweep"][0],))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        runner.reissue_current_goal_from_feedback(now=3.0)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=7.0)
+        for _ in range(SETTLE_FRAME_COUNT):
+            runner.observe(runner.goal)
+        with self.assertRaisesRegex(RuntimeError, "cannot be safely reissued"):
+            runner.reissue_current_goal_from_feedback(now=10.0)
 
     def test_pending_request_cannot_be_overwritten(self) -> None:
         runner = MotionSequencer(SCENARIOS["joint_sweep"])

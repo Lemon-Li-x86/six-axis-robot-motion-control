@@ -14,13 +14,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
 
-from stage5_safe_gui_jog import JOG_MIN_DEG  # noqa: E402
+from stage5_safe_gui_jog import JOG_MIN_DEG, JOG_MAX_DEG  # noqa: E402
 from stage5_qemu_uart_visual_demo import SETTLE_TOLERANCE_DEG  # noqa: E402
 
 
-def evaluate(report: dict) -> list[str]:
+def evaluate(
+    report: dict, *, two_step: bool = False, repeated: bool = False,
+) -> list[str]:
     """Return reasons for NOT PASS, without weakening the production verdict."""
     failures: list[str] = []
+    if two_step and repeated:
+        return ["mutually exclusive two_step and repeated fixture selections"]
     def need(ok: bool, message: str) -> None:
         if not ok:
             failures.append(message)
@@ -42,10 +46,17 @@ def evaluate(report: dict) -> list[str]:
          "guarded C recovery preflight missing")
     need(report.get("runtime_full_link_collision_free") is True,
          "physical per-frame full-link collision validation missing")
+    # A PASS must not hide a later operator click that was refused. This
+    # previously let "+0.5deg PASS then +2deg REFUSED" appear successful.
+    need(report.get("safe_gui_jog_refused", 0) == 0,
+         "one or more operator GUI jog requests were refused")
     applied = report.get("safe_gui_jog_applied")
     completed = report.get("safe_gui_jog_completed")
     recovered = report.get("hold_recoveries")
-    need(type(applied) is int and applied > 0 and
+    # Scenario requirements are minima, NOT a UI lifetime cap. An operator
+    # may legitimately continue J1..J6 jogs after the initial 0.5/2deg trial.
+    minimum = 5 if repeated else 2 if two_step else 1
+    need(type(applied) is int and applied >= minimum and
          applied == completed == recovered,
          "guarded GUI jog, C UART recovery and physical settlement counts differ")
     routes = report.get("obstacle_recovery_routes")
@@ -54,15 +65,47 @@ def evaluate(report: dict) -> list[str]:
              for route in routes),
          "not every C recovery route completed")
     events = report.get("safe_gui_jog_events")
-    need(isinstance(events, list) and any(
-        isinstance(event, dict)
-        and event.get("event") == "safe_gui_jog_applied"
-        and event.get("joint") == 6
-        and isinstance(event.get("displacement_deg"), (int, float))
-        and math.isclose(event["displacement_deg"], JOG_MIN_DEG,
-                         rel_tol=0, abs_tol=1e-8)
-        for event in events or []),
-        "validated J6 +minimum-step jog event absent")
+    if two_step or repeated:
+        need(isinstance(events, list) and any(
+            isinstance(event, dict)
+            and event.get("event") == "safe_gui_jog_finish_requested"
+            for event in events),
+            "operator FINISH after second physical return missing")
+    applied_events = [
+        event for event in (events if isinstance(events, list) else [])
+        if isinstance(event, dict) and
+           event.get("event") == "safe_gui_jog_applied"
+    ]
+    need(type(applied) is int and len(applied_events) == applied,
+         "logged operator movements do not match actual C/UART movement count")
+    # All subsequent buttons are permitted, across all six axes, directions
+    # and 0.5deg steps, provided the real safety + C return checks passed.
+    # CI two-step ONLY requires the first two events in a specific order.
+    def valid_movement(event: dict) -> bool:
+        joint, amount = event.get("joint"), event.get("displacement_deg")
+        return (type(joint) is int and 1 <= joint <= 6 and
+                type(amount) in (float, int) and math.isfinite(amount) and
+                JOG_MIN_DEG <= abs(amount) <= JOG_MAX_DEG and
+                math.isclose(abs(amount) / JOG_MIN_DEG,
+                             round(abs(amount) / JOG_MIN_DEG),
+                             abs_tol=1e-8, rel_tol=0))
+    need(all(valid_movement(event) for event in applied_events),
+         "one or more recorded jogs have invalid axis, direction or step")
+    first_steps = [(event.get("joint"), event.get("displacement_deg"))
+                   for event in applied_events[:minimum]]
+    expected_steps = (
+        ((6, JOG_MIN_DEG),) + ((6, JOG_MAX_DEG),)*4
+        if repeated else
+        ((6, JOG_MIN_DEG), (6, JOG_MAX_DEG))
+        if two_step else ((6, JOG_MIN_DEG),)
+    )
+    need(len(first_steps) == minimum and all(
+        joint == expected_joint and
+        type(amount) in (float, int) and
+        math.isclose(amount, expected_amount, rel_tol=0, abs_tol=1e-8)
+        for (joint, amount), (expected_joint, expected_amount)
+        in zip(first_steps, expected_steps)),
+        "required initial J6 +0.5/+2deg sequence missing or out of order")
     need(report.get("bad_checksum_frames") == 0 and
          report.get("bad_ack_frames") == 0,
          "UART checksum/ACK fault")
@@ -84,6 +127,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result", type=Path,
                         help="Stage5 output_dir/result.json")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--two-step", action="store_true",
+                       help="First two physical J6 moves must be +0.5, +2deg")
+    modes.add_argument("--repeat", action="store_true",
+                       help="CI: first five physical J6 moves must be +0.5,+2,+2,+2,+2deg")
     args = parser.parse_args()
     if not args.result.is_file():
         print(f"[STAGE5 GUI] NOT PASS: result.json missing: {args.result}")
@@ -95,12 +143,16 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f"[STAGE5 GUI] NOT PASS: invalid JSON: {exc}")
         return 1
-    failures = evaluate(data)
+    failures = evaluate(data, two_step=args.two_step,
+                        repeated=args.repeat)
     if failures:
         print("[STAGE5 GUI] NOT PASS: " + "; ".join(failures))
         print("Keep worker.log, uart_live.jsonl, observer.jsonl and result.json.")
         return 1
-    print("[STAGE5 GUI] PASS: native virtual GUI, J6 +0.5deg, C APF/IK, "
+    print("[STAGE5 GUI] PASS: native virtual GUI, "
+          + ("J6 five real recoveries" if args.repeat else
+             "J6 +0.5deg then +2deg" if args.two_step else "J6 +0.5deg")
+          + ", C APF/IK, "
           "full-link clearance, UART ACK and physical settled recovery.")
     print("This does not certify physical six-axis robot hardware.")
     return 0
