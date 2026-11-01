@@ -181,13 +181,17 @@ static void embedded_rtos_apf_single_step_proposal(void)
     /* Malformed obstacle and nonfinite gains must never modify the output. */
     {
         stage5_apf_proposal_t preserved=result;
-        request.obstacle_min_offset_mm[0]=-1;
-        request.obstacle_max_offset_mm[0]=1;
+        for(axis=0U;axis<3U;axis++) {
+            request.obstacle_min_offset_mm[axis]=-1;
+            request.obstacle_max_offset_mm[axis]=1;
+        }
         CHECK(stage5_apf_propose_from_feedback(
             &initial,&request,&config,&result)!=ROBOT_STATUS_OK);
         CHECK(memcmp(&preserved,&result,sizeof(result))==0);
-        request.obstacle_min_offset_mm[0]=100;
-        request.obstacle_max_offset_mm[0]=120;
+        for(axis=0U;axis<3U;axis++) {
+            request.obstacle_min_offset_mm[axis]=100;
+            request.obstacle_max_offset_mm[axis]=120;
+        }
         request.apf_parameters[0]=NAN;
         CHECK(stage5_apf_propose_from_feedback(
             &initial,&request,&config,&result)!=ROBOT_STATUS_OK);
