@@ -221,6 +221,24 @@ def assess_clock_alignment(trajectory_samples: int | None,
     return ratio, abs(ratio - 1.0) <= CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR
 
 
+def assess_captured_clock_alignment(
+    diagnostic_sample: tuple[int, int] | None,
+    firmware_period_s: float,
+) -> tuple[float | None, bool]:
+    """Only compare a firmware counter with frames captured at its UART reply.
+
+    Final diagnostics comprise dozens of sequential UART queries. The guest
+    continues to emit targets (and Bullet keeps stepping) after the first
+    counter was read. Using the final target-frame count for an earlier
+    firmware counter creates an artificial clock skew, hiding valid motion.
+    Missing samples still fail closed; the unchanged 25% gate is enforced.
+    """
+    if diagnostic_sample is None:
+        return None, False
+    value, frames_at_response = diagnostic_sample
+    return assess_clock_alignment(value, frames_at_response, firmware_period_s)
+
+
 def assess_monitor_clock_window(
     baseline: tuple[int, int] | None,
     final_monitor_ticks: int | None,
@@ -1075,6 +1093,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     endpoint_rearm_events: list[dict] = []
     trace = deque(maxlen=6000) if options.interactive_hold else []
     diagnostic_values: dict[str, int] = {}
+    # Each reply is paired with the physical frame count AT receipt, not the
+    # later end-of-run count after querying every other selector.
+    diagnostic_frame_samples: dict[str, tuple[int, int]] = {}
     first_monitor_clock_sample: tuple[int, int] | None = None
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
@@ -2232,6 +2253,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     diagnostics_pending)
                                 diagnostic_values[diagnostics_pending] = (
                                     struct.unpack("<I", payload)[0])
+                                diagnostic_frame_samples[diagnostics_pending] = (
+                                    diagnostic_values[diagnostics_pending],
+                                    target_frames)
                                 if (diagnostics_pending == "monitoring_ticks" and
                                         first_monitor_clock_sample is None and
                                         target_frames > 0):
@@ -2242,6 +2266,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         target_frames)
                                 audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
                                     value=diagnostic_values[diagnostics_pending],
+                                    target_frames_at_response=target_frames,
                                     wall_s=time.monotonic()-start_wall)) + "\n")
                                 if (options.interactive_hold and recovering
                                         and diagnostics_pending in (
@@ -2316,17 +2341,23 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "controller_faults", "planner_faults", "feedback_stale_count",
             )
             faults = {name: diagnostic_values.get(name) for name in fault_names}
-            trajectory_ratio, trajectory_aligned = assess_clock_alignment(
-                diagnostic_values.get("trajectory_samples"), target_frames,
-                trajectory_period_s)
-            monitor_ratio, _ = assess_clock_alignment(
-                diagnostic_values.get("monitoring_ticks"), target_frames,
-                monitor_period_s)
+            # DO NOT mix a stale diagnostic counter with the later final
+            # target_frames. Final UART diagnostic reads can consume several
+            # seconds of physical frames with the guest still active.
+            trajectory_sample = diagnostic_frame_samples.get(
+                "trajectory_samples")
+            monitor_sample = diagnostic_frame_samples.get("monitoring_ticks")
+            trajectory_ratio, trajectory_aligned = (
+                assess_captured_clock_alignment(
+                    trajectory_sample, trajectory_period_s))
+            monitor_ratio, _ = assess_captured_clock_alignment(
+                monitor_sample, monitor_period_s)
             monitor_window_ratio, monitor_window_aligned = (
                 assess_monitor_clock_window(
                     first_monitor_clock_sample,
-                    diagnostic_values.get("monitoring_ticks"),
-                    target_frames, monitor_period_s))
+                    monitor_sample[0] if monitor_sample is not None else None,
+                    monitor_sample[1] if monitor_sample is not None else 0,
+                    monitor_period_s))
             # Monitor is a continuously running RTOS task, including during
             # GUI/URDF/APF preparation before the *first* physics frame.
             # For APF also cover idle HOLD via the monitor tick counter, but
@@ -2400,13 +2431,23 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "rtos_monitor_live_window_baseline": (
                     list(first_monitor_clock_sample)
                     if first_monitor_clock_sample is not None else None),
+                "clock_alignment_sample_epochs": {
+                    "trajectory_samples": (
+                        list(trajectory_sample)
+                        if trajectory_sample is not None else None),
+                    "monitoring_ticks": (
+                        list(monitor_sample)
+                        if monitor_sample is not None else None),
+                    "final_target_frames": target_frames,
+                },
                 "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
                 "clock_alignment_note": (
-                    "Planning samples and live-epoch monitoring deltas are "
-                    "compared against physically advanced UART feedback frames; "
-                    "raw RTOS monitor lifetime since boot is diagnostic only."),
+                    "Planning/monitoring counters are compared with UART "
+                    "physics frames at each diagnostic response, never the "
+                    "later final frame count. Live monitor deltas share a "
+                    "first-sample epoch; boot-time lifetime is diagnostic only."),
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
