@@ -129,6 +129,8 @@ class DemoOptions:
     ci_scripted_safe_jog: bool = False
     # Independent CI-only test: physical 0.5deg return followed by 2deg.
     ci_scripted_safe_jog_two_step: bool = False
+    # CI only: repeatedly exercise five actual C/UART returns in one GUI.
+    ci_scripted_safe_jog_repeat: bool = False
 
 
 class Stage5GuiDisconnectedError(RuntimeError):
@@ -514,6 +516,7 @@ def execute_guarded_gui_jog(
     motor_forces_nm, gui_motor_velocity_caps,
     *, ci_scripted_trigger: bool = False,
     ci_scripted_step_deg: float | None = None,
+    ci_max_scripted_steps: int = 2,
 ) -> None:
     """Preserve an authorized injected pose until the C UART recovery takes over.
 
@@ -527,7 +530,9 @@ def execute_guarded_gui_jog(
         if not done or ending:
             raise RuntimeError("Scripted CI jog outside idle HOLD")
         if ci_scripted_step_deg is not None:
-            jog.request_ci_scripted_j6_step(ci_scripted_step_deg)
+            jog.request_ci_scripted_j6_step(
+                ci_scripted_step_deg,
+                max_scripted_steps=ci_max_scripted_steps)
         else:
             jog.request_ci_scripted_j6_half_degree()
     if jog.applied > previous_applied:
@@ -1050,9 +1055,13 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             "Guarded GUI jog requires native GUI, active HOLD and C APF; "
             "unrestricted native picking remains forbidden")
     if (options.ci_scripted_safe_jog or
-            options.ci_scripted_safe_jog_two_step) and not options.gui_safe_jog:
+            options.ci_scripted_safe_jog_two_step or
+            options.ci_scripted_safe_jog_repeat) and not options.gui_safe_jog:
         raise ValueError("Scripted native GUI CI fixture requires guarded GUI jog")
-    if options.ci_scripted_safe_jog and options.ci_scripted_safe_jog_two_step:
+    if sum(bool(x) for x in (
+            options.ci_scripted_safe_jog,
+            options.ci_scripted_safe_jog_two_step,
+            options.ci_scripted_safe_jog_repeat)) > 1:
         raise ValueError("CI must select exactly one native GUI jog script")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
@@ -1169,6 +1178,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         gui_safe_jog=options.gui_safe_jog,
         ci_scripted_safe_jog=options.ci_scripted_safe_jog,
         ci_scripted_safe_jog_two_step=options.ci_scripted_safe_jog_two_step,
+        ci_scripted_safe_jog_repeat=options.ci_scripted_safe_jog_repeat,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1315,18 +1325,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         if ci_inject:
                             scripted_ci_jog_sent = True
                         ci_two_step_deg = None
-                        if (options.ci_scripted_safe_jog_two_step and done
-                                and not ending and scripted_ci_steps_sent < 2
+                        ci_sequence = (
+                            (JOG_MIN_DEG, JOG_MAX_DEG, JOG_MAX_DEG,
+                             JOG_MAX_DEG, JOG_MAX_DEG)
+                            if options.ci_scripted_safe_jog_repeat
+                            else (JOG_MIN_DEG, JOG_MAX_DEG)
+                            if options.ci_scripted_safe_jog_two_step else ())
+                        if (ci_sequence and done and not ending
+                                and scripted_ci_steps_sent < len(ci_sequence)
                                 and safe_gui_jog.available
                                 and safe_gui_jog.applied == safe_gui_jog.completed):
-                            ci_two_step_deg = (JOG_MIN_DEG, JOG_MAX_DEG)[
-                                scripted_ci_steps_sent]
+                            ci_two_step_deg = ci_sequence[scripted_ci_steps_sent]
                             scripted_ci_steps_sent += 1
                         execute_guarded_gui_jog(
                             safe_gui_jog, bullet, body, axes, stamp, done, ending,
                             motor_forces_nm, gui_motor_velocity_caps,
                             ci_scripted_trigger=ci_inject,
-                            ci_scripted_step_deg=ci_two_step_deg)
+                            ci_scripted_step_deg=ci_two_step_deg,
+                            ci_max_scripted_steps=(5 if options.ci_scripted_safe_jog_repeat
+                                                   else 2))
                         if (options.ci_scripted_safe_jog
                                 and scripted_ci_jog_sent
                                 and not scripted_ci_finish_sent
@@ -1334,12 +1351,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                 and safe_gui_jog.completed == 1):
                             safe_gui_jog.request_ci_finish()
                             scripted_ci_finish_sent = True
-                        if (options.ci_scripted_safe_jog_two_step
-                                and scripted_ci_steps_sent == 2
+                        if ((options.ci_scripted_safe_jog_two_step or
+                             options.ci_scripted_safe_jog_repeat)
+                                and scripted_ci_steps_sent == len(ci_sequence)
                                 and not scripted_ci_finish_sent
-                                and safe_gui_jog.applied == 2
-                                and safe_gui_jog.completed == 2):
-                            safe_gui_jog.request_ci_finish(expected_recoveries=2)
+                                and safe_gui_jog.applied == len(ci_sequence)
+                                and safe_gui_jog.completed == len(ci_sequence)):
+                            safe_gui_jog.request_ci_finish(
+                                expected_recoveries=len(ci_sequence))
                             scripted_ci_finish_sent = True
                     on_physics = guarded_jog_callback
                     print(
