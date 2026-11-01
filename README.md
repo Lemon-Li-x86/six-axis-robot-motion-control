@@ -2,7 +2,7 @@
 
 基于 **ARM Cortex-M4、FreeRTOS、QEMU 和 PyBullet** 的 UR5 六轴机器人运动控制项目。使用 C 实现运动学、轨迹规划和 PID 控制，通过 QEMU 运行嵌入式固件，并在 PyBullet 中完成运动仿真与反馈验证。
 
-**当前进度（2026-10-31）：Stage 1–4 已验收；Stage 5 的静态 C APF/IK → QEMU/FreeRTOS → UART → PyBullet 全臂避障核心闭环与 Windows SAFE JOG 已获得实测证据，按 [有保留结项报告](docs/part5/17_stage5_final_acceptance_2026-10-31.md) 签收。旧 Linux GUI `six_axis` 三段收敛测试仍失败（[Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34)），修复 PR #33 保持 Draft/未合并，不能宣称全部 GUI 已验证。Stage 6 搬运任务待开发。** 本项目仅进行软件仿真，不使用实体机器人。
+**当前进度（2026-11-01）：Stage 1–4 核心已验收；Stage 5 静态 C APF/IK → QEMU/FreeRTOS → UART → PyBullet 全臂闭环与 Windows 原生 J6 +0.5° 已有通过证据，旧 Linux GUI `six_axis` 三段收敛已通过受控回位复测。针对 Windows 同一轮先 +0.5° 回位、再 +2° 曾被错误拒绝的缺陷，修复位于 [PR #35](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/pull/35)，等待独立双动作 CI 及新的 Windows 操作员验收。按 [有保留结项报告](docs/part5/17_stage5_final_acceptance_2026-10-31.md) 归档，原 PDF 要求的固件运行时完整 APF 自主规划及系统性 CPU/内存/IRQ 优化尚未无保留签收；Stage 6 搬运任务未完成。** 本项目仅为软件仿真，不使用实体机器人。
 
 ## 项目进度
 
@@ -12,7 +12,7 @@
 | Stage 2 · 驱动与协议 | UART / Timer / GPIO 驱动、Ring Buffer、协议解析、六轴电机状态抽象 | 已完成 |
 | Stage 3 · 运动学 | UR5 正逆运动学、IK 选解、连续角处理、关节限位 | 已完成 |
 | Stage 4 · 运动控制 | 三次/五次多项式、梯形速度、笛卡尔直线/圆弧轨迹、六轴增量式 PID、FreeRTOS 控制任务 | 核心验收通过，封版候选 |
-| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 Linux GUI `six_axis` 未通过，PR #33 尚未合并 |
+| Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 GUI 3/3 修复 CI 已通过，PR #35 双动作 Windows +0.5°/+2° 待本机复验，原 PDF 5.2/5.3 有实现缺口 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
 **请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。Stage5 最后一次 Windows 原生 GUI 验收请按 **[J6 0.5° 后再 2° 双操作员验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md)** 执行，同一轮运行必须两次真实 C/UART 回位，不能以 0.5° 成功掩盖 2° 被拒绝。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
