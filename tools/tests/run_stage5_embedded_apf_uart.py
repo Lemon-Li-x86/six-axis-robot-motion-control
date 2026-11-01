@@ -33,9 +33,12 @@ from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
 def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
-        *, required_proposals: int = 1) -> dict:
+        *, required_proposals: int = 1,
+        full_route: bool = False) -> dict:
     if not isinstance(required_proposals, int) or not 1 <= required_proposals <= 6:
         raise ValueError("on-firmware APF integration step count must be 1..6")
+    if full_route and required_proposals != 1:
+        raise ValueError("full-route mode controls length from actual APF goal completion")
     import pybullet as p
     scene, policy = load_scene("blocked")
     box = scene["obstacle"]
@@ -79,7 +82,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
     result = {
         "passed": False, "scope": "ARM_FreeRTOS_C_APF_IK_UART_Bullet_full_link",
         "new_apf_proposals": 0, "required_apf_proposals": required_proposals,
-        "proposal_status": None, "approved_legs": [],
+        "full_route_mode": full_route, "route_goal_index": 0,
+        "route_complete": False, "proposal_status": None, "approved_legs": [],
         "joint_motion_acks": 0, "physical_settled_frames": 0,
         "full_link_safe": False, "joint_motion_submitted_only_after_gate": False,
         "uart_checksum_errors": 0,
@@ -107,7 +111,16 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                               computeForwardKinematics=True,
                               physicsClientId=client)[4]
             box_center=[ee[i]+center_mm[i]/1000 for i in range(3)]
-            absolute_goal=[ee[i]+offsets[i]/1000 for i in range(3)]
+            route_goals=[
+                [ee[i]+float(delta[i])/1000 for i in range(3)]
+                for delta in (
+                    list(scene.get("via_offsets_ee_mm",[]))+
+                    [scene["goal_offset_mm"]])
+            ] if full_route else [
+                [ee[i]+offsets[i]/1000 for i in range(3)]
+            ]
+            goal_index=0
+            absolute_goal=route_goals[goal_index]
             shape=p.createCollisionShape(
                 p.GEOM_BOX,halfExtents=box["half_extents_m"],
                 physicsClientId=client)
@@ -166,7 +179,45 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                         candidate=tuple(int(x) for x in values[3:9])
                         reached=int(values[9])
                         if reached:
-                            raise RuntimeError("APF falsely declared blocked target reached")
+                            if not full_route:
+                                raise RuntimeError("APF falsely declared blocked target reached")
+                            current_ee=p.getLinkState(
+                                arm,p.getNumJoints(arm,physicsClientId=client)-1,
+                                computeForwardKinematics=True,
+                                physicsClientId=client)[4]
+                            distance_mm=1000*math.dist(current_ee,absolute_goal)
+                            if distance_mm>apf["goal_tolerance_mm"]+1.0:
+                                raise RuntimeError(
+                                    f"ARM reports reached but physical EE error {distance_mm:.3f}mm")
+                            if goal_index+1==len(route_goals):
+                                if not result["approved_legs"]:
+                                    raise RuntimeError("No physical C motions in route")
+                                result.update(
+                                    passed=True,route_complete=True,
+                                    final_cartesian_error_mm=distance_mm,
+                                    physical_settled_frames=15,
+                                    max_motion_deg=max_change,
+                                    final_error_deg=result["approved_legs"][-1]["final_error_deg"],
+                                    full_link_safe=True,
+                                    uart_checksum_errors=parser.bad_checksum,
+                                    received_target_frames=frames,
+                                    feedback_acks=feedback_acks,
+                                )
+                                break
+                            goal_index+=1
+                            result["route_goal_index"]=goal_index
+                            absolute_goal=route_goals[goal_index]
+                            proposal_seq=(proposal_seq+2)&255
+                            motion_seq=(motion_seq+2)&255
+                            move_sent=False
+                            move_ack=None
+                            candidate=None
+                            settle=0
+                            sock.sendall(frame(
+                                wire.CMD_REQUEST_APF_JOINT_PROPOSAL,
+                                apf_payload(proposal_seq,current_ee,
+                                            absolute_goal,box_center)))
+                            continue
                         current=tuple(angles_raw(p,arm,joints))
                         # PyBullet knows the exact robot link shapes. The ARM
                         # APF is end-effector-only; it may NEVER self-authorize
@@ -187,6 +238,9 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             proposal_goal_reached=bool(reached),
                             full_link_gate=safe,
                         )
+                        if full_route and result["new_apf_proposals"] > (
+                                len(route_goals) * int(scene["waypoint_capacity"])):
+                            raise RuntimeError("ARM APF route exceeded scenario waypoint budget")
                         result["approved_legs"].append({
                             "proposal_seq":proposal_seq,
                             "motion_seq":motion_seq,
@@ -245,7 +299,7 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             if settle>=15 and max_change>=0.20:
                                 result["approved_legs"][-1]["settled"]=True
                                 result["approved_legs"][-1]["final_error_deg"]=err
-                                if result["new_apf_proposals"]>=required_proposals:
+                                if not full_route and result["new_apf_proposals"]>=required_proposals:
                                     result.update(
                                         passed=True,physical_settled_frames=settle,
                                         max_motion_deg=max_change,
@@ -306,10 +360,12 @@ def main():
     parser.add_argument("--timeout-s",type=float,default=105.0)
     parser.add_argument("--proposals",type=int,default=1,
                         help="number of repeated firmware C APF physical steps")
+    parser.add_argument("--full-route",action="store_true",
+                        help="iteratively run the entire scene via/goal path via real ARM APF")
     args=parser.parse_args()
     if not args.elf.is_file(): parser.error("ELF missing")
     result=run(args.elf,args.output_dir,args.qemu,args.timeout_s,
-               required_proposals=args.proposals)
+               required_proposals=args.proposals,full_route=args.full_route)
     print(json.dumps(result,indent=2))
     if not result["passed"]: raise SystemExit(1)
 
