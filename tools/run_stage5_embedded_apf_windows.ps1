@@ -2,7 +2,7 @@
 # Fully automated QEMU UART / PyBullet DIRECT all-link safety and physical
 # settling, no operator clicking and NEVER sends to any real motor device.
 param(
-    [string]$Python = "python",
+    [string]$Python = "",  # Auto-select an existing compatible Python unless explicitly overridden.
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-windows-embedded-apf",
     [double]$TimeoutSeconds = 300,
@@ -14,6 +14,9 @@ if ([double]::IsNaN($TimeoutSeconds) -or
     $TimeoutSeconds -lt 30 -or $TimeoutSeconds -gt 1200) {
     throw "TimeoutSeconds must be finite and in [30, 1200] s"
 }
+. (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
+$resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
     & cmake --preset stage5-live-uart
@@ -34,7 +37,7 @@ try {
     } else {
         $argsList += "--full-route"
     }
-    & $Python @argsList
+    & $resolvedPython @argsList
     if ($LASTEXITCODE -ne 0) {
         throw "ARM embedded APF/IK route NOT PASS; preserve $OutputDir/result.json"
     }
