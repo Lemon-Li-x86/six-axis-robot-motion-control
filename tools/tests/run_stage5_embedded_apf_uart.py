@@ -234,14 +234,20 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                               computeForwardKinematics=True,
                               physicsClientId=client)[4]
             box_center=[ee[i]+center_mm[i]/1000 for i in range(3)]
-            route_goals=[
-                [ee[i]+float(delta[i])/1000 for i in range(3)]
-                for delta in (
-                    list(scene.get("via_offsets_ee_mm",[]))+
-                    [scene["goal_offset_mm"]])
-            ] if full_route else [
-                [ee[i]+offsets[i]/1000 for i in range(3)]
+            # The diagnostic 1/3-proposal probe must use the SAME first
+            # mission leg as the full-route run. The blocked scene includes a
+            # documented overhead via: probing the direct final goal instead
+            # would silently test a different, potentially unsafe mission.
+            mission_offsets = (
+                list(scene.get("via_offsets_ee_mm", []))
+                + [scene["goal_offset_mm"]]
+            )
+            route_goals = [
+                [ee[i] + float(delta[i]) / 1000 for i in range(3)]
+                for delta in mission_offsets
             ]
+            if not full_route:
+                route_goals = route_goals[:1]
             goal_index=0
             absolute_goal=route_goals[goal_index]
             shape=p.createCollisionShape(
