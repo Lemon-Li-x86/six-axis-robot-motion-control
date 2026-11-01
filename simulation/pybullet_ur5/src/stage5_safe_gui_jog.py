@@ -78,7 +78,7 @@ class SafeGuiJog:
         obstacles: Sequence[int], client: int,
         joint_limits_rad: Sequence[tuple[float, float]],
         *, maximum_joint_step_rad: float, minimum_clearance_m: float,
-        maximum_samples: int, preview_return: Callable[[], dict],
+        maximum_samples: int, preview_return: Callable[..., dict],
     ):
         if (len(joints) != 6 or len(joint_limits_rad) != 6 or
                 not obstacles or not callable(preview_return) or
@@ -95,6 +95,7 @@ class SafeGuiJog:
         self.minimum_clearance_m = minimum_clearance_m
         self.maximum_samples = maximum_samples
         self.preview_return = preview_return
+        self.last_authorized_jog: dict | None = None
         self.extra_clearance_m = JOG_EXTRA_CLEARANCE_M
         self.events: list[dict] = []
         self.applied = 0
@@ -230,7 +231,15 @@ class SafeGuiJog:
                     physicsClientId=self.client)
             print("[SAFE GUI JOG PHASE] c_return_preview_started", flush=True)
             preview_started = time.monotonic()
-            preview = self.preview_return()
+            # This intent is only authorized if BOTH C return and outbound
+            # full-arm preflights pass. It captures the actual pre-click
+            # settled pose, avoiding the mistaken 2.02deg-vs-2.00deg gate.
+            jog_intent = {
+                "start_joint_rad": tuple(current),
+                "axis": axis,
+                "delta_rad": math.radians(sign * step_deg),
+            }
+            preview = self.preview_return(jog_context=jog_intent)
             print(
                 "[SAFE GUI JOG PHASE] c_return_preview_finished "
                 f"wall_s={time.monotonic()-preview_started:.3f}",
@@ -250,7 +259,9 @@ class SafeGuiJog:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "recovery_preflight_failed", **base}
 
-        # The only permanent state change follows all checks.
+        # The only permanent state change follows all checks. The same
+        # proven GUI intent is supplied at runtime for fresh-pose C planning.
+        self.last_authorized_jog = jog_intent
         p.resetJointState(
             self.robot, self.joints[axis], targetValue=candidate[axis],
             targetVelocity=0.0, physicsClientId=self.client)
