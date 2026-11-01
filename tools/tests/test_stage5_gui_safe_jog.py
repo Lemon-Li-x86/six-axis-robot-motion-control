@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation" / "pybullet_ur5" / "src"))
-from stage5_safe_gui_jog import SafeGuiJog, JOG_MAX_SUCCESSES, JOG_MIN_DEG
+from stage5_safe_gui_jog import SafeGuiJog, JOG_MIN_DEG
 
 
 def valid_return():
@@ -237,18 +237,28 @@ class GuardedJogTests(unittest.TestCase):
         self.assertEqual(ctl.applied, before)
         planner.assert_called_once()
 
-    def test_finish_after_maximum_completed_recoveries(self):
+    def test_finish_after_many_completed_recoveries(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
                    return_value=safe_gate()):
-            for cycle in range(JOG_MAX_SUCCESSES):
-                p.click(ctl.buttons[1])
+            for cycle in range(8):
+                sign = (1, -1)[cycle % 2]
+                p.click(ctl.buttons[sign])
                 ctl(p, 0, range(6), cycle, True, False)
+                self.assertEqual(ctl.applied, cycle + 1)
+                self.assertFalse(ctl.available)
                 ctl.complete_recovery()
-        self.assertFalse(ctl.available)
+                self.assertTrue(ctl.available)
+        self.assertEqual(ctl.completed, 8)
+        self.assertEqual(ctl.refused, 0)
+        self.assertIn("jog again", ctl.status_text(True))
         p.click(ctl.finish_widget)
-        ctl(p, 0, range(6), 5, True, False)
+        ctl(p, 0, range(6), 9, True, False)
         self.assertTrue(ctl.finish_requested)
+        p.click(ctl.buttons[1])
+        ctl(p, 0, range(6), 10, True, False)
+        self.assertEqual(ctl.applied, 8)
+        self.assertEqual(ctl.events[-1]["reason"], "session_ending")
 
     def test_joint_limit_rejects_before_gate_or_planner(self):
         p, ctl, planner = jog(limit=math.radians(40.5))
@@ -298,15 +308,14 @@ class GuardedJogTests(unittest.TestCase):
             gate.assert_not_called()
         self.assertEqual(ctl.applied, 0)
         planner.assert_not_called()
-        self.assertEqual(ctl.events[-1]["reason"],
-                         "not_idle_or_recovery_pending_or_limit")
+        self.assertEqual(ctl.events[-1]["reason"], "not_in_hold")
 
     def test_multiple_recoveries_only_rearm_after_actual_completion(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
                    return_value=safe_gate()):
-            for cycle in range(JOG_MAX_SUCCESSES):
-                p.widgets[ctl.axis_widget] = cycle + 1
+            for cycle in range(7):
+                p.widgets[ctl.axis_widget] = 1 + cycle % 6
                 p.click(ctl.buttons[1])
                 ctl(p, 0, range(6), cycle, True, False)
                 self.assertEqual(ctl.applied, cycle+1)
@@ -315,13 +324,17 @@ class GuardedJogTests(unittest.TestCase):
                 ctl(p, 0, range(6), cycle+.01, True, False)
                 self.assertEqual(ctl.applied, cycle+1)
                 self.assertEqual(ctl.events[-1]["reason"],
-                                 "not_idle_or_recovery_pending_or_limit")
+                                 "recovery_in_progress")
                 ctl.complete_recovery()
+                self.assertTrue(ctl.available)
                 self.assertEqual(ctl.completed, cycle+1)
-        self.assertFalse(ctl.available)
-        p.click(ctl.buttons[1])
+        p.click(ctl.buttons[-1])
         ctl(p, 0, range(6), 10, True, False)
-        self.assertEqual(ctl.applied, JOG_MAX_SUCCESSES)
+        self.assertEqual(ctl.applied, 8)
+        ctl.complete_recovery()
+        self.assertTrue(ctl.available)
+        self.assertEqual(ctl.completed, 8)
+        self.assertEqual(ctl.refused, 7)  # Actual busy clicks, not cap.
         with self.assertRaises(RuntimeError):
             ctl.complete_recovery()
 
