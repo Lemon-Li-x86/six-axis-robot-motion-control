@@ -285,7 +285,9 @@ class SafeGuiJog:
         """Preserve the existing single 0.5deg CI integration fixture."""
         return self.request_ci_scripted_j6_step(JOG_MIN_DEG)
 
-    def request_ci_scripted_j6_step(self, step_deg: float) -> dict:
+    def request_ci_scripted_j6_step(
+        self, step_deg: float, *, max_scripted_steps: int = 2,
+    ) -> dict:
         """CI fixture: one real physical J6 +0.5 or +2deg, never fake UART.
 
         Each consecutive request requires the previous C/UART physical
@@ -293,7 +295,8 @@ class SafeGuiJog:
         """
         if (step_deg not in (JOG_MIN_DEG, JOG_MAX_DEG) or
                 not self.available or self.applied != self.completed or
-                self.applied >= 2 or
+                not 1 <= max_scripted_steps <= 5 or
+                self.applied >= max_scripted_steps or
                 self.finish_requested or self.cancel_requested):
             raise RuntimeError("CI J6 jog requires fresh settled idle HOLD")
         event = self._authorize(
@@ -314,12 +317,12 @@ class SafeGuiJog:
 
     def request_ci_finish(self, *, expected_recoveries: int = 1):
         """Require all real C/UART recoveries before ending CI GUI HOLD."""
-        if (expected_recoveries not in (1, 2) or
+        if (expected_recoveries not in (1, 2, 5) or
                 self.applied != expected_recoveries or
                 self.completed != expected_recoveries or
                 self.available is False or self.finish_requested
                 or self.cancel_requested):
-            raise RuntimeError("CI finish requires one completed real C recovery")
+            raise RuntimeError("CI finish requires every real C recovery completed")
         self.finish_requested = True
         event = {"event": "safe_gui_jog_finish_requested",
                  "source": "ci_scripted_native_gui_jog",
