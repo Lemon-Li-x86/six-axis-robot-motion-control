@@ -60,6 +60,7 @@ EXPECTED_KEYS = {
     "parser_benchmark_samples",
     "initial_joint_targets_centideg",
     "stage4_motion",
+    "stage5_monitor",
 }
 
 PID_FIELDS = (
@@ -264,6 +265,16 @@ def generate_header(config):
         1000,
     )
     motion_lines = generate_motion_defaults(config["stage4_motion"])
+    monitor_policy = config["stage5_monitor"]
+    if not isinstance(monitor_policy, dict) or set(monitor_policy) != {
+            "stack_watermark_sample_period_ms"}:
+        raise ValueError("stage5_monitor must own one sample cadence")
+    watermark_ms = validate_integer(
+        monitor_policy["stack_watermark_sample_period_ms"],
+        "stage5_monitor.stack_watermark_sample_period_ms", 1, 60000)
+    if watermark_ms < periods["monitor"] or watermark_ms % periods["monitor"]:
+        raise ValueError("stack sample cadence must be an integer multiple "
+                         "of the JSON-owned monitor task period")
 
     # 固件公共关节角使用 int16_t：
     # 1 unit = 0.01 degree。
@@ -343,6 +354,10 @@ def generate_header(config):
 
     # Initial Joint Targets
     lines.extend(motion_lines)
+    lines.append("")
+    lines.append(
+        "#define FW_DEFAULT_STAGE5_MONITOR_STACK_SAMPLE_MS "
+        f"{watermark_ms}U")
     lines.append("")
     for index, value in enumerate(joint_targets):
         lines.append(
