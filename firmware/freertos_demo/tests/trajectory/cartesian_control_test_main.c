@@ -97,6 +97,54 @@ static void test_pid_derivative_startup(void)
     ASSERT(fabs((double)correction)<1e-5);
 }
 
+/* Actual ARM QEMU/PyBullet failure: motion remains 0.61/0.97 deg away
+ * while three identical quantized feedback samples leave incremental P/D
+ * output at ~0.003 deg or opposite sign. No firmware fault was raised.
+ * These are synthetic snapshots of the genuine fault, not tuned gains.
+ */
+static void test_pid_zero_ki_steady_error_recovers_saturation_bias(void)
+{
+    pid_config_t cfg={0.25F,0.0F,0.025F,10.0F,3.0F,0.02F};
+    pid_controller_t pid={0};
+    robot_real_t correction=0.0F;
+    ASSERT(pid_init(&pid,&cfg)==ROBOT_STATUS_OK);
+    pid.initialized=1U;
+    pid.prev_error_deg=-0.61;
+    pid.prev_prev_error_deg=-0.61;
+    pid.output_deg=0.003; /* CI observed wrong-sign correction. */
+    ASSERT(pid_step(&pid,0.0,0.61,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(correction<0.0F);
+    ASSERT(fabs((double)correction+0.1525)<0.000001);
+    ASSERT(fabs(pid.output_deg)<=cfg.output_limit_deg);
+
+    /* A positive 0.97 degree plateau must also recover from a tiny
+     * correction while preserving the configured P output bound. */
+    pid.prev_error_deg=0.97;
+    pid.prev_prev_error_deg=0.97;
+    pid.output_deg=0.002;
+    ASSERT(pid_step(&pid,0.97,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction-0.2425)<0.000001);
+
+    /* The existing 0.02 degree deadband still commands zero. */
+    pid.prev_error_deg=0.0;
+    pid.prev_prev_error_deg=0.0;
+    pid.output_deg=0.1;
+    ASSERT(pid_step(&pid,0.01,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction)<1e-7);
+
+    /* Original velocity-form behavior is unchanged for transients. */
+    pid_reset(&pid);
+    cfg.kp=1.0F; cfg.kd=0.0F;
+    ASSERT(pid_init(&pid,&cfg)==ROBOT_STATUS_OK);
+    ASSERT(pid_step(&pid,10.0,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction-3.0)<1e-6);
+    ASSERT(pid_step(&pid,0.0,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction+3.0)<1e-6);
+    ASSERT(pid_step(&pid,0.0,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(pid_step(&pid,0.0,0.0,0.01,&correction)==ROBOT_STATUS_OK);
+    ASSERT(fabs((double)correction)<1e-7);
+}
+
 static void test_joint_wrapper(void)
 {
     pid_config_t gains[ROBOT_JOINT_COUNT]={{0}};
@@ -117,7 +165,8 @@ static void test_joint_wrapper(void)
 }
 int main(void)
 {
-    test_line();test_arc();test_so3();test_pid();test_pid_derivative_startup();test_joint_wrapper();
+    test_line();test_arc();test_so3();test_pid();test_pid_derivative_startup();
+    test_pid_zero_ki_steady_error_recovers_saturation_bias();test_joint_wrapper();
     printf("Cartesian and PID checks: %u failures / %u\n",failed,checks);
     return failed==0U?0:1;
 }
