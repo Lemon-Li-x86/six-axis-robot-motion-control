@@ -322,7 +322,7 @@ class SafeGuiJog:
                 self.completed != expected_recoveries or
                 self.available is False or self.finish_requested
                 or self.cancel_requested):
-            raise RuntimeError("CI finish requires every real C recovery completed")
+            raise RuntimeError("CI finish requires completed real C recovery for every scripted step")
         self.finish_requested = True
         event = {"event": "safe_gui_jog_finish_requested",
                  "source": "ci_scripted_native_gui_jog",
