@@ -158,6 +158,29 @@ class GuardedJogTests(unittest.TestCase):
         self.assertTrue(ctl.finish_requested)
         self.assertEqual(ctl.completed, 1)
 
+    def test_ci_sequential_j6_half_then_two_requires_each_real_return(self):
+        p, ctl, planner = jog()
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            first = ctl.request_ci_scripted_j6_step(0.5)
+            self.assertEqual(first["displacement_deg"], 0.5)
+            with self.assertRaisesRegex(RuntimeError, "settled idle HOLD"):
+                ctl.request_ci_scripted_j6_step(2.0)
+            ctl.complete_recovery()
+            self.assertIsNone(ctl.last_authorized_jog)
+            second = ctl.request_ci_scripted_j6_step(2.0)
+            self.assertEqual(second["displacement_deg"], 2.0)
+            with self.assertRaisesRegex(RuntimeError, "completed real C recovery"):
+                ctl.request_ci_finish(expected_recoveries=2)
+            ctl.complete_recovery()
+            ctl.request_ci_finish(expected_recoveries=2)
+            self.assertEqual(ctl.completed, 2)
+            self.assertEqual(ctl.applied, 2)
+            self.assertTrue(ctl.finish_requested)
+            with self.assertRaisesRegex(RuntimeError, "settled idle HOLD"):
+                ctl.request_ci_scripted_j6_step(2.0)
+            self.assertEqual(planner.call_count, 2)
+
     def test_ci_scripted_j6_rejected_when_collision_gate_fails(self):
         p, ctl, planner = jog()
         with patch("stage5_safe_gui_jog.validate_joint_path",
