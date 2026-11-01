@@ -86,7 +86,7 @@
 - **根因**：现有 `motion_pipeline` 只有 JOINT/POLYNOMIAL/CARTESIAN 三种 FreeRTOS request；`CMD_REQUEST_APF_STEP` 是 ProtocolRX 上直接计算末端下一点的**非驱动预览**，既没有 ARM IK，也没有调入 Trajectory Worker，更没有物理全连杆安全门禁。
 - **修复**：新增事务式 `CMD_REQUEST_APF_JOINT_PROPOSAL=0x05`→`CMD_APF_JOINT_PROPOSAL_RESPONSE=0x88`；ProtocolRX 只处理字节及入队，FreeRTOS Trajectory Task 从实时 `motor_state_get_fresh_feedback` 读取连续关节角，调用生产 C `robot_apf_step` → C FK/IK 解算、最近合法关节选解、FK 残差、梯形速度/加速度检验，打包 UART 真实候选点返回。**规划响应绝不直接驱动电机**。PyBullet 使用真实 UR5 URDF 全连杆扫掠路径预检，批准后才发送原有 `CMD_REQUEST_JOINT_MOVE` 单独执行。无隐式驱动、无越过全连杆门禁。解析失败/浮点非法/不可达/过期反馈均必须失败，不返回旧候选。
 - **实测**：[Actions #41265049762](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41265049762)，工件 `stage5-embedded-arm-apf-verified-physical`。ARM FreeRTOS 实际 APF+IK 候选 1 次、返回 `[3046,-4683,6287,1613,539,-716]` centidegree，PyBullet 采样 5 次全连杆，最小测得净距 40.95 mm，批准后 QEMU C 轨迹/PID 执行，真实关节变化最大 4.38°、15 帧收敛、最终误差 0.07°，新 UART 错帧 0。主机未运行 C APF 共享库替固件决策。
-- **边界与验收**：这是**固件内单步 APF/IK 实际路径调整执行**，**尚非**固件独立完成整条带障碍物的多段自主路线。复杂被阻挡静态障碍整条路线的 4/4 或 28/28 通过仍为主机侧 C APF 编排、ARM 执行；如按 PDF 最严格理解要求“整条路线均固件自主规划”，后者必须另有整路实测才可无保留完成 5.2。
+- **整路验收更新**：[Actions #41266022023](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41266022023) `stage5-embedded-apf-uart-full/result.json`：FreeRTOS C APF+IK **28 段在线迭代规划→全连杆检查→C/UART 实际执行 28/28**，`route_complete=true`，最终六轴误差 0.05°、EE 末端位置偏差 0.7977mm、UART 校验错误 0。场景 JSON 供应高层 via，PyBullet 全连杆碰撞负责外部安全批准，不是任意障碍无监护的全自主控制。**原 PDF 5.2 的指定静态场景固件内 C APF 整路演示已具备可复现证据**。
 
 ## S5-014（2026-11-01）：FreeRTOS 高耗时监测与链接内存裁剪及实时性测量
 
