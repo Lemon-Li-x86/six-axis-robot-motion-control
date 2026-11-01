@@ -73,7 +73,8 @@
         ]
       ],
       "shortcut_cartesian": true,
-      "automatic_bypass": true
+      "automatic_bypass": true,
+      "planning_extra_clearance_mm": 3
     }
   }
 }
