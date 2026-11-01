@@ -12,7 +12,33 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_stage5_embedded_apf_uart import require_runtime_full_link_clearance
+from run_stage5_embedded_apf_uart import (
+    require_runtime_full_link_clearance,
+    describe_joint_tracking,
+)
+
+
+class MotionDiagnosticTests(unittest.TestCase):
+    def test_error_report_keeps_each_joint_and_command_separate(self):
+        candidate = [3818, -6668, 8502, -524, 1267, 1224]
+        actual = [3802, -6668, 8502, -524, 1267, 1224]
+        commanded = [3810, -6665, 8502, -520, 1267, 1224]
+        data = describe_joint_tracking(candidate, actual, commanded)
+        self.assertEqual(data["candidate_target_raw"], candidate)
+        self.assertEqual(data["last_physical_feedback_raw"], actual)
+        self.assertEqual(data["last_firmware_command_raw"], commanded)
+        self.assertEqual(
+            data["feedback_minus_candidate_deg"],
+            [-0.16, 0.0, 0.0, 0.0, 0.0, 0.0],
+        )
+        self.assertEqual(
+            data["feedback_minus_command_deg"],
+            [-0.08, -0.03, 0.0, -0.04, 0.0, 0.0],
+        )
+
+    def test_diagnostics_rejects_incomplete_joint_feedback(self):
+        with self.assertRaisesRegex(ValueError, "six joint"):
+            describe_joint_tracking([0] * 6, [0] * 5, [0] * 6)
 
 
 class FakeBullet:
