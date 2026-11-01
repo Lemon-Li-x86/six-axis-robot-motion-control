@@ -361,6 +361,12 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --timeout-s 155 --proposals 3 \
             --output-dir build/stage5-embedded-apf-uart-three
+      - name: Finish blocked static rectangle mission via ARM firmware C APF
+        run: |
+          python tools/tests/run_stage5_embedded_apf_uart.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --timeout-s 300 --full-route \
+            --output-dir build/stage5-embedded-apf-uart-full
       - name: Preserve actual firmware APF UART decision and physical trace
         if: always()
         uses: actions/upload-artifact@v4
@@ -369,6 +375,7 @@ jobs:
           path: |
             build/stage5-embedded-apf-uart/*
             build/stage5-embedded-apf-uart-three/*
+            build/stage5-embedded-apf-uart-full/*
           if-no-files-found: ignore
 
   native-firmware-regression:
