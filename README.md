@@ -25,7 +25,7 @@
 - [Stage5 live QEMU PyBullet observer CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41299105613)：**13/13 jobs PASS**，包括 Linux/Windows UART 观察器、Windows ARM 首航点、Linux ARM C APF 28 段完整路线、原生 GUI 三段运动、J6 重复操作、Windows 障碍恢复、桥接与单元测试。
 - [独立 Native firmware regression](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41299109366)：**PASS**。
 - 这轮修复针对两类不同问题：① UART 诊断计数与最终物理帧不在同一采样时刻，导致**时间同步假失败**；② `Ki=0` 的增量式 PID 在稳态反馈下可能保留输出偏置，导致**末端收敛停滞**。修复有回归测试，并未修改 JSON PID 增益、关节安全限位或把时钟误差验收阈值放宽。
-- **Stage5 5.3 性能复验（2026-11-01）**：[同提交 6 组交错 QEMU/GDB A/B 及 ARM map 记录](docs/part5/20_stage5_5_3_repeated_performance_evidence_2026-11-01.md)：Monitor CPU 6/6 组下降，Control/Trajectory P99 抖动各 5/6 组下降但仍有 1/6 组退化；最新链接裁剪 FLASH 106,464→88,600 B、RAM 33,936 B 不变。**5.3 的“稳定降低控制周期抖动”仍不能无保留签收**，测试工具不应替代硬件 WCET 证据。
+- **Stage5 5.3 性能复验（2026-11-01）**：[同提交 6 组交错 QEMU/GDB A/B 及 ARM map 记录](docs/part5/20_stage5_5_3_repeated_performance_evidence_2026-11-01.md)：两轮共12组 Monitor CPU **12/12 下降**，Control/Trajectory P99 抖动各 **8/12 下降、4/12 退化**，Monitor P99 抖动 10/12 退化；最新链接裁剪 FLASH 106,464→88,600 B、RAM 33,936 B 不变。**5.3 的“稳定降低控制周期抖动”仍不能无保留签收**，测试工具不应替代硬件 WCET 证据。
 - **不能把 CI 全绿写成本机已通过。** 同提交的 Windows 原有环境下，仍须跑完整固件内 APF 路线，再完成操作员原生 GUI 连续至少五次合法安全点动，每次真正回位，最后点击 `SAFE JOG FINISH/EXIT`。
 
 > 以上 CI 是 **`23d1faa` 代码基线** 的证据。后续仅文档更新的提交会有自己的 HEAD 和 CI，不能把旧提交的绿色状态自动算作新提交的测试结果。
