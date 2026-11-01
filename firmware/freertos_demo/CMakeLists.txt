@@ -548,6 +548,15 @@ if(ROBOT_ENABLE_STAGE4_TASKS)
         application/tasks/monitor_task.c
     )
 endif()
+if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
+    # Actual ARM C APF/FK/IK plan computed on FreeRTOS Trajectory stack.
+    # The proposed target is non-actuating until separately collision-gated
+    # and committed via the existing UART joint motion request.
+    target_sources(freertos_demo PRIVATE
+        application/services/stage5_apf_proposal.c
+    )
+endif()
+
 if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     target_sources(freertos_demo PRIVATE
         tests/qemu_target/stage4_rtos_selftest.c
