@@ -53,7 +53,7 @@ class ButtonBullet:
 
 def jog(physics=None, limit=math.pi, preview_return=None):
     p = physics or ButtonBullet()
-    validator = preview_return or Mock(side_effect=lambda: valid_return())
+    validator = preview_return or Mock(side_effect=lambda **kwargs: valid_return())
     policy = SafeGuiJog(
         p, 0, range(6), [1], 0,
         [(-limit, limit) for _ in range(6)],
@@ -117,6 +117,25 @@ class GuardedJogTests(unittest.TestCase):
                     gate.call_args.kwargs["maximum_joint_step_rad"],
                     math.radians(.25))
                 planner.assert_called_once()
+
+    def test_two_degree_jog_passes_actual_pre_click_pose_to_return_planner(self):
+        p, ctl, planner = jog()
+        p.widgets[ctl.axis_widget] = 6.0
+        p.widgets[ctl.step_widget] = 2.0
+        p.angles[5] = math.radians(14.17)
+        p.click(ctl.buttons[1])
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, list(range(6)), 0, True, False)
+        self.assertEqual(ctl.applied, 1)
+        self.assertEqual(ctl.events[-1]["displacement_deg"], 2.0)
+        context = planner.call_args.kwargs["jog_context"]
+        self.assertEqual(context["axis"], 5)
+        self.assertAlmostEqual(math.degrees(context["delta_rad"]), 2.0)
+        self.assertAlmostEqual(math.degrees(
+            context["start_joint_rad"][5]), 14.17)
+        self.assertEqual(ctl.last_authorized_jog, context)
+        self.assertAlmostEqual(math.degrees(p.angles[5]), 16.17)
 
     def test_ci_scripted_j6_uses_real_preflight_and_requires_uart_settlement(self):
         p, ctl, planner = jog()
@@ -340,7 +359,7 @@ class RealPhysicsJogGateTests(unittest.TestCase):
             limits = [(max(-math.pi,p.getJointInfo(robot,j,physicsClientId=cid)[8]),
                        min(math.pi,p.getJointInfo(robot,j,physicsClientId=cid)[9]))
                       for j in joints]
-            validator = Mock(side_effect=lambda: valid_return())
+            validator = Mock(side_effect=lambda **kwargs: valid_return())
             ctl = SafeGuiJog(
                 proxy, robot, joints, [obstacle], cid, limits,
                 maximum_joint_step_rad=math.radians(3),
