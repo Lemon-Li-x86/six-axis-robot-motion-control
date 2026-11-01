@@ -28,6 +28,7 @@
 - `stage4_timing_probe.c` 仍仅保留**最后128个间隔**，因此 5 秒 CPU 数据与 Timer0 虽同一**健康阶段结束边界**，但并不是完全相同的**时间跨度**。Control 最后最多约1.28秒、Trajectory 最后最多约2.56秒、Monitor 最后最多约50个周期。**不能称它们是同样长的全5秒窗口**。
 - `tools/run_stage5_perf_repeats.sh` 串行进行 6 对交错 A/B（奇数对 baseline→optimized；偶数对 optimized→baseline），每一对使用**相同 commit、工具链、RTOS 自测和其他 CMake 配置**，仅切换 `ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT`。
 - `tools/aggregate_stage5_perf_repeats.py` 对 GDB CPU 和 Timer0 两类原始 JSON 逐组要求健康时长、采样数、CPU/TIMER 频率、非零栈余量及零溢出，并输出每组前后差值、每任务中位数及出现退化的次数；**统计分析本身不裁定硬件 WCET 或普遍抖动优化成功**。
+- 验收工具在后续提交 `e759b7b` 进一步收紧：每轮 CPU 观测必须在 4.5–5.5 秒、基线/优化任务各自的 `nominal_period_ms` 必须完全相同；对应负例在 `49b3b26` 加入。源数据仍来自上一轮 `e5e6dbc` 成功的六组结果，**新验证代码需要对应的新 CI 结果**，不可冒称它早已在上一轮执行。
 - `tools/tests/test_stage5_perf_repeats.py` 覆盖遗漏任务、样本不足、频率/时长不一致、NaN、CPU 溢出、P99 大于最大值、确实退化等负例。
 
 ## 3. 可复现实验入口与证据
