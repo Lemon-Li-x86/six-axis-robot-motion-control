@@ -121,4 +121,4 @@ GDB 在 QEMU ARM 固件读取 FreeRTOS task handle、任务 CPU 占比、Timer0 
 
 交付源码在本分支；真实 CI 文件 `result.json`、`observed*.json`、`stage5_firmware.map` 由各 Actions 工作流工件保存，不得用此文件文字取代原始证据。原始 Python 用户验收入口为 [Windows 连续按钮验收](18_stage5_windows_final_two_step_acceptance.md)；脚本 `tools/run_stage5_live_windows.ps1` 接收 `-SafeJog -RequireTwoStepJog`，必须至少连续五次合法按钮，各自完整 C/UART 回位，未发生拒绝、碰撞与反馈过期，才能由操作员验收。
 
-**当前结论：具备有证据的 ARM FreeRTOS C APF 单步闭环和可量化的 CPU/FLASH 优化，但“全场景固件自主避障”及“控制周期 jitter 在可重复负载下确实降低”仍有明确验收缺口。不得无保留勾掉原 PDF 的 5.2/5.3。**
+**当前结论：ARM FreeRTOS C APF 完成了给定长方体场景 **28/28 段**整路规划/执行，且每段有外部全连杆门禁；CPU 与 FLASH 优化已取得实测，RAM 不变。唯独“控制周期 jitter 在可重复相同负载下确实降低”目前数据方向不一致，不能无保留宣称全部实时性指标优化完成。软件仿真与实体设备必须分开。**
