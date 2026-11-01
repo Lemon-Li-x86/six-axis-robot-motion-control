@@ -59,7 +59,25 @@ SIM_MOTION_DIAGNOSTIC_SELECTORS = {
     "feedback_stale_count": 15,
     "last_fault": 16,
     "monitoring_ticks": 17,
+    "trace_rtos_tick": 18,
+    "trace_control_dt_us": 19,
+    "trace_reference_age_ticks": 20,
+    "trace_request_generation": 21,
 }
+# Ranges mirror the QEMU-only selectors in the authoritative C protocol.h.
+# The contract test checks every base against that header.
+_STAGE5_TRACE_BASES = {
+    "trace_reference_raw": 22,
+    "trace_feedback_raw": 28,
+    "trace_pid_correction_millideg": 34,
+    "trace_limiter_position_millicentideg": 40,
+    "trace_command_raw": 46,
+}
+for _name, _base in _STAGE5_TRACE_BASES.items():
+    for _axis in range(1, 7):
+        SIM_MOTION_DIAGNOSTIC_SELECTORS[f"{_name}_j{_axis}"] = (
+            _base + _axis - 1
+        )
 
 JOINT_COUNT = 6
 
