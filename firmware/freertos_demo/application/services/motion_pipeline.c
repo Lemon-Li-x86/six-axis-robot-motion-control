@@ -190,3 +190,17 @@ robot_status_t motion_pipeline_get_diagnostics(motion_stage4_diagnostics_t *out)
     taskEXIT_CRITICAL();
     return ROBOT_STATUS_OK;
 }
+
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+robot_status_t motion_pipeline_get_stage5_control_trace(
+    motion_stage5_control_trace_t *out)
+{
+    if(out==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    taskENTER_CRITICAL();
+    *out=g_motion_runtime.control_trace;
+    taskEXIT_CRITICAL();
+    return out->valid ? ROBOT_STATUS_OK : ROBOT_STATUS_ERROR_NOT_READY;
+}
+#endif
