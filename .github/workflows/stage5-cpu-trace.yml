@@ -58,6 +58,20 @@ jobs:
             build/stage5-cpu-trace/observed-timing.json \
             build/stage5-cpu-optimized/observed-timing.json \
             --output build/stage5-cpu-optimized/monitor-stack-cpu-ab.json
+      - name: Build same-commit Stage5 ARM memory map without dead-data pruning
+        run: |
+          cmake -S . -B build/stage5-map-before -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON -DROBOT_ENABLE_STAGE5_LINK_MAP=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON -DROBOT_ENABLE_STAGE5_LINK_GC=OFF
+          cmake --build build/stage5-map-before --target freertos_demo
+      - name: Build same-commit Stage5 ARM map with dead-code/global pruning
+        run: |
+          cmake -S . -B build/stage5-map-after -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON -DROBOT_ENABLE_STAGE5_LINK_MAP=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON -DROBOT_ENABLE_STAGE5_LINK_GC=ON
+          cmake --build build/stage5-map-after --target freertos_demo
+      - name: Verify allocated FLASH/RAM change from actual same-flag ELF maps
+        run: |
+          python tools/stage5_memory_map.py \
+            build/stage5-map-after/firmware/freertos_demo/stage5_firmware.map \
+            --before build/stage5-map-before/firmware/freertos_demo/stage5_firmware.map \
+            --output build/stage5-cpu-optimized/arm-link-memory-ab.json
       - name: Preserve complete CPU trace
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,4 +85,7 @@ jobs:
             build/stage5-cpu-optimized/observed.json
             build/stage5-cpu-optimized/observed-timing.json
             build/stage5-cpu-optimized/monitor-stack-cpu-ab.json
+            build/stage5-cpu-optimized/arm-link-memory-ab.json
+            build/stage5-map-before/firmware/freertos_demo/stage5_firmware.map
+            build/stage5-map-after/firmware/freertos_demo/stage5_firmware.map
           if-no-files-found: ignore
