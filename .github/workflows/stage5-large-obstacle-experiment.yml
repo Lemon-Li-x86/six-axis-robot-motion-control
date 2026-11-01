@@ -30,6 +30,19 @@ jobs:
           cmake --build build/stage5-avoidance-5cm --parallel 2
           ctest --test-dir build/stage5-avoidance-5cm --output-on-failure
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
+      - name: Diagnose 5cm AABB placements with the same C APF/IK and Bullet preflight (no UART)
+        run: |
+          python tools/tests/probe_stage5_large_obstacle_placements.py \
+            --library build/stage5-avoidance-5cm/libstage5_apf_bridge.so \
+            --scene blocked_large \
+            --output build/stage5-5cm-placement-probe.json
+      - name: Preserve geometry probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-5cm-placement-probe
+          path: build/stage5-5cm-placement-probe.json
+          if-no-files-found: ignore
       - name: Attempt 5cm C auto-bypass with real QEMU UART and native Bullet
         run: |
           timeout 240s xvfb-run -a -s "-screen 0 1280x800x24" \
