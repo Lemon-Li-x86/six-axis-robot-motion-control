@@ -69,6 +69,8 @@ def load_scene(route_case: str) -> tuple[dict, dict]:
         raise ValueError("expect_direct_blocked must be a boolean")
     if type(scene.get("shortcut_cartesian", False)) is not bool:
         raise ValueError("shortcut_cartesian must be a boolean")
+    if type(scene.get("automatic_bypass", False)) is not bool:
+        raise ValueError("automatic_bypass must be a boolean")
     policy = catalog["preflight"]
     if not (math.isfinite(policy["max_joint_step_rad"]) and
             policy["max_joint_step_rad"] > 0 and
@@ -183,7 +185,13 @@ def make_avoidance_preflight(
             max_joint_step_rad=safety["max_joint_step_rad"],
             max_collision_samples=safety["max_collision_samples"],
             physics_client_id=client,
-            via_points_mm=via_points,
+            # The legacy scene via is retained for the ARM full-route
+            # baseline, but host GUI auto mode never feeds it to the C
+            # candidate generator. C owns candidate geometry and only
+            # the existing C APF/IK/full-link gates authorize a route.
+            via_points_mm=(
+                () if scene.get("automatic_bypass", False) else via_points),
+            automatic_bypass=scene.get("automatic_bypass", False),
             shortcut_cartesian=(scene.get("shortcut_cartesian", False)
                                 if shortcut_override is None
                                 else shortcut_override),
