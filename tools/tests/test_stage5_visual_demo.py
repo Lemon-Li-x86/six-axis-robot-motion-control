@@ -293,6 +293,39 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertFalse(small_endpoint_rearm_ready(
             runner, residual, SETTLE_FRAME_COUNT, 7.0))
 
+    def test_collision_gated_second_endpoint_rearm_must_improve_and_reack(self):
+        goal = SCENARIOS["six_axis"][0]
+        runner = MotionSequencer((goal,))
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        first = tuple(v + 50 for v in goal)
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 4.0, max_rearms=2))
+        runner.reissue_current_goal_from_feedback(
+            4.0, max_rearms=2, measured_error_deg=0.50)
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        # No second retry if the physical residual did not improve.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, first, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        second = tuple(v + 19 for v in goal)
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, second, SETTLE_FRAME_COUNT, 8.0, max_rearms=2))
+        packet = runner.reissue_current_goal_from_feedback(
+            8.0, max_rearms=2, measured_error_deg=0.19)
+        self.assertEqual(packet[4], 43)
+        self.assertEqual(runner.endpoint_rearms, 2)
+        runner.acknowledge(struct.pack("<Bb", 43, 0))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, second, SETTLE_FRAME_COUNT, 12.0, max_rearms=2))
+        within = tuple(v + 7 for v in goal)
+        for _ in range(SETTLE_FRAME_COUNT - 1):
+            self.assertFalse(runner.observe(within))
+        self.assertTrue(runner.observe(within))
+        self.assertEqual(runner.completed, 1)
+        self.assertLessEqual(runner.segment_final_errors_deg[0], 0.15)
+
     def test_one_measured_endpoint_rearm_requires_real_second_ack_and_settle(self):
         goal = SCENARIOS["six_axis"][0]
         runner = MotionSequencer((goal,))
