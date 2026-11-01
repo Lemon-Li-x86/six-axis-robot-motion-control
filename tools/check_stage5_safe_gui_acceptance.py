@@ -18,9 +18,13 @@ from stage5_safe_gui_jog import JOG_MIN_DEG, JOG_MAX_DEG  # noqa: E402
 from stage5_qemu_uart_visual_demo import SETTLE_TOLERANCE_DEG  # noqa: E402
 
 
-def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
+def evaluate(
+    report: dict, *, two_step: bool = False, repeated: bool = False,
+) -> list[str]:
     """Return reasons for NOT PASS, without weakening the production verdict."""
     failures: list[str] = []
+    if two_step and repeated:
+        return ["mutually exclusive two_step and repeated fixture selections"]
     def need(ok: bool, message: str) -> None:
         if not ok:
             failures.append(message)
@@ -51,7 +55,7 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
     recovered = report.get("hold_recoveries")
     # Scenario requirements are minima, NOT a UI lifetime cap. An operator
     # may legitimately continue J1..J6 jogs after the initial 0.5/2deg trial.
-    minimum = 2 if two_step else 1
+    minimum = 5 if repeated else 2 if two_step else 1
     need(type(applied) is int and applied >= minimum and
          applied == completed == recovered,
          "guarded GUI jog, C UART recovery and physical settlement counts differ")
@@ -61,7 +65,7 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
              for route in routes),
          "not every C recovery route completed")
     events = report.get("safe_gui_jog_events")
-    if two_step:
+    if two_step or repeated:
         need(isinstance(events, list) and any(
             isinstance(event, dict)
             and event.get("event") == "safe_gui_jog_finish_requested"
@@ -89,8 +93,12 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
          "one or more recorded jogs have invalid axis, direction or step")
     first_steps = [(event.get("joint"), event.get("displacement_deg"))
                    for event in applied_events[:minimum]]
-    expected_steps = ((6, JOG_MIN_DEG), (6, JOG_MAX_DEG)) if two_step else (
-        (6, JOG_MIN_DEG),)
+    expected_steps = (
+        ((6, JOG_MIN_DEG),) + ((6, JOG_MAX_DEG),)*4
+        if repeated else
+        ((6, JOG_MIN_DEG), (6, JOG_MAX_DEG))
+        if two_step else ((6, JOG_MIN_DEG),)
+    )
     need(len(first_steps) == minimum and all(
         joint == expected_joint and
         type(amount) in (float, int) and
@@ -119,8 +127,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result", type=Path,
                         help="Stage5 output_dir/result.json")
-    parser.add_argument("--two-step", action="store_true",
-                        help="Require two physically recovered J6 moves: +0.5, +2deg")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--two-step", action="store_true",
+                       help="First two physical J6 moves must be +0.5, +2deg")
+    modes.add_argument("--repeat", action="store_true",
+                       help="CI: first five physical J6 moves must be +0.5,+2,+2,+2,+2deg")
     args = parser.parse_args()
     if not args.result.is_file():
         print(f"[STAGE5 GUI] NOT PASS: result.json missing: {args.result}")
@@ -132,13 +143,15 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f"[STAGE5 GUI] NOT PASS: invalid JSON: {exc}")
         return 1
-    failures = evaluate(data, two_step=args.two_step)
+    failures = evaluate(data, two_step=args.two_step,
+                        repeated=args.repeat)
     if failures:
         print("[STAGE5 GUI] NOT PASS: " + "; ".join(failures))
         print("Keep worker.log, uart_live.jsonl, observer.jsonl and result.json.")
         return 1
     print("[STAGE5 GUI] PASS: native virtual GUI, "
-          + ("J6 +0.5deg then +2deg" if args.two_step else "J6 +0.5deg")
+          + ("J6 five real recoveries" if args.repeat else
+             "J6 +0.5deg then +2deg" if args.two_step else "J6 +0.5deg")
           + ", C APF/IK, "
           "full-link clearance, UART ACK and physical settled recovery.")
     print("This does not certify physical six-axis robot hardware.")
