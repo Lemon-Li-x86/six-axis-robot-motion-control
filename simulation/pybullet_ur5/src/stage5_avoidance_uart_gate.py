@@ -203,6 +203,7 @@ def make_avoidance_preflight(
     def plan_hold_recovery(
         physics, robot, joints, client, original_plan,
         *, minimum_extra_clearance_m=0.0,
+        jog_context=None, hold_settle_tolerance_rad=0.0,
     ):
         # Always use the current measured physical joint state. The obstacle
         # body remains in the SAME authoritative Bullet world; never recreate
@@ -212,7 +213,9 @@ def make_avoidance_preflight(
             library, physics, robot, joints, original_plan["obstacle_ids"],
             client, original_plan["cartesian_goal_m"],
             original_plan["joint_waypoints_rad"][-1], route_case,
-            minimum_extra_clearance_m=minimum_extra_clearance_m)
+            minimum_extra_clearance_m=minimum_extra_clearance_m,
+            jog_context=jog_context,
+            hold_settle_tolerance_rad=hold_settle_tolerance_rad)
 
     prepare.plan_hold_recovery = plan_hold_recovery
     return prepare
