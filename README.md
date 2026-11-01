@@ -15,7 +15,7 @@
 | Stage 5 · 系统集成 | 真实 ARM/FreeRTOS UART ↔ PyBullet 静态整臂避障、CPU/GDB/.map 审计、Windows SAFE JOG/FINISH 回位 | **有保留结项**；旧 Linux GUI `six_axis` 未通过，PR #33 尚未合并 |
 | Stage 6 · 综合应用 | 搬运任务仿真、长时间运行及最终交付 | 待开发 |
 
-**请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
+**请先看 [原始四页项目大纲的 24 项逐条进度审计](docs/project_plan_progress_audit_2026-10-31.md)**。Stage5 最后一次 Windows 原生 GUI 验收请按 **[J6 0.5° 后再 2° 双操作员验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md)** 执行，同一轮运行必须两次真实 C/UART 回位，不能以 0.5° 成功掩盖 2° 被拒绝。阶段验收证据另见 [Stage 1–4 验收记录](docs/phase1-4_acceptance_status_2026-10-27.md)、[Stage 5 原始验收范围](docs/part5/00_stage5_scope_and_acceptance.md)、[Stage 5 核心结项实测](docs/part5/15_stage5_exit_review_2026-10-30.md)及 **[Stage 5 有保留最终签收 / Stage 6 交接](docs/part5/17_stage5_final_acceptance_2026-10-31.md)**。
 
 ## 系统架构
 
