@@ -15,7 +15,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_stage5_embedded_apf_uart import (
     require_runtime_full_link_clearance,
     describe_joint_tracking,
+    decode_firmware_motion_diagnostic,
+    MOTION_DIAGNOSTIC_SELECTORS,
 )
+
+
+class FirmwareDiagnosticDecodingTests(unittest.TestCase):
+    def test_uses_existing_firmware_selector_registry(self):
+        self.assertEqual(dict(MOTION_DIAGNOSTIC_SELECTORS)["controller_steps"], 12)
+        self.assertEqual(dict(MOTION_DIAGNOSTIC_SELECTORS)["controller_faults"], 13)
+        self.assertEqual(dict(MOTION_DIAGNOSTIC_SELECTORS)["last_fault"], 16)
+
+    def test_unsigned_counters_and_signed_last_fault(self):
+        self.assertEqual(decode_firmware_motion_diagnostic(
+            "controller_steps", b"\\x34\\x12\\x00\\x00"), 4660)
+        self.assertEqual(decode_firmware_motion_diagnostic(
+            "last_fault", b"\\xff\\xff\\xff\\xff"), -1)
+        with self.assertRaisesRegex(ValueError, "4 bytes"):
+            decode_firmware_motion_diagnostic("last_fault", b"\\x01")
 
 
 class MotionDiagnosticTests(unittest.TestCase):
