@@ -56,6 +56,17 @@ class RealGuiAcceptanceTests(unittest.TestCase):
         y["safe_gui_jog_events"] = x["safe_gui_jog_events"][:1]
         self.assertNotEqual(evaluate(y, two_step=True), [])
 
+    def test_previous_bug_pass_then_refused_second_click_must_fail(self):
+        x = good()
+        x["safe_gui_jog_refused"] = 1
+        x["safe_gui_jog_events"].append({
+            "event": "safe_gui_jog_rejected",
+            "joint": 6, "displacement_deg": 2.0,
+            "reason": "recovery_preflight_failed",
+        })
+        self.assertNotEqual(evaluate(x), [])
+        self.assertNotEqual(evaluate(x, two_step=True), [])
+
     def test_just_original_route_without_a_jog_is_not_pass(self):
         x = good()
         x.update(safe_gui_jog_applied=0, safe_gui_jog_completed=0,
