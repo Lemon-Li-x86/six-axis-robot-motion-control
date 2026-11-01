@@ -42,6 +42,10 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
          "guarded C recovery preflight missing")
     need(report.get("runtime_full_link_collision_free") is True,
          "physical per-frame full-link collision validation missing")
+    # A PASS must not hide a later operator click that was refused. This
+    # previously let "+0.5deg PASS then +2deg REFUSED" appear successful.
+    need(report.get("safe_gui_jog_refused", 0) == 0,
+         "one or more operator GUI jog requests were refused")
     applied = report.get("safe_gui_jog_applied")
     completed = report.get("safe_gui_jog_completed")
     recovered = report.get("hold_recoveries")
