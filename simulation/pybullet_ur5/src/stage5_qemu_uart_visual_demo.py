@@ -1078,6 +1078,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     avoidance_report: dict | None = None
     recovery_plan_report: dict | None = None
     recovery_sequencer: MotionSequencer | None = None
+    # Independent measured-feedback endpoint tracking for the C APF recovery
+    # path; original mission sequencer already has its own separate tracker.
+    recovery_endpoint_previous: tuple[int, ...] | None = None
+    recovery_endpoint_stable_frames = 0
+    recovery_endpoint_rearm_events: list[dict] = []
     recovery_attempted = False
     recovery_segments_settled = 0
     recovery_sequence_next = None
@@ -1719,6 +1724,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                             recovery_sequencer = MotionSequencer(
                                                 recovery_goals,
                                                 first_sequence=recovery_sequence_next)
+                                            recovery_endpoint_previous = None
+                                            recovery_endpoint_stable_frames = 0
                                             recovery_route_events.append(dict(
                                                 first_sequence=recovery_sequence_next,
                                                 planned_segments=len(recovery_goals),
@@ -1949,6 +1956,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     if recovery_sequencer.done:
                                         recovery_sequence_next = (
                                             recovery_sequencer.sequence + 1) & 0xff
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
                                         recovery_route_events[-1]["completed"] = True
                                         recovery_sequencer = None
                                         recovery_settled = SETTLE_FRAME_COUNT
@@ -1963,8 +1972,95 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                         print("[HOLD C APF] All validated recovery "
                                               "segments settled", flush=True)
                                     else:
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
                                         sock.sendall(recovery_sequencer.next_request(
                                             time.monotonic()))
+                                elif (recovery_sequencer is not None
+                                      and options.gui_safe_jog
+                                      and recovery_sequencer.accepted
+                                      and not recovery_sequencer.ack_pending
+                                      and recovery_sequencer.goal is not None):
+                                    # The original-path endpoint correction
+                                    # does not apply to *new* C APF recovery
+                                    # requests. Native GUI motor velocity caps
+                                    # can still stall a legitimate joint-only
+                                    # return (CI J6 +2deg: residual 0.42deg).
+                                    # Require an observed steady pose, then
+                                    # request a finite, improving *real* ARM
+                                    # trajectory from fresh measured feedback.
+                                    if (recovery_endpoint_previous is not None and
+                                            max(abs(a-b) for a,b in zip(
+                                                recovery_endpoint_previous,
+                                                measured)) <= 1):
+                                        recovery_endpoint_stable_frames += 1
+                                    else:
+                                        recovery_endpoint_stable_frames = 0
+                                    recovery_endpoint_previous = tuple(measured)
+                                    if small_endpoint_rearm_ready(
+                                            recovery_sequencer, measured,
+                                            recovery_endpoint_stable_frames,
+                                            time.monotonic(),
+                                            max_rearms=GUI_ENDPOINT_REARMS_OBSTACLE,
+                                            full_link_preflight_required=True):
+                                        # Never re-arm by guessing a straight
+                                        # line near a live obstacle. Re-check
+                                        # actual URDF links using the same
+                                        # jog clearance and sample granularity
+                                        # as the initial C APF preview.
+                                        from stage5_collision_validation import (
+                                            validate_joint_path)
+                                        from stage5_avoidance_uart_gate import load_scene
+                                        from stage5_safe_gui_jog import (
+                                            JOG_MAX_SAMPLE_STEP_RAD)
+                                        _, recovery_policy = load_scene(
+                                            plan["route_case"])
+                                        start_rad = tuple(
+                                            math.radians(v /
+                                                wire.JOINT_ANGLE_SCALE)
+                                            for v in measured)
+                                        goal_rad = tuple(
+                                            math.radians(v /
+                                                wire.JOINT_ANGLE_SCALE)
+                                            for v in recovery_sequencer.goal)
+                                        rearm_gate = validate_joint_path(
+                                            p, arm, safety_obstacles, joints,
+                                            [start_rad, goal_rad],
+                                            maximum_joint_step_rad=min(
+                                                recovery_policy["max_joint_step_rad"],
+                                                JOG_MAX_SAMPLE_STEP_RAD),
+                                            clearance_m=safety_clearance_m +
+                                                safe_gui_jog.extra_clearance_m,
+                                            maximum_samples=recovery_policy[
+                                                "max_collision_samples"],
+                                            physics_client_id=client)
+                                        if not rearm_gate["passed"]:
+                                            raise RuntimeError(
+                                                "HOLD C APF endpoint correction "
+                                                "refused by full-link safety: " +
+                                                str(rearm_gate["collision"]))
+                                        error = max(abs(a-b) /
+                                            wire.JOINT_ANGLE_SCALE
+                                            for a,b in zip(
+                                                recovery_sequencer.goal, measured))
+                                        event = {
+                                            "event": "hold_C_apf_endpoint_rearm",
+                                            "sequence_next": (
+                                                recovery_sequencer.sequence+1)&0xff,
+                                            "attempt": (
+                                                recovery_sequencer.rearms_current_segment+1),
+                                            "measured_error_deg": error,
+                                            "full_link_gate": rearm_gate,
+                                        }
+                                        audit.write(json.dumps(event) + "\n")
+                                        recovery_endpoint_rearm_events.append(event)
+                                        recovery_endpoint_previous = None
+                                        recovery_endpoint_stable_frames = 0
+                                        sock.sendall(
+                                            recovery_sequencer.reissue_current_goal_from_feedback(
+                                                time.monotonic(),
+                                                max_rearms=GUI_ENDPOINT_REARMS_OBSTACLE,
+                                                measured_error_deg=error))
                                 if sequencer.observe(measured):
                                     endpoint_stable_frames = 0
                                     endpoint_prev_feedback = None
@@ -2256,6 +2352,8 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                 "obstacle_recovery_preflight": recovery_plan_report,
                 "obstacle_recovery_segments_settled": recovery_segments_settled,
                 "obstacle_recovery_routes": recovery_route_events,
+                "obstacle_recovery_endpoint_rearms":
+                    recovery_endpoint_rearm_events,
                 "physical_ee_at_hold_entry_m": settled_ee_xyz_m,
                 "physical_ee_goal_error_at_hold_entry_mm":
                     settled_ee_goal_error_mm,
