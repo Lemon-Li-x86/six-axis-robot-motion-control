@@ -17,7 +17,7 @@
 
 使用已安装的 arm-none-eabi-gcc、CMake、QEMU、Python+PyBullet、Windows PowerShell。先确认本地代码没有待保存改动。**不要**在有未提交修改时执行覆盖、`reset --hard` 或清理整个 build 目录。
 
-**多 worktree 的 Python 选择（2026-11-01 修订）**：两个 Windows 验收脚本均自动检查**现有**解释器的 NumPy（项目要求 `numpy<2`）及 PyBullet，优先尝试当前工作树的 `.venv`，再尝试 Windows `py` 已安装解释器，最后检查 `python` 命令。**不安装任何东西，不新建环境**。不要传 `-Python python` 来强制选用另一个工作树已激活的旧 `.venv`。如需坚持使用已验收过的解释器，显式传 `-Python 'C:\path\to\working\python.exe'`；指定解释器若不能导入依赖则立即终止，不会默默改用另一个版本。
+**多 worktree 的 Python 选择（2026-11-01 修订）**：两个 Windows 验收脚本均自动检查**现有**解释器能否实际导入 NumPy 与 PyBullet（`requirements.txt` 声明了 `numpy<2`，但检查器不修改、不强制安装版本），优先尝试当前工作树的 `.venv`，再尝试 Windows `py` 已安装解释器，最后检查 `python` 命令。**不安装任何东西，不新建环境**。不要传 `-Python python` 来强制选用另一个工作树已激活的旧 `.venv`。如需坚持使用已验收过的解释器，显式传 `-Python 'C:\path\to\working\python.exe'`；指定解释器若不能导入依赖则立即终止，不会默默改用另一个版本。
 
 ```powershell
 git status --short
