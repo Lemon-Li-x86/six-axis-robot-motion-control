@@ -26,6 +26,7 @@ def evidence(jitter=0.07, monitor_cpu=0.06, elapsed=4.72):
         "tasks": [
             {
                 "task": name,
+                "nominal_period_ms": {"Control": 10.0, "Trajectory": 20.0, "Monitor": 100.0}[name],
                 "interval_samples": 42 if name == "Monitor" else 128,
                 "execution_samples": 42 if name == "Monitor" else 128,
                 "p99_abs_period_jitter_ms": jitter,
@@ -86,6 +87,16 @@ class RepeatTests(unittest.TestCase):
         p = pairs()
         p[0][1]["elapsed_seconds"] = 12
         with self.assertRaisesRegex(ValueError, "windows differ"):
+            summarize(p)
+
+    def test_rejects_short_or_mismatched_task_periods(self):
+        p = pairs()
+        p[0][0]["elapsed_seconds"] = 3.2
+        with self.assertRaisesRegex(ValueError, "healthy-window duration"):
+            summarize(p)
+        p = pairs()
+        p[0][3]["tasks"][0]["nominal_period_ms"] = 20.0
+        with self.assertRaisesRegex(ValueError, "mismatched nominal task periods"):
             summarize(p)
 
     def test_rejects_nan_and_invalid_percentile(self):
