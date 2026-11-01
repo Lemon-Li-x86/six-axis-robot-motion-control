@@ -502,6 +502,18 @@ option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
 # UART, so BOTH flags must be deliberately enabled. Never use on hardware.
 option(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
     "Test-only inbound motion requests and virtual UART command output" OFF)
+# Scope Stage5-only stack-scan optimization to QEMU integration by default;
+# the Stage4 frozen test path remains untouched. OFF is an explicit A/B
+# instrumented baseline; both modes read the same JSON task periods.
+option(ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT
+    "Reduce repeated full-stack scans in FreeRTOS Monitor task"
+    ${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION})
+if(ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT AND NOT ROBOT_ENABLE_STAGE4_TASKS)
+    message(FATAL_ERROR "Stage5 stack scan optimization requires RTOS motion tasks")
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=$<BOOL:${ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT}>
+)
 if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
     if(NOT ROBOT_ENABLE_STAGE4_TASKS OR
        NOT ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT OR
