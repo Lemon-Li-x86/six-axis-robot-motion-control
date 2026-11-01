@@ -10,6 +10,9 @@ typedef enum {
     MOTION_REQUEST_JOINT = 1,
     MOTION_REQUEST_CARTESIAN = 2,
     MOTION_REQUEST_POLYNOMIAL = 3
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+    ,MOTION_REQUEST_APF_PROPOSAL = 4
+#endif
 } motion_request_kind_t;
 /* Exactly ONE request kind is active at a time. A union avoids wasting
  * the ProtocolRX 256-word stack on three mutually exclusive plans.
@@ -20,6 +23,9 @@ typedef struct {
         robot_joint_positions_t joint_goal;
         cartesian_trajectory_plan_t cartesian;
         trajectory_polynomial_plan_t polynomial;
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+        protocol_apf_step_request_t apf_request;
+#endif
     };
 } motion_request_t;
 typedef struct {
