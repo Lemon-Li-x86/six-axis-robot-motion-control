@@ -424,6 +424,11 @@ jobs:
           cmake -S firmware/freertos_demo/tests/host -B build/stage5-native-regression -DCMAKE_BUILD_TYPE=Debug
           cmake --build build/stage5-native-regression --parallel 2
           ctest --test-dir build/stage5-native-regression --output-on-failure
+      - name: Reproduce user first APF leg with production native C PID and limiter
+        run: |
+          cmake -S firmware/freertos_demo/tests/simulation -B build/stage5-native-control-bridge -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-native-control-bridge --parallel 2
+          ctest --test-dir build/stage5-native-control-bridge --output-on-failure -V
 
   windows-c-apf-bridge:
     runs-on: windows-latest
