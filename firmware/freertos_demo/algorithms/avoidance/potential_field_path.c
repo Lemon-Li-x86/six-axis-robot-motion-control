@@ -85,6 +85,11 @@ robot_status_t robot_apf_plan_path(
  * screening is Cartesian only. It cannot license any robot motion.
  * Three clearance-dependent offsets per lateral direction are tried; the
  * caller, not this routine, selects one after full C APF/IK/link checks. */
+size_t robot_apf_bypass_capacity(void)
+{
+    return ROBOT_APF_BYPASS_MAX_CANDIDATES;
+}
+
 robot_status_t robot_apf_generate_bypass_vias(
     const robot_apf_point_t *start,
     const robot_apf_point_t *goal,
