@@ -49,8 +49,10 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
     applied = report.get("safe_gui_jog_applied")
     completed = report.get("safe_gui_jog_completed")
     recovered = report.get("hold_recoveries")
-    expected = 2 if two_step else 1
-    need(type(applied) is int and applied == expected and
+    # Scenario requirements are minima, NOT a UI lifetime cap. An operator
+    # may legitimately continue J1..J6 jogs after the initial 0.5/2deg trial.
+    minimum = 2 if two_step else 1
+    need(type(applied) is int and applied >= minimum and
          applied == completed == recovered,
          "guarded GUI jog, C UART recovery and physical settlement counts differ")
     routes = report.get("obstacle_recovery_routes")
@@ -65,20 +67,37 @@ def evaluate(report: dict, *, two_step: bool = False) -> list[str]:
             and event.get("event") == "safe_gui_jog_finish_requested"
             for event in events),
             "operator FINISH after second physical return missing")
-    actual_steps = [
-        event.get("displacement_deg")
-        for event in (events if isinstance(events, list) else [])
-        if isinstance(event, dict)
-        and event.get("event") == "safe_gui_jog_applied"
-        and event.get("joint") == 6
+    applied_events = [
+        event for event in (events if isinstance(events, list) else [])
+        if isinstance(event, dict) and
+           event.get("event") == "safe_gui_jog_applied"
     ]
-    required_steps = (JOG_MIN_DEG, JOG_MAX_DEG) if two_step else (JOG_MIN_DEG,)
-    need(len(actual_steps) == len(required_steps) and all(
-        isinstance(actual, (int, float)) and
-        math.isfinite(actual) and
-        math.isclose(actual, expected_step, rel_tol=0, abs_tol=1e-8)
-        for actual, expected_step in zip(actual_steps, required_steps)),
-        "J6 requested steps differ from independently required sequence")
+    need(type(applied) is int and len(applied_events) == applied,
+         "logged operator movements do not match actual C/UART movement count")
+    # All subsequent buttons are permitted, across all six axes, directions
+    # and 0.5deg steps, provided the real safety + C return checks passed.
+    # CI two-step ONLY requires the first two events in a specific order.
+    def valid_movement(event: dict) -> bool:
+        joint, amount = event.get("joint"), event.get("displacement_deg")
+        return (type(joint) is int and 1 <= joint <= 6 and
+                type(amount) in (float, int) and math.isfinite(amount) and
+                JOG_MIN_DEG <= abs(amount) <= JOG_MAX_DEG and
+                math.isclose(abs(amount) / JOG_MIN_DEG,
+                             round(abs(amount) / JOG_MIN_DEG),
+                             abs_tol=1e-8, rel_tol=0))
+    need(all(valid_movement(event) for event in applied_events),
+         "one or more recorded jogs have invalid axis, direction or step")
+    first_steps = [(event.get("joint"), event.get("displacement_deg"))
+                   for event in applied_events[:minimum]]
+    expected_steps = ((6, JOG_MIN_DEG), (6, JOG_MAX_DEG)) if two_step else (
+        (6, JOG_MIN_DEG),)
+    need(len(first_steps) == minimum and all(
+        joint == expected_joint and
+        type(amount) in (float, int) and
+        math.isclose(amount, expected_amount, rel_tol=0, abs_tol=1e-8)
+        for (joint, amount), (expected_joint, expected_amount)
+        in zip(first_steps, expected_steps)),
+        "required initial J6 +0.5/+2deg sequence missing or out of order")
     need(report.get("bad_checksum_frames") == 0 and
          report.get("bad_ack_frames") == 0,
          "UART checksum/ACK fault")
