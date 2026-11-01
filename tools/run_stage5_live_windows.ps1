@@ -14,6 +14,9 @@ param(
     [switch]$RequireTwoStepJog
 )
 $ErrorActionPreference = "Stop"
+if ($RequireTwoStepJog -and -not $SafeJog) {
+    throw "-RequireTwoStepJog needs -SafeJog, blocked C APF route and active HOLD"
+}
 if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
     throw "-SafeJog requires -Stage5RouteCase blocked, active HOLD and no -ObserveHold"
 }
@@ -77,7 +80,10 @@ try {
     if ($SafeJog) {
         # Audit the persisted physical evidence separately. Cancellation,
         # incomplete UART return or GUI disconnection must never count as PASS.
-        & $Python tools/check_stage5_safe_gui_acceptance.py (Join-Path $OutputDir "result.json")
+        $auditArgs = @("tools/check_stage5_safe_gui_acceptance.py",
+                        (Join-Path $OutputDir "result.json"))
+        if ($RequireTwoStepJog) { $auditArgs += "--two-step" }
+        & $Python @auditArgs
         $auditExit = $LASTEXITCODE
         if ($liveExit -ne 0 -or $auditExit -ne 0) {
             throw "SAFE GUI JOG NOT PASS. Keep $OutputDir logs; inspect worker.log."
