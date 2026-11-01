@@ -205,6 +205,15 @@ def make_avoidance_preflight(
                 (scene["minimum_full_link_clearance_mm"]
                  + scene.get("planning_extra_clearance_mm", 0.0))
                 / 1000.0))
+        # Preflight reserve only: preserve the existing runtime minimum.
+        # The planning gate may demand more clearance to absorb physical
+        # tracking residual; the independent runtime threshold remains
+        # exactly the scene's original safety policy, never reduced.
+        if scene.get("automatic_bypass", False):
+            result["planning_static_collision_clearance_m"] = (
+                result["static_collision_clearance_m"])
+            result["static_collision_clearance_m"] = (
+                scene["minimum_full_link_clearance_mm"] / 1000.0)
         result.update(
             obstacle_ids=[obstacle],
             route_case=route_case,
