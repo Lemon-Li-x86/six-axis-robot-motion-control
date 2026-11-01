@@ -127,6 +127,8 @@ class DemoOptions:
     # CI opt-in only: scripts exactly one guarded J6 minimum-step jog in
     # native p.GUI; NEVER used by operator runs or on real motors.
     ci_scripted_safe_jog: bool = False
+    # Independent CI-only test: physical 0.5deg return followed by 2deg.
+    ci_scripted_safe_jog_two_step: bool = False
 
 
 class Stage5GuiDisconnectedError(RuntimeError):
@@ -511,6 +513,7 @@ def execute_guarded_gui_jog(
     jog, bullet, arm, joints, stamp, done, ending,
     motor_forces_nm, gui_motor_velocity_caps,
     *, ci_scripted_trigger: bool = False,
+    ci_scripted_step_deg: float | None = None,
 ) -> None:
     """Preserve an authorized injected pose until the C UART recovery takes over.
 
@@ -520,10 +523,13 @@ def execute_guarded_gui_jog(
     """
     previous_applied = jog.applied
     jog(bullet, arm, joints, stamp, done, ending)
-    if ci_scripted_trigger:
+    if ci_scripted_trigger or ci_scripted_step_deg is not None:
         if not done or ending:
             raise RuntimeError("Scripted CI jog outside idle HOLD")
-        jog.request_ci_scripted_j6_half_degree()
+        if ci_scripted_step_deg is not None:
+            jog.request_ci_scripted_j6_step(ci_scripted_step_deg)
+        else:
+            jog.request_ci_scripted_j6_half_degree()
     if jog.applied > previous_applied:
         displaced_rad = tuple(
             bullet.getJointState(arm, joint, physicsClientId=jog.client)[0]
@@ -1043,8 +1049,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
         raise ValueError(
             "Guarded GUI jog requires native GUI, active HOLD and C APF; "
             "unrestricted native picking remains forbidden")
-    if options.ci_scripted_safe_jog and not options.gui_safe_jog:
+    if (options.ci_scripted_safe_jog or
+            options.ci_scripted_safe_jog_two_step) and not options.gui_safe_jog:
         raise ValueError("Scripted native GUI CI fixture requires guarded GUI jog")
+    if options.ci_scripted_safe_jog and options.ci_scripted_safe_jog_two_step:
+        raise ValueError("CI must select exactly one native GUI jog script")
     if not math.isclose(
         SIMULATED_STEPS_PER_TARGET * PHYSICS_STEP_S, FEEDBACK_STEP_S,
         rel_tol=0.0, abs_tol=1e-9
@@ -1154,6 +1163,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             if prepare_motion is not None else "original_unobstructed_hold"),
         gui_safe_jog=options.gui_safe_jog,
         ci_scripted_safe_jog=options.ci_scripted_safe_jog,
+        ci_scripted_safe_jog_two_step=options.ci_scripted_safe_jog_two_step,
         gui_joint_travel=(options.gui_joint_travel if not options.headless
                           else "urdf (DIRECT reference)"),
         qemu_clock="adaptive_icount" if sys.platform == "win32" else "wall",
@@ -1281,9 +1291,11 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     previous_on_physics = on_physics
                     scripted_ci_jog_sent = False
                     scripted_ci_finish_sent = False
+                    scripted_ci_steps_sent = 0
 
                     def guarded_jog_callback(bullet, body, axes, stamp, done, ending):
                         nonlocal scripted_ci_jog_sent, scripted_ci_finish_sent
+                        nonlocal scripted_ci_steps_sent
                         if previous_on_physics is not None:
                             previous_on_physics(
                                 bullet, body, axes, stamp, done, ending)
@@ -1294,16 +1306,32 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                         # Latch before calling the planner, fail closed if rejected.
                         if ci_inject:
                             scripted_ci_jog_sent = True
+                        ci_two_step_deg = None
+                        if (options.ci_scripted_safe_jog_two_step and done
+                                and not ending and scripted_ci_steps_sent < 2
+                                and safe_gui_jog.available
+                                and safe_gui_jog.applied == safe_gui_jog.completed):
+                            ci_two_step_deg = (JOG_MIN_DEG, JOG_MAX_DEG)[
+                                scripted_ci_steps_sent]
+                            scripted_ci_steps_sent += 1
                         execute_guarded_gui_jog(
                             safe_gui_jog, bullet, body, axes, stamp, done, ending,
                             motor_forces_nm, gui_motor_velocity_caps,
-                            ci_scripted_trigger=ci_inject)
+                            ci_scripted_trigger=ci_inject,
+                            ci_scripted_step_deg=ci_two_step_deg)
                         if (options.ci_scripted_safe_jog
                                 and scripted_ci_jog_sent
                                 and not scripted_ci_finish_sent
                                 and safe_gui_jog.applied == 1
                                 and safe_gui_jog.completed == 1):
                             safe_gui_jog.request_ci_finish()
+                            scripted_ci_finish_sent = True
+                        if (options.ci_scripted_safe_jog_two_step
+                                and scripted_ci_steps_sent == 2
+                                and not scripted_ci_finish_sent
+                                and safe_gui_jog.applied == 2
+                                and safe_gui_jog.completed == 2):
+                            safe_gui_jog.request_ci_finish(expected_recoveries=2)
                             scripted_ci_finish_sent = True
                     on_physics = guarded_jog_callback
                     print(
