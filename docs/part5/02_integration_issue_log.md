@@ -96,3 +96,10 @@
 - **ARM .map 同条件 A/B**：同一提交相同编译器/版本/使能特性、仅切换链接 GC，FLASH **105256 → 87384 B**（−17872 B，约 −17.0%），RAM 链接静态占用 **33796 → 33796 B**（无下降）；真实 map 文件、CPU 时序和 JSON 由上述 Actions 工件 `stage5-freeRTOS-cpu-trace` 归档。**RAM 无法说成优化成功**。
 - **IRQ/调度审查**：当前 QEMU MPS2-AN386 NVIC 为 8 priority bits，`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY=0x80`；UART RX/TX ISR、Timer1 ISR 都使用 0x80，满足 FromISR 优先级约束。Control/ProtocolRX/Trajectory 优先级来自 JSON 为 4/3/2，协议解析只入队；重 APF/IK 在低优先级 Trajectory 执行，避免阻塞高优先级 UART RX。调度使用现有 `motion_task_wait_next_period` 对过期激活丢帧而非忙循环。**未有单独 IRQ 0x80 vs 不同 IRQ 配置对照实验，不能写“IRQ 优先级优化使抖动降低”**。
 - **验收限制**：CPU 数据来自短时 QEMU 自测（低负载）、不代表完整 PyBullet 长时高负载，更不是物理 Cortex-M4 芯片绝对实时性担保；需要进一步相同负载多次独立 jitter 对比才可严格签收“降低控制周期抖动”。
+
+## S5-010 复验补记（2026-11-01）：最新 CI 已恢复 3/3，历史根因仍待证实
+
+- **同一代码提交**：上游基线 `feat/stage5-rtos-apf-closure-20261101` 的 `7c14a567aff3`，真实 [Stage5 GUI CI #41279595520](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41279595520) 中 `native-gui-no-drag-xvfb` 为 success。该任务运行原来的 `six_axis --no-hold`，实际 worker 日志报告物理段 `1/3`、`2/3`、`3/3`，而非只通过单元测试。
+- **结论的边界**：CI 新成功证明这一提交的指定虚拟环境可完成三段，但 2026-10-31 发生的 0.24° 最终命令偏差并无独立、可重复的根因隔离实验；因此保留 [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) 的历史证据和稳定性风险，不应因一次绿灯宣称问题彻底根治。
+- **防止假阳性**：本修复分支在 `.github/workflows/stage5-live-gui.yml` 里追加独立的 `result.json` 检查，要求 `passed=true`、真实 `3/3`、时钟对齐、每段物理收敛记录存在、无坏 ACK/checksum、故障计数为零。只看子进程退出码或 GUI 动画不再是这项门禁的唯一依据。
+- **文档版本**：2026-10-31 旧版“固件内 APF 尚未运行”的状态仅作历史快照；当前固件内 C APF/IK、候选返回与 PyBullet 外部门禁应以 2026-11-01 的 [19 号审查](19_stage5_original_requirements_evidence_review_2026-11-01.md) 和实测结果为准。
