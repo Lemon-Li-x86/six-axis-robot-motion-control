@@ -32,6 +32,38 @@ from stage4_dynamic_closed_loop import (  # noqa: E402
 from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
+def require_runtime_full_link_clearance(
+    bullet, robot: int, obstacle: int, clearance_m: float, client: int,
+) -> int:
+    """Check the BASE and EVERY URDF link at the actual simulated pose.
+
+    PyBullet's default linkIndexA=-1 checks the base only. A single
+    getClosestPoints(robot, obstacle, ...) call must never be reported as
+    whole-arm safety evidence. Returns the number of individual link queries.
+    This is still a discrete 10 ms runtime gate, not swept-volume proof.
+    """
+    if not math.isfinite(clearance_m) or clearance_m <= 0.0:
+        raise ValueError("runtime full-link clearance must be finite and positive")
+    count = bullet.getNumJoints(robot, physicsClientId=client)
+    if type(count) is not int or count < 1:
+        raise ValueError("invalid robot joint count in runtime clearance gate")
+    for link in range(-1, count):
+        contacts = bullet.getClosestPoints(
+            robot, obstacle, clearance_m, linkIndexA=link, linkIndexB=-1,
+            physicsClientId=client,
+        )
+        for contact in contacts:
+            if len(contact) <= 8:
+                raise RuntimeError(f"Malformed runtime contact for link={link}")
+            distance = float(contact[8])
+            if not math.isfinite(distance) or distance <= clearance_m:
+                raise RuntimeError(
+                    f"Runtime full-link clearance violation: link={link}, "
+                    f"distance_m={distance}, required_m={clearance_m}"
+                )
+    return count + 1
+
+
 def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
         *, required_proposals: int = 1,
         full_route: bool = False) -> dict:
@@ -86,6 +118,7 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
         "route_complete": False, "proposal_status": None, "approved_legs": [],
         "joint_motion_acks": 0, "physical_settled_frames": 0,
         "full_link_safe": False, "joint_motion_submitted_only_after_gate": False,
+        "runtime_full_link_queries": 0,
         "uart_checksum_errors": 0,
     }
     try:
@@ -286,13 +319,13 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                         if candidate is not None and move_ack==0:
                             # Any real collision even between preflight samples
                             # immediately kills the test; no fabricated PASS.
-                            distances=p.getClosestPoints(
-                                arm,obstacle,
-                                scene["minimum_full_link_clearance_mm"]/1000,
-                                physicsClientId=client)
-                            if any(c[8] < scene["minimum_full_link_clearance_mm"]/1000
-                                   for c in distances):
-                                raise RuntimeError("Runtime full-link collision")
+                            result["runtime_full_link_queries"] += (
+                                require_runtime_full_link_clearance(
+                                    p, arm, obstacle,
+                                    scene["minimum_full_link_clearance_mm"]/1000,
+                                    client,
+                                )
+                            )
                             err=max(abs(a-b)/100
                                     for a,b in zip(observed,candidate))
                             settle=settle+1 if err<=0.15 else 0
