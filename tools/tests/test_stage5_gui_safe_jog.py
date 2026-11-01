@@ -90,7 +90,9 @@ class GuardedJogTests(unittest.TestCase):
                    return_value=safe_gate()):
             ctl(p, 0, range(6), 0, True, False)
         self.assertIn("BUSY", ctl.status_text(True))
+        self.assertIsNotNone(ctl.last_authorized_jog)
         ctl.complete_recovery()
+        self.assertIsNone(ctl.last_authorized_jog)
         self.assertIn("RETURN COMPLETE", ctl.status_text(True))
         self.assertIn("returned=1", ctl.status_text(True))
 
