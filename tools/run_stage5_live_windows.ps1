@@ -1,5 +1,5 @@
 param(
-    [string]$Python = "$PSScriptRoot/../.venv/Scripts/python.exe",
+    [string]$Python = "",  # Auto-select an existing compatible Python unless explicitly overridden.
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-live-windows",
     [double]$DiagnosticsTimeoutSeconds = 0,  # 0 means use the Python default (5 s).
@@ -20,6 +20,9 @@ if ($RequireTwoStepJog -and -not $SafeJog) {
 if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
     throw "-SafeJog requires -Stage5RouteCase blocked, active HOLD and no -ObserveHold"
 }
+. (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
+$resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
     & cmake --preset stage5-live-uart
@@ -75,7 +78,7 @@ try {
         $liveArgs += @("--diagnostics-timeout-s", $timeoutArg)
     }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
-    & $Python @liveArgs
+    & $resolvedPython @liveArgs
     $liveExit = $LASTEXITCODE
     if ($SafeJog) {
         # Audit the persisted physical evidence separately. Cancellation,
@@ -83,7 +86,7 @@ try {
         $auditArgs = @("tools/check_stage5_safe_gui_acceptance.py",
                         (Join-Path $OutputDir "result.json"))
         if ($RequireTwoStepJog) { $auditArgs += "--two-step" }
-        & $Python @auditArgs
+        & $resolvedPython @auditArgs
         $auditExit = $LASTEXITCODE
         if ($liveExit -ne 0 -or $auditExit -ne 0) {
             throw "SAFE GUI JOG NOT PASS. Keep $OutputDir logs; inspect worker.log."
