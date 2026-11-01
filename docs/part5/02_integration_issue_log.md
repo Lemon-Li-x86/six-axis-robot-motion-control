@@ -103,3 +103,12 @@
 - **结论的边界**：CI 新成功证明这一提交的指定虚拟环境可完成三段，但 2026-10-31 发生的 0.24° 最终命令偏差并无独立、可重复的根因隔离实验；因此保留 [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) 的历史证据和稳定性风险，不应因一次绿灯宣称问题彻底根治。
 - **防止假阳性**：本修复分支在 `.github/workflows/stage5-live-gui.yml` 里追加独立的 `result.json` 检查，要求 `passed=true`、真实 `3/3`、时钟对齐、每段物理收敛记录存在、无坏 ACK/checksum、故障计数为零。只看子进程退出码或 GUI 动画不再是这项门禁的唯一依据。
 - **文档版本**：2026-10-31 旧版“固件内 APF 尚未运行”的状态仅作历史快照；当前固件内 C APF/IK、候选返回与 PyBullet 外部门禁应以 2026-11-01 的 [19 号审查](19_stage5_original_requirements_evidence_review_2026-11-01.md) 和实测结果为准。
+
+
+## S5-015（2026-11-01）：5.3 CPU 与抖动取样窗口错位、低负载重复试验
+
+- **发现**：原性能工作流中，默认 `ROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=1200`，Timer0 抖动在健康阶段结束处冻结，但 CPU 快照由 Monitor 每100ms刷新直至含后续故障/多项式测试后停机，导致过去约4.7秒 CPU 时间与约1.2秒 Timer0 样本不在同一工作阶段。两者不能直接作为“同一监测窗口”性能指标。
+- **修复**：仅在 CPU Trace 自测构建下，令 `stage4_rtos_selftest.c` 在 `stage4_timing_capture` 之后、故障注入之前捕获 CPU；关闭 Monitor 每100ms的额外自测快照；两套 QEMU ELF 均显式运行5000ms健康阶段。新增六组交错 `AB/BA` 测量脚本、成对差值汇总和缺样本/错误频率/溢出/回归负例。**不更改生产 PID、任务周期、速度或碰撞安全门禁**。各任务 Timer0 仍只保留最后128条，不可把不同跨度统计写成完全同窗。
+- **失败证据**：[首次 CI #41308263682](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41308263682) 比较器拒绝仅约1.23s健康阶段，未删除失败记录；真实固件 C 构建、GDB采集均通过。
+- **同提交成功证据**：[六组性能 CI #41308538374](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41308538374)，[原始工件](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41308538374/artifacts/13084018842)。Monitor CPU 6/6组下降（中位数0.05%→0.02%）；Control/Trajectory P99 抖动各5/6组下降但有1/6组退化；Monitor jitter 5/6组退化。新同提交 ARM map FLASH106464→88600B（−17864B）、RAM33936B不变。
+- **状态**：**测量方法已修复、指定短时 QEMU 性能优化与 A/B 已有可重现证据，但“所有任务稳态抖动降低/硬件 WCET”不可签收**。详见 [5.3 复验专项报告](20_stage5_5_3_repeated_performance_evidence_2026-11-01.md)。下轮如需进一步闭环，应设置完整动态 UART/PyBullet 对照负载或独立硬件实验，不能为通过而盲调中断优先级或延长门限。
