@@ -32,7 +32,7 @@
 
 ### 仍需明确保留的技术边界
 
-- `blocked` 场景历史 **2cm** 障碍已验证 **28/28** 段。2026-11-01 试验加大到 **4cm** 后，[ARM C APF 完整路线](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 重新规划并执行 **30/30** 段，但原生 GUI 的运行时全连杆净距曾低于固定的 **10mm**，因此 **4cm 场景不能整体签收**。当前原始 JSON 已调整为 **3cm**（`half_extents_m=[0.015,0.015,0.015]`），[本轮复验](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 已确认 **ARM 固件C APF重新计算29段并全部到位（29/29）**，Linux 原生GUI单次、两次及五次J6安全点动回位均通过；Windows其他作业尚需完成、用户本机人工验收仍独立待办。不能把2cm/4cm的历史结果冒充3cm证据。规划段数由当前场景动态计算，碰撞许可由 PyBullet 主机安全门禁批准，且任务仍有预设高层途经点，不能声称任意障碍都必然自主绕行。
+- `blocked` 场景历史 **2cm** 障碍已验证 **28/28** 段。2026-11-01 试验加大到 **4cm** 后，[ARM C APF 完整路线](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 重新规划并执行 **30/30** 段，但原生 GUI 的运行时全连杆净距曾低于固定的 **10mm**，因此 **4cm 场景不能整体签收**。当前原始 JSON 已调整为 **3cm**（`half_extents_m=[0.015,0.015,0.015]`），[本轮复验](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 已确认 **ARM 固件C APF重新计算29段并全部到位（29/29）**，Linux 原生GUI单次、两次及五次J6安全点动回位均通过；Windows其他作业尚需完成、用户本机人工验收仍独立待办。不能把2cm/4cm的历史结果冒充3cm证据。规划段数由当前场景动态计算，碰撞许可由 PyBullet 主机安全门禁批准。**新增实验性 GUI 自动绕行候选模式**从当前 AABB 由生产 C 生成候选、再依次经过 C APF/IK 与全连杆检查；原先的预设上方 `via` 仍保留给 ARM 固件 29 段基准验收，**GUI 新模式与 ARM 历史验收不是同一种任务编排**。该新模式的同 SHA CI 尚需独立核验，不能声称任意障碍必然可解。
 - 同配置 ARM `.map` 对比显示 FLASH **105,256 B → 87,384 B（减少 17,872 B）**，RAM `.data+.bss` **33,796 B 不变**；Monitor 任务短窗口 CPU 占比有所降低。但多次 QEMU 的控制周期 P99 抖动结果方向不一致，**不能声称已证明持续降低抖动、WCET 或实体硬件实时性**。
 - Stage6 的完整搬运、抓取/放置语义与长时稳定性测试尚未完成。
 
@@ -41,7 +41,7 @@
 ## 架构与数据边界
 
 ```text
-路径 A：既有主机 C APF/IK 预检（Windows GUI）
+路径 A：主机采用**生产 C** 自动生成 AABB 绕行候选 → 原有 C APF/IK 与全连杆门禁（当前实验性模式）
 场景参数 → Host C APF/IK → PyBullet 全连杆门禁
          → ARM UART 关节请求 → FreeRTOS 轨迹 / PID / 限幅
          → PyBullet 关节物理反馈 → UART → ARM
