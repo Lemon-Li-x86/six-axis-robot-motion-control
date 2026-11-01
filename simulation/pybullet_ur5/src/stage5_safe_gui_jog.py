@@ -24,7 +24,6 @@ JOG_MAX_SAMPLE_STEP_RAD = math.radians(0.25)
 JOG_MIN_DEG = 0.5
 JOG_MAX_DEG = 2.0
 JOG_DEG_INCREMENT = 0.5
-JOG_MAX_SUCCESSES = 3
 
 
 def set_native_gui_status(text: str) -> bool:
@@ -159,7 +158,10 @@ class SafeGuiJog:
         # A completed C/UART physical return consumes its one-shot GUI
         # authorization. It must not authorize a later unrelated disturbance.
         self.last_authorized_jog = None
-        self.available = self.applied < JOG_MAX_SUCCESSES
+        # The operator may jog again after every actual settled C/UART return.
+        # Only in-flight recovery and FINISH/CANCEL lock inputs, not a click
+        # counter. Independent collision, URDF and C route gates still apply.
+        self.available = not (self.finish_requested or self.cancel_requested)
 
     def status_text(self, done: bool) -> str:
         """Persistent feedback; a small completed jog can be hard to see."""
@@ -175,7 +177,7 @@ class SafeGuiJog:
                 "safe_gui_jog_rejected", "safe_gui_jog_finish_rejected"):
             phase = "REFUSED: " + self.events[-1]["reason"]
         elif self.completed:
-            phase = "RETURN COMPLETE: click FINISH"
+            phase = "RETURN COMPLETE: jog again or FINISH"
         else:
             phase = "READY: choose joint/step, click +/-"
         return (f"SAFE JOG {phase} | applied={self.applied} "
@@ -357,10 +359,14 @@ class SafeGuiJog:
                                 "poll": self.polls})
             print("[SAFE GUI INPUT] " + str(self.events[-1]), flush=True)
             if (not done or ending or self.finish_requested
-                    or self.cancel_requested or not self.available or
-                    self.applied >= JOG_MAX_SUCCESSES):
+                    or self.cancel_requested or not self.available):
+                reason = (
+                    "not_in_hold" if not done else
+                    "session_ending" if (ending or self.finish_requested
+                                         or self.cancel_requested) else
+                    "recovery_in_progress")
                 event = {"event": "safe_gui_jog_rejected", "sign": sign,
-                         "reason": "not_idle_or_recovery_pending_or_limit"}
+                         "reason": reason}
                 self.refused += 1
             else:
                 event = self._authorize(sign)
