@@ -188,8 +188,9 @@ class SafeGuiJog:
             axis, step_deg = (
                 self._selection() if selection is None else selection)
             if selection is not None and not (
-                    axis == len(self.joints) - 1 and step_deg == JOG_MIN_DEG):
-                raise ValueError("CI scripted jog permits only final joint at minimum step")
+                    axis == len(self.joints) - 1 and
+                    step_deg in (JOG_MIN_DEG, JOG_MAX_DEG)):
+                raise ValueError("CI scripted jog permits only J6 at 0.5 or 2deg")
         except (ValueError, TypeError) as error:
             return {"event": "safe_gui_jog_rejected",
                     "reason": "invalid_selection", "detail": str(error), "sign": sign}
@@ -279,16 +280,22 @@ class SafeGuiJog:
         }
 
     def request_ci_scripted_j6_half_degree(self) -> dict:
-        """Opt-in integration fixture: identical collision/C preview as GUI click.
+        """Preserve the existing single 0.5deg CI integration fixture."""
+        return self.request_ci_scripted_j6_step(JOG_MIN_DEG)
 
-        No UART request, motor bypass, fake feedback or alternate planner.
-        Deliberately not called in the ordinary GUI user path.
+    def request_ci_scripted_j6_step(self, step_deg: float) -> dict:
+        """CI fixture: one real physical J6 +0.5 or +2deg, never fake UART.
+
+        Each consecutive request requires the previous C/UART physical
+        recovery to have settled and returned to the actual HOLD pose.
         """
-        if (self.applied != 0 or not self.available or
+        if (step_deg not in (JOG_MIN_DEG, JOG_MAX_DEG) or
+                not self.available or self.applied != self.completed or
+                self.applied >= 2 or
                 self.finish_requested or self.cancel_requested):
-            raise RuntimeError("CI jog may only be injected once from idle HOLD")
+            raise RuntimeError("CI J6 jog requires fresh settled idle HOLD")
         event = self._authorize(
-            1, selection=(len(self.joints) - 1, JOG_MIN_DEG))
+            1, selection=(len(self.joints) - 1, step_deg))
         if event["event"] == "safe_gui_jog_applied":
             self.applied += 1
             self.available = False
@@ -303,10 +310,12 @@ class SafeGuiJog:
                 + str(event))
         return event
 
-    def request_ci_finish(self):
-        """Require a settled real C/UART recovery before ending CI GUI HOLD."""
-        if (self.applied != 1 or self.completed != 1
-                or self.available is False or self.finish_requested
+    def request_ci_finish(self, *, expected_recoveries: int = 1):
+        """Require all real C/UART recoveries before ending CI GUI HOLD."""
+        if (expected_recoveries not in (1, 2) or
+                self.applied != expected_recoveries or
+                self.completed != expected_recoveries or
+                self.available is False or self.finish_requested
                 or self.cancel_requested):
             raise RuntimeError("CI finish requires one completed real C recovery")
         self.finish_requested = True
