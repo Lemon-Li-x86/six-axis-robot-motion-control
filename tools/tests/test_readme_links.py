@@ -13,7 +13,7 @@ README = ROOT / "README.md"
 class ReadmeLocalLinkTests(unittest.TestCase):
     def test_relative_markdown_links_exist(self):
         content = README.read_text(encoding="utf-8")
-        links = re.findall(r"(?<!!)\\[[^\\]]+\\]\\(([^)]+)\\)", content)
+        links = re.findall(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", content)
         self.assertTrue(links, "README link check did not find any Markdown links")
         for link in links:
             if link.startswith(("https://", "http://", "mailto:", "#")):
