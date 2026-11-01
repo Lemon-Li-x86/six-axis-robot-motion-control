@@ -14,6 +14,42 @@ extern double stage4_sim_duration(const void *);
 extern int stage4_sim_step(void *,const int32_t *,double,double,int32_t *,int32_t *);
 extern void stage4_sim_destroy(void *);
 
+/* Stage5 user-observed first C APF/IK waypoint as a regression fixture.
+ * The simulation bridge links the PRODUCTION trajectory, PID and limiter.
+ * An ideal follower distinguishes a C-control equilibrium error from the
+ * PyBullet motor model or firmware task/transport scheduling.
+ * This does not change any production parameter or safety threshold.
+ */
+static int stage5_first_leg_ideal_feedback(void)
+{
+    const int32_t start[6]={3000,-4500,6000,2000,500,-1000};
+    const int32_t target[6]={3030,-4652,6131,1831,525,-809};
+    int32_t feedback[6]={3000,-4500,6000,2000,500,-1000};
+    int32_t command[6]={0},reference[6]={0};
+    void *sim=stage4_sim_create(start,target);
+    unsigned i,j;
+    int32_t max_error=0;
+    if(sim==NULL) return 12;
+    for(i=0U;i<4000U;i++) {
+        if(stage4_sim_step(sim,feedback,(double)i*0.01,0.01,
+                          command,reference)!=0) {
+            stage4_sim_destroy(sim);
+            return 13;
+        }
+        /* Ideal plant: commanded integer centidegrees are exact feedback. */
+        for(j=0U;j<6U;j++) feedback[j]=command[j];
+    }
+    for(j=0U;j<6U;j++) {
+        int32_t diff=feedback[j]-target[j];
+        if(diff<0) diff=-diff;
+        if(diff>max_error) max_error=diff;
+    }
+    printf("Stage5 first-leg ideal C controller residual: %ld centideg\\n",
+           (long)max_error);
+    stage4_sim_destroy(sim);
+    return max_error<=15 ? 0 : 14;
+}
+
 int main(void)
 {
     const int32_t initial[6]={3000,-4500,6000,2000,500,-1000};
@@ -68,6 +104,8 @@ int main(void)
         if(stage4_sim_create_with_pid_gains(initial,final,NULL)!=NULL)
             return 11;
     }
+    { int regression=stage5_first_leg_ideal_feedback();
+      if(regression!=0) return regression; }
     puts("stage4_sim_bridge_smoke passed");
     return 0;
 }
