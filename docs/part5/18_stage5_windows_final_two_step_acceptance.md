@@ -2,7 +2,7 @@
 
 **本次人工验收版本**：`fix/stage5-verdict-docs-20261101`（PR #37，基于 PR #36 的 ARM RTOS APF/IK 和 PR #35 的 GUI 修复；以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
 
-> **2026-11-01 几何变更注意：** 历史 2cm 障碍的 28段只属于旧提交。4cm 障碍曾在 ARM FreeRTOS C APF 完整路线中重新规划并完成 30段，但原生 GUI 物理运动触发 **10mm 净距门禁**（最小约9.4–9.8mm），不可视作综合验收通过。当前原始 `blocked` JSON 采用 **3cm** 边长（`half_extents_m=[0.015,0.015,0.015]`）；应以[新尺寸的跨平台 CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 和 Windows 本机日志单独验证。预设 via 和安全门禁保持不变，不强制要求与2cm旧路线相同段数。
+> **2026-11-01 几何变更注意：** 历史 2cm 障碍的 28段只属于旧提交。4cm 障碍曾在 ARM FreeRTOS C APF 完整路线中重新规划并完成 30段，但原生 GUI 物理运动触发 **10mm 净距门禁**（最小约9.4–9.8mm），不可视作综合验收通过。当前原始 `blocked` JSON 采用 **3cm** 边长（`half_extents_m=[0.015,0.015,0.015]`）；[新尺寸跨平台 CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 已实测 Linux ARM 固件C APF全29段完成、Linux原生GUI五次连续点动回位通过；Windows其余作业和本机操作员验收仍须独立验证。预设 via 和安全门禁保持不变，不强制要求与2cm旧路线相同段数。
 
 ## 原始大纲对照
 
@@ -69,7 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows
   -OutputDir build/stage5-windows-embedded-apf
 ```
 
-此命令必须 `passed=true`、`route_complete=true`、当前 4cm 场景的所有实际规划路段均经过验证（4cm试验Linux固件CI曾为30段，当前3cm须重新核验）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
+此命令必须 `passed=true`、`route_complete=true`、当前 3cm 场景的所有实际规划路段均经过验证（3cm Linux固件CI29段、Windows本机须单独核验）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
 
 随后运行**一次**原始避障 + 连续多次点动的完整 GUI 仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
 
