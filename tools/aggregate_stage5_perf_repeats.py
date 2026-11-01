@@ -40,8 +40,10 @@ def _validated(cpu: dict, timing: dict, role: str) -> dict:
     if hz <= 0 or timer_hz != hz:
         raise ValueError(f"{role}: inconsistent Timer0/CPU frequency")
     elapsed = _finite_number(cpu.get("elapsed_seconds"), f"{role}: elapsed")
-    if not 3.0 <= elapsed <= 120.0:
-        raise ValueError(f"{role}: unexpected healthy-window duration")
+    # The A/B workflow fixes the healthy test duration at 5000ms; reject
+    # accidentally shortened runs even if they contain enough samples.
+    if not 4.5 <= elapsed <= 5.5:
+        raise ValueError(f"{role}: unexpected healthy-window duration (expected about 5s)")
     if cpu.get("observed_tasks") != len(cpu.get("tasks", [])):
         raise ValueError(f"{role}: incomplete CPU task report")
     cpu_tasks = {t["name"]: t for t in cpu["tasks"]}
@@ -64,6 +66,10 @@ def _validated(cpu: dict, timing: dict, role: str) -> dict:
         if _finite_number(t.get("stack_minimum_free_words_observed"),
                           f"{role}/{name}: stack") <= 0:
             raise ValueError(f"{role}/{name}: zero/invalid stack margin")
+        nominal_ms = _finite_number(t.get("nominal_period_ms"),
+                                    f"{role}/{name}: nominal period")
+        if nominal_ms <= 0:
+            raise ValueError(f"{role}/{name}: invalid nominal task period")
         values = {key: _finite_number(t.get(key), f"{role}/{name}/{key}")
                   for key in FIELDS}
         if any(v < 0 for v in values.values()):
@@ -72,6 +78,7 @@ def _validated(cpu: dict, timing: dict, role: str) -> dict:
                 or values["p99_processing_ms"] > values["max_processing_ms"]):
             raise ValueError(f"{role}/{name}: percentile exceeds maximum")
         result["tasks"][name] = {"cpu_share_percent": share,
+                                  "nominal_period_ms": nominal_ms,
                                   "interval_samples": t["interval_samples"],
                                   "execution_samples": t["execution_samples"],
                                   **values}
@@ -89,6 +96,9 @@ def summarize(pairs: list[tuple[dict, dict, dict, dict]]) -> dict:
             raise ValueError(f"pair {i}: mismatched timer clocks")
         if abs(b["elapsed_seconds"] - o["elapsed_seconds"]) > 0.10 * b["elapsed_seconds"]:
             raise ValueError(f"pair {i}: healthy observation windows differ over 10%")
+        for name in TASKS:
+            if b["tasks"][name]["nominal_period_ms"] != o["tasks"][name]["nominal_period_ms"]:
+                raise ValueError(f"pair {i}/{name}: mismatched nominal task periods")
         samples.append({"pair": i, "baseline": b, "optimized": o})
     overview = {}
     for name in TASKS:
