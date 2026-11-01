@@ -34,6 +34,7 @@ from stage5_qemu_uart_visual_demo import (  # noqa: E402
     GUI_JOINT_STOP_FORCE_MULTIPLIER,
     advance_physics_step_batch,
     assess_clock_alignment,
+    assess_monitor_clock_window,
     joint_feedback_frame,
     canonical_physical_feedback,
     closest_physical_motor_targets,
@@ -191,6 +192,28 @@ class QmpClockGateTests(unittest.TestCase):
 
 
 class MotionSequencerTests(unittest.TestCase):
+    def test_monitor_clock_must_use_same_live_epoch_as_physics(self):
+        # This reproduces the measured QEMU 155 monitor ticks / 1011 Bullet
+        # frames failure: raw 15.5s since boot vs 10.11s since GUI startup.
+        raw, raw_passed = assess_clock_alignment(155, 1011, 0.1)
+        self.assertFalse(raw_passed)
+        self.assertGreater(raw, 1.25)
+        # First UART diagnostic was sampled after GUI preparation; compare
+        # actual elapsed RTOS and physically stepped feedback frames.
+        ratio, passed = assess_monitor_clock_window(
+            (63, 90), 155, 1011, 0.1)
+        self.assertTrue(passed)
+        self.assertAlmostEqual(ratio, 9.2 / 9.21)
+        for baseline, final_tick, frames in (
+            (None, 155, 1011),
+            ((63, 90), None, 1011),
+            ((63, 90), 63, 1011),
+            ((63, 90), 155, 90),
+            ((63, 90), 200, 91),  # Unreal time amplification.
+        ):
+            self.assertEqual(assess_monitor_clock_window(
+                baseline, final_tick, frames, 0.1)[1], False)
+
     def test_physics_time_must_match_firmware_trajectory_samples(self) -> None:
         # DIRECT reference: 319 * 20ms ~= 640 * 10ms physical integration.
         ratio, accepted = assess_clock_alignment(319, 640, 0.020)
