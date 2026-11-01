@@ -35,3 +35,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 检查 `build/stage5-5cm-auto-bypass/result.json`，至少核对 `passed`、`avoidance_preflight`、`segments_settled`、`runtime_full_link_queries` 和故障计数。成功后仍需确认执行日志证明运行时全连杆净距满足 10 mm。失败请保留 `worker.log`，不可改阈值来强行通过。
 
 CI：独立 `Stage5 experimental 5cm obstacle` 工作流使用 Linux QEMU + 原生 PyBullet + C APF 桥接做相同初始路线实测。无结果前不能宣称 5 cm 已可绕行。
+
+## 初次实测与第二轮候选扩展
+
+首次 [Linux 5 cm 实机物理仿真](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41318424618) **FAIL**：原 C 只找到 8 条几何候选，全部由原有全连杆 13 mm 规划门禁拒绝。测试中存在 12.967 mm 的近门槛距离，**不得放松门槛或报告成功**。
+
+第二轮只扩大 C 几何绕行搜索：每个侧向从 3 圈扩至 5 圈（查询 C 中单一容量声明），新增远距离候选仍必须逐条通过生产 C APF/IK、全连杆与真实 UART。独立 CI 结论决定 5 cm 是否可运行。

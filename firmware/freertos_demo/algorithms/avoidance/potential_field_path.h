@@ -33,7 +33,8 @@ robot_status_t robot_apf_plan_path(
  * Generated candidates depend only on observed geometry and the caller's
  * existing APF clearance/step policy: no hidden robot/scene defaults.
  */
-#define ROBOT_APF_BYPASS_MAX_CANDIDATES 12U
+#define ROBOT_APF_BYPASS_RINGS_PER_SIDE 5U
+#define ROBOT_APF_BYPASS_MAX_CANDIDATES (4U * ROBOT_APF_BYPASS_RINGS_PER_SIDE)
 /* Host ctypes asks C for the authoritative maximum; no mirrored literal. */
 size_t robot_apf_bypass_capacity(void);
 robot_status_t robot_apf_generate_bypass_vias(

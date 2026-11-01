@@ -79,6 +79,21 @@ static void geometric_bypass_candidates(void)
             &vias[i],&goal,&box,1U,apf.clearance_mm,&blocked)==ROBOT_STATUS_OK);
         CHECK(blocked==0U);
     }
+    /* A wider box must permit farther geometry-derived detour rings.
+     * This is NOT a safety bypass: all links remain independently gated. */
+    {
+        const robot_apf_aabb_t five_cm={{{-115.0,-25.0,-25.0}},
+                                      {{-65.0,25.0,25.0}}};
+        unsigned int found_far=0U;
+        CHECK(robot_apf_generate_bypass_vias(
+            &start,&goal,&five_cm,1U,&apf,vias,
+            ROBOT_APF_BYPASS_MAX_CANDIDATES,&count)==ROBOT_STATUS_OK);
+        for(i=0U;i<count;i++) {
+            if(vias[i].mm[2]>five_cm.max_corner.mm[2]+apf.clearance_mm+
+                            6.0*apf.maximum_step_mm) found_far=1U;
+        }
+        CHECK(found_far==1U);
+    }
     /* Enlarging the obstacle changes the candidates, no fixed pose reused. */
     {
         const robot_apf_aabb_t larger={{{-110.0,-20.0,-20.0}},

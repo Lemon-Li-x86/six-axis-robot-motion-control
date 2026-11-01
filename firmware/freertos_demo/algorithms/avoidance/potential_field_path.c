@@ -83,7 +83,7 @@ robot_status_t robot_apf_plan_path(
 
 /* Find bounded detours across a single axis-aligned obstacle. Candidate
  * screening is Cartesian only. It cannot license any robot motion.
- * Three clearance-dependent offsets per lateral direction are tried; the
+ * Five clearance-dependent offsets per lateral direction are tried; the
  * caller, not this routine, selects one after full C APF/IK/link checks. */
 size_t robot_apf_bypass_capacity(void)
 {
@@ -100,7 +100,7 @@ robot_status_t robot_apf_generate_bypass_vias(
     size_t capacity,
     size_t *out_count)
 {
-    const size_t offsets_per_side=3U;
+    const size_t offsets_per_side=ROBOT_APF_BYPASS_RINGS_PER_SIDE;
     const size_t dimension=3U;
     robot_apf_point_t choices[ROBOT_APF_BYPASS_MAX_CANDIDATES];
     size_t primary=0U, lateral[2], count=0U, direction, ring, axis;
