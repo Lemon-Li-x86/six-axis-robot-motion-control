@@ -1,5 +1,6 @@
 param(
     [string]$Python = "",  # Auto-select an existing compatible Python unless explicitly overridden.
+    [string]$ExistingSitePackages = "",  # Explicitly reuse pre-existing CP311 package files, without modifying them.
     [string]$Qemu = "qemu-system-arm",
     [string]$OutputDir = "build/stage5-live-windows",
     [double]$DiagnosticsTimeoutSeconds = 0,  # 0 means use the Python default (5 s).
@@ -20,8 +21,24 @@ if ($RequireTwoStepJog -and -not $SafeJog) {
 if ($SafeJog -and ($Stage5RouteCase -ne "blocked" -or $NoHold -or $ObserveHold)) {
     throw "-SafeJog requires -Stage5RouteCase blocked, active HOLD and no -ObserveHold"
 }
-. (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
-$resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$existingPythonLauncher = Join-Path $PSScriptRoot "stage5_existing_python.py"
+if ($ExistingSitePackages) {
+    if (-not $Python) {
+        throw "-ExistingSitePackages needs an explicit -Python interpreter path"
+    }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        throw "Selected Python executable does not exist: $Python"
+    }
+    $resolvedPython = $Python
+    $resolvedSitePackages = (Resolve-Path -LiteralPath $ExistingSitePackages -ErrorAction Stop).Path
+    & $resolvedPython $existingPythonLauncher --site-packages $resolvedSitePackages --probe
+    if ($LASTEXITCODE -ne 0) {
+        throw "Existing Python/NumPy/PyBullet import check failed without changing packages"
+    }
+} else {
+    . (Join-Path $PSScriptRoot "resolve_stage5_python.ps1")
+    $resolvedPython = Resolve-Stage5Python -RequestedPython $Python -RepoRoot (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
 
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
@@ -78,7 +95,13 @@ try {
         $liveArgs += @("--diagnostics-timeout-s", $timeoutArg)
     }
     # This terminal shows UART telemetry; PyBullet opens its own native window.
-    & $resolvedPython @liveArgs
+    if ($ExistingSitePackages) {
+        $wrappedArgs = @($existingPythonLauncher, "--site-packages", $resolvedSitePackages,
+                         "--script", $liveArgs[0]) + @($liveArgs | Select-Object -Skip 1)
+        & $resolvedPython @wrappedArgs
+    } else {
+        & $resolvedPython @liveArgs
+    }
     $liveExit = $LASTEXITCODE
     if ($SafeJog) {
         # Audit the persisted physical evidence separately. Cancellation,
@@ -86,7 +109,13 @@ try {
         $auditArgs = @("tools/check_stage5_safe_gui_acceptance.py",
                         (Join-Path $OutputDir "result.json"))
         if ($RequireTwoStepJog) { $auditArgs += "--two-step" }
-        & $resolvedPython @auditArgs
+        if ($ExistingSitePackages) {
+            $wrappedAudit = @($existingPythonLauncher, "--site-packages", $resolvedSitePackages,
+                              "--script", $auditArgs[0]) + @($auditArgs | Select-Object -Skip 1)
+            & $resolvedPython @wrappedAudit
+        } else {
+            & $resolvedPython @auditArgs
+        }
         $auditExit = $LASTEXITCODE
         if ($liveExit -ne 0 -or $auditExit -ne 0) {
             throw "SAFE GUI JOG NOT PASS. Keep $OutputDir logs; inspect worker.log."
