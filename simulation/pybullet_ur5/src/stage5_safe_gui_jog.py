@@ -264,10 +264,10 @@ class SafeGuiJog:
 
         # The only permanent state change follows all checks. The same
         # proven GUI intent is supplied at runtime for fresh-pose C planning.
-        self.last_authorized_jog = jog_intent
         p.resetJointState(
             self.robot, self.joints[axis], targetValue=candidate[axis],
             targetVelocity=0.0, physicsClientId=self.client)
+        self.last_authorized_jog = jog_intent
         return {
             "event": "safe_gui_jog_applied", **base,
             "required_clearance_m": required,
