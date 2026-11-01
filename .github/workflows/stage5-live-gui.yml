@@ -345,6 +345,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
           python -m pip install numpy pybullet
+      - name: Regression - embedded ARM APF runtime must inspect every UR5 link
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
       - name: Build real FreeRTOS ARM UART firmware with embedded APF/IK
         run: |
           cmake --preset stage5-live-uart
@@ -367,6 +370,9 @@ jobs:
             --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
             --timeout-s 300 --full-route \
             --output-dir build/stage5-embedded-apf-uart-full
+      - name: Independently require full-link runtime queries in real ARM route
+        run: |
+          python -c "import json; from pathlib import Path; p=Path('build/stage5-embedded-apf-uart-full/result.json'); r=json.loads(p.read_text()); assert r['passed'] is True and r['route_complete'] is True and r['runtime_full_link_queries'] >= 7*r['joint_motion_acks'] > 0, r"
       - name: Preserve actual firmware APF UART decision and physical trace
         if: always()
         uses: actions/upload-artifact@v4
