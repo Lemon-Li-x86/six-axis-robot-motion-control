@@ -72,7 +72,8 @@
           90
         ]
       ],
-      "shortcut_cartesian": true
+      "shortcut_cartesian": true,
+      "automatic_bypass": true
     }
   }
 }
