@@ -37,6 +37,9 @@ on:
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
       - 'tools/tests/run_stage5_embedded_apf_uart.py'
+      - 'tools/tests/test_stage5_embedded_apf_runtime.py'
+      - 'tools/run_stage5_embedded_apf_windows.ps1'
+      - 'docs/part5/18_stage5_windows_final_two_step_acceptance.md'
       - 'simulation/pybullet_ur5/src/qemu_uart_receiver.py'
   pull_request:
     branches: [main]
@@ -63,6 +66,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
