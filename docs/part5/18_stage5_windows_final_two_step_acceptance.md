@@ -1,4 +1,4 @@
-# Stage 5 交付前最后一次 Windows 操作员验收（J6 0.5° + 2°）
+# Stage 5 Windows 操作员验收：按钮可重复，独立 C/UART 回位
 
 **版本**：`fix/stage5-final-closeout-20261031`（PR #35，待实际 Windows 签收；请以本页 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
 
@@ -24,7 +24,7 @@ git switch --detach origin/fix/stage5-final-closeout-20261031
 git rev-parse --short HEAD
 ```
 
-确认 HEAD 与 PR #35 当前 head 一致，运行**一次**原始避障 + 两次操作员点动的完整仿真（不是两次分别启动的演示）：
+确认 HEAD 与 PR #35 当前 head 一致，运行**一次**原始避障 + 连续多次点动的完整仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
@@ -32,17 +32,18 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
   -Qemu qemu-system-arm `
   -Stage5RouteCase blocked `
   -SafeJog -RequireTwoStepJog `
-  -SafeJogHoldSeconds 240 `
+  -SafeJogHoldSeconds 600 `
   -OutputDir build/stage5-windows-final-2step
 ```
 
 1. 等待 **原始生产 C APF 4/4 航点全部按真实物理反馈收敛**，状态显示 READY/HOLD。
 2. J6 +0.5°，等待状态出现 **RETURN COMPLETE**；不点击第二次，直到确认恢复。
 3. 选择 J6 +2.0°，点击同一安全 `+`；等待第二次真实 C/UART 回位、再次显示 RETURN COMPLETE。不能将第一轮 0.5° 成功代替 2°。
-4. 点击 `SAFE JOG FINISH/EXIT`，**不要**用窗口的 X 直接关闭。最后 Python 进程退出后将 `result.json` 和 `worker.log` 留在输出目录。
-5. 预期最终验收打印 `[STAGE5 GUI] PASS` 并且 `safe_gui_jog_applied=2`、`safe_gui_jog_completed=2`、`hold_recoveries=2`、`safe_gui_jog_refused=0`；两次点动事件准确按 `0.5,2.0` 度，原始航点 `segments_settled=4/4`，UART/固件故障为零，物理回位不超 0.15°，全连杆与时钟一致性门禁均通过。
+4. 继续按至少三次，例如 J6 +2.0° ×3，**每次都必须等待真实回位并重新进入 READY**；可选其他关节/方向/0.5° 递增步长，但始终遵守限位与全连杆碰撞检查。第五次也不能因次数限制被拒绝。
+5. 点击 `SAFE JOG FINISH/EXIT`，**不要**用窗口的 X 直接关闭。最后保留 `result.json` 和 `worker.log`。
+6. 预期最终验收打印 `[STAGE5 GUI] PASS`。若完成五次，应有 `safe_gui_jog_applied=5`、`safe_gui_jog_completed=5`、`hold_recoveries=5`、`safe_gui_jog_refused=0`；如果多于五次，这三项也必须全部等于实际成功次数。原始航点 `segments_settled=4/4`，UART/固件故障为零，物理回位不超 0.15°，全连杆与时钟一致性门禁均通过。
 
-**本次修复最关键的验收行为**：若第一轮 +0.5° 后第二轮 +2° **REFUSED**，或 +2° 回程未稳定到位，终端必须报 **NOT PASS**。旧版本只要求“至少 1 次 0.5° 成功”，曾把后续 +2° 拒绝悄悄忽略掉，现在验收脚本已阻止此类假阳性。
+**本次修复最关键的验收行为**：原始 Windows ZIP 显示 5 次点击仅成功 3 次，另外 2 次因会话硬上限被拒绝，旧程序却误写 `passed: true`。现在只要有被拒绝的点动、未完成的 C/UART 回位或未按顺序完成前两步，就不能得到 PASS。**正常按钮没有次数上限**；仅 CI 有有限的自动测试动作序列。
 
 打包已产生的日志（输出目录不包含真实个人信息时再分享）：
 
@@ -53,9 +54,9 @@ Compress-Archive -Path .\build\stage5-windows-final-2step\* `
 
 ## 自动化门禁与封版
 
-- `Stage5 live QEMU PyBullet observer`：`native-gui-no-drag-xvfb`、`native-gui-scripted-j6-xvfb` 和新增 `native-gui-j6-two-step-xvfb` 都必须 PASS。后者完整串行调用同一生产 C APF、QEMU/FreeRTOS UART、两次物理反馈回位、碰撞和时钟门禁；脚本化点击**不是** Windows 鼠标操作的替代。
+- `Stage5 live QEMU PyBullet observer`：`native-gui-no-drag-xvfb`、`native-gui-scripted-j6-xvfb`、`native-gui-j6-two-step-xvfb` 及新增 `native-gui-j6-five-repeat-xvfb` 都必须 PASS。新增五次测试完整串行调用真实 C APF、QEMU/FreeRTOS UART、五次物理反馈回位、碰撞和时钟门禁；脚本化点击**不是** Windows 鼠标操作的替代。
 - Windows/Linux 单测、ARM 固件回归、Windows C APF DLL、两平台 QEMU 实际 UART 和 Windows 控制回位均须 PASS，且必须对应**同一提交 HEAD**。
 - 不得降低 0.15°、安全净距或修改 UR5/驱动/PID 参数来刷绿。仍保留 Stage5 原大纲 5.2/5.3 范围差距，不能把此 GUI 验收作为“完整自主固件 APF + CPU/内存优化全部完成”的证明。
-- PR #35 在 Windows 手动 2 次连续成功前保持 Draft；PR #33 不被覆盖，`main` 与历史 Stage4 快照不改动。
+- PR #35 在 Windows 连续至少五次成功及全 CI 通过前保持 Draft；PR #33 不被覆盖，`main` 与历史 Stage4 快照不改动。
 
-**签收条件**：所有自动化门禁为绿 + Windows 双动作同一轮无拒绝全回位 + 明确决议 5.2/5.3 的实际实现差距，才可称 Stage5 完整结项。否则保留技术结项状态，不假称无保留签收。
+**签收条件**：所有自动化门禁为绿 + Windows 同一轮至少五次合法点动无拒绝、全部真实回位 + 补齐 5.2/5.3 的原 PDF 严格要求，才可称 Stage5 完整结项。否则保留技术结项状态，不假称无保留签收。
