@@ -293,6 +293,33 @@ class MotionSequencerTests(unittest.TestCase):
         self.assertFalse(small_endpoint_rearm_ready(
             runner, residual, SETTLE_FRAME_COUNT, 7.0))
 
+    def test_static_apf_larger_stalled_error_must_not_be_mistaken_for_hold(self):
+        runner = MotionSequencer((SCENARIOS["six_axis"][0],))
+        goal = runner.goals[0]
+        runner.next_request(now=0.0)
+        runner.acknowledge(struct.pack("<Bb", 41, 0))
+        # Actual blocked-path Linux trace: segment 3 stopped ~0.64deg
+        # away from the production C goal. This is not a settled motion.
+        residual = tuple(v + 64 for v in goal)
+        for _ in range(SETTLE_FRAME_COUNT * 2):
+            self.assertFalse(runner.observe(residual))
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0, max_rearms=2))
+        self.assertTrue(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 4.0,
+            max_rearms=2, full_link_preflight_required=True))
+        self.assertEqual(runner.completed, 0)
+        # At this point the production GUI caller must validate the actual
+        # full-link sweep and may only then issue this *real* new UART frame.
+        packet = runner.reissue_current_goal_from_feedback(
+            4.0, max_rearms=2, measured_error_deg=0.64)
+        self.assertEqual(packet[4], 42)
+        runner.acknowledge(struct.pack("<Bb", 42, 0))
+        # A stationary but NON-improving residual is never authorized again.
+        self.assertFalse(small_endpoint_rearm_ready(
+            runner, residual, SETTLE_FRAME_COUNT, 8.0,
+            max_rearms=2, full_link_preflight_required=True))
+
     def test_collision_gated_second_endpoint_rearm_must_improve_and_reack(self):
         goal = SCENARIOS["six_axis"][0]
         runner = MotionSequencer((goal,))
