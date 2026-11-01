@@ -159,6 +159,27 @@ robot_status_t motion_pipeline_submit_cartesian(
     return ROBOT_STATUS_OK;
 }
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+robot_status_t motion_pipeline_submit_apf_proposal(
+    const protocol_apf_step_request_t *proposal)
+{
+    motion_request_t request={0};
+    if(proposal==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(g_motion_runtime.request_queue==NULL)
+        return ROBOT_STATUS_ERROR_NOT_READY;
+    request.kind=MOTION_REQUEST_APF_PROPOSAL;
+    request.apf_request=*proposal;
+    /* Queue overwrite preserves the Stage4 latest-command semantics.
+     * The Trajectory task will first disable old output, then plan. */
+    if(xQueueOverwrite(g_motion_runtime.request_queue,&request)!=pdPASS)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    taskENTER_CRITICAL();
+    g_motion_runtime.diagnostics.requests_accepted++;
+    taskEXIT_CRITICAL();
+    return ROBOT_STATUS_OK;
+}
+#endif
+
 robot_status_t motion_pipeline_get_diagnostics(motion_stage4_diagnostics_t *out)
 {
     if(out==NULL) return ROBOT_STATUS_ERROR_NULL_POINTER;

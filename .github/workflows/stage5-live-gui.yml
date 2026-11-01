@@ -10,6 +10,7 @@ on:
       - feat/stage5-gui-preserved-integration-20261030
       - fix/stage5-safe-jog-small-step-hold-20261031
       - fix/stage5-final-closeout-20261031
+      - feat/stage5-rtos-apf-closure-20261101
     paths:
       - '.github/workflows/stage5-live-gui.yml'
       - 'simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py'
@@ -35,6 +36,11 @@ on:
       - 'simulation/pybullet_ur5/src/stage5_avoidance_uart_gate.py'
       - 'CMakePresets.json'
       - 'firmware/freertos_demo/**'
+      - 'tools/tests/run_stage5_embedded_apf_uart.py'
+      - 'tools/tests/test_stage5_embedded_apf_runtime.py'
+      - 'tools/run_stage5_embedded_apf_windows.ps1'
+      - 'docs/part5/18_stage5_windows_final_two_step_acceptance.md'
+      - 'simulation/pybullet_ur5/src/qemu_uart_receiver.py'
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -60,6 +66,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_avoidance_visibility.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_safe_jog.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_gui_acceptance.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
 
   genuine-qemu-uart-live-observer:
     strategy:
@@ -324,6 +331,62 @@ jobs:
         run: |
           test ! -f build/stage5-ci-gui-five-repeat/worker.log || tail -n 100 build/stage5-ci-gui-five-repeat/worker.log
           test ! -f build/stage5-ci-gui-five-repeat/result.json || cat build/stage5-ci-gui-five-repeat/result.json
+
+  embedded-apf-c-rtos-uart-bullet:
+    # Original PDF Stage5 5.2: the C APF+FK+IK computation must happen
+    # ON ARM FreeRTOS Trajectory stack, then a real UART proposal is
+    # physically full-link gated before a separate C joint request.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, GNU compiler and Bullet
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm ninja-build
+          python -m pip install numpy pybullet
+      - name: Regression - embedded ARM APF runtime must inspect every UR5 link
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
+      - name: Build real FreeRTOS ARM UART firmware with embedded APF/IK
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+      - name: Real ARM APF/IK proposal, full-link Bullet approval, C UART PID movement
+        run: |
+          python tools/tests/run_stage5_embedded_apf_uart.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --timeout-s 105 \
+            --output-dir build/stage5-embedded-apf-uart
+      - name: Verify repeated ARM APF replan from fresh physical feedback
+        run: |
+          python tools/tests/run_stage5_embedded_apf_uart.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --timeout-s 155 --proposals 3 \
+            --output-dir build/stage5-embedded-apf-uart-three
+      - name: Finish blocked static rectangle mission via ARM firmware C APF
+        run: |
+          python tools/tests/run_stage5_embedded_apf_uart.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --timeout-s 300 --full-route \
+            --output-dir build/stage5-embedded-apf-uart-full
+      - name: Independently require full-link runtime queries in real ARM route
+        run: |
+          python -c "import json; from pathlib import Path; p=Path('build/stage5-embedded-apf-uart-full/result.json'); r=json.loads(p.read_text()); assert r['passed'] is True and r['route_complete'] is True and r['runtime_full_link_queries'] >= 7*r['joint_motion_acks'] > 0, r"
+      - name: Preserve actual firmware APF UART decision and physical trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-embedded-arm-apf-verified-physical
+          path: |
+            build/stage5-embedded-apf-uart/*
+            build/stage5-embedded-apf-uart-three/*
+            build/stage5-embedded-apf-uart-full/*
+          if-no-files-found: ignore
 
   native-firmware-regression:
     runs-on: ubuntu-latest

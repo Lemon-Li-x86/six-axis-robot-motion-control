@@ -10,6 +10,9 @@
 #include "pid.h"
 #include "robot_types.h"
 #include "error_code.h"
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+#include "protocol.h"
+#endif
 
 typedef struct {
     pid_config_t pid[ROBOT_JOINT_COUNT];
@@ -51,6 +54,14 @@ robot_status_t motion_pipeline_submit_polynomial(
     const trajectory_polynomial_plan_t *plan);
 robot_status_t motion_pipeline_submit_cartesian(
     const cartesian_trajectory_plan_t *plan);
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+/* Simulation: asynchronously compute C APF/IK in trajectory task.
+ * The resulting UART message is a proposal, never a motor command.
+ * External swept-link check must precede separate joint execution.
+ */
+robot_status_t motion_pipeline_submit_apf_proposal(
+    const protocol_apf_step_request_t *request);
+#endif
 robot_status_t motion_pipeline_get_diagnostics(motion_stage4_diagnostics_t *out);
 
 #endif

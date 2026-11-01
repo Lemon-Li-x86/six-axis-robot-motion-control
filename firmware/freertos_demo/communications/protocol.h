@@ -42,6 +42,8 @@
 #define CMD_REQUEST_JOINT_MOVE       0x03U
 /* QEMU simulation ONLY: non-actuating embedded C APF preview. */
 #define CMD_REQUEST_APF_STEP         0x04U
+/* ARM FreeRTOS Trajectory task computes C APF/IK proposal (never actuates). */
+#define CMD_REQUEST_APF_JOINT_PROPOSAL 0x05U
 
 #define CMD_JOINT_STATE              0x81U
 #define CMD_JOINT_STATE_ACK          0x82U
@@ -51,6 +53,7 @@
 /* Firmware -> PyBullet: sequenced request admission status. */
 #define CMD_JOINT_MOVE_ACK           0x86U
 #define CMD_APF_STEP_RESPONSE        0x87U
+#define CMD_APF_JOINT_PROPOSAL_RESPONSE 0x88U
 
 
 /* =========================================================
@@ -78,6 +81,12 @@
 #define PROTOCOL_APF_STEP_REQUEST_PAYLOAD_LEN (1U + 9U*2U + 6U*4U)
 #define PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN (2U + 3U*4U)
 #define PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN (2U + 1U + 1U + PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN + 1U)
+/* sequence | int8 status | xyz (3 little-endian f32 mm) |
+ * six canonical int16 centidegrees | reached (u8).
+ * A successful proposal is informational, NOT motion approval.
+ */
+#define PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN (2U + 3U*4U + ROBOT_JOINT_COUNT*2U + 1U)
+#define PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN (2U+1U+1U+PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN+1U)
 
 
 /* =========================================================
@@ -519,5 +528,10 @@ robot_status_t protocol_build_apf_step_response(
     uint8_t sequence, robot_status_t status,
     const float next_mm[3],
     uint8_t frame[PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN]);
+
+robot_status_t protocol_build_apf_joint_proposal_response(
+    uint8_t sequence, robot_status_t status, const float next_mm[3],
+    const robot_joint_angles_t *joints, uint8_t goal_reached,
+    uint8_t frame[PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN]);
 
 #endif

@@ -502,6 +502,31 @@ option(ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT
 # UART, so BOTH flags must be deliberately enabled. Never use on hardware.
 option(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
     "Test-only inbound motion requests and virtual UART command output" OFF)
+# Scope Stage5-only stack-scan optimization to QEMU integration by default;
+# the Stage4 frozen test path remains untouched. OFF is an explicit A/B
+# instrumented baseline; both modes read the same JSON task periods.
+option(ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT
+    "Reduce repeated full-stack scans in FreeRTOS Monitor task"
+    ${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION})
+if(ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT AND NOT ROBOT_ENABLE_STAGE4_TASKS)
+    message(FATAL_ERROR "Stage5 stack scan optimization requires RTOS motion tasks")
+endif()
+target_compile_definitions(freertos_demo PRIVATE
+    ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=$<BOOL:${ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT}>
+)
+# Delete unreachable ARM code and unreferenced globals at link time in
+# Stage5 integration builds. Stage4 frozen target remains unchanged.
+# Test both OFF and ON with exactly equal compiler, linker and feature flags;
+# never claim memory saving without the archived ELF/.map A/B.
+option(ROBOT_ENABLE_STAGE5_LINK_GC
+    "Enable ARM -ffunction-sections/-fdata-sections/--gc-sections"
+    ${ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION})
+if(ROBOT_ENABLE_STAGE5_LINK_GC)
+    target_compile_options(freertos_demo PRIVATE
+        -ffunction-sections -fdata-sections)
+    target_link_options(freertos_demo PRIVATE "-Wl,--gc-sections")
+endif()
+
 if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
     if(NOT ROBOT_ENABLE_STAGE4_TASKS OR
        NOT ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT OR
@@ -548,6 +573,15 @@ if(ROBOT_ENABLE_STAGE4_TASKS)
         application/tasks/monitor_task.c
     )
 endif()
+if(ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION)
+    # Actual ARM C APF/FK/IK plan computed on FreeRTOS Trajectory stack.
+    # The proposed target is non-actuating until separately collision-gated
+    # and committed via the existing UART joint motion request.
+    target_sources(freertos_demo PRIVATE
+        application/services/stage5_apf_proposal.c
+    )
+endif()
+
 if(ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST)
     target_sources(freertos_demo PRIVATE
         tests/qemu_target/stage4_rtos_selftest.c

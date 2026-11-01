@@ -405,7 +405,8 @@ robot_status_t protocol_parse_apf_step_request(
     _Static_assert(sizeof(float)==4U, "APF preview wire needs IEEE754 float32");
     if(frame==NULL || out==NULL)
         return ROBOT_STATUS_ERROR_NULL_POINTER;
-    if(frame->command!=CMD_REQUEST_APF_STEP)
+    if(frame->command!=CMD_REQUEST_APF_STEP &&
+       frame->command!=CMD_REQUEST_APF_JOINT_PROPOSAL)
         return ROBOT_STATUS_ERROR_INVALID_COMMAND;
     if(frame->length!=PROTOCOL_APF_STEP_REQUEST_PAYLOAD_LEN)
         return ROBOT_STATUS_ERROR_INVALID_LENGTH;
@@ -459,6 +460,48 @@ robot_status_t protocol_build_apf_step_response(
     }
     return protocol_build_frame(CMD_APF_STEP_RESPONSE,payload,
         PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN,frame);
+}
+
+/* Transactional, zero-filled failure response. A proposal has NO side effects.
+ * Message payload size comes from protocol.h alone; there is no second
+ * Python C ABI or host-independent data encoding.
+ */
+robot_status_t protocol_build_apf_joint_proposal_response(
+    uint8_t sequence, robot_status_t status, const float next_mm[3],
+    const robot_joint_angles_t *joints, uint8_t goal_reached,
+    uint8_t frame[PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN])
+{
+    uint8_t payload[PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN]={0};
+    size_t i;
+    if(frame==NULL || (status==ROBOT_STATUS_OK &&
+       (next_mm==NULL || joints==NULL)))
+        return ROBOT_STATUS_ERROR_NULL_POINTER;
+    if(status<INT8_MIN || status>INT8_MAX || goal_reached>1U)
+        return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+    payload[0]=sequence;
+    payload[1]=(uint8_t)(int8_t)status;
+    if(status==ROBOT_STATUS_OK) {
+        for(i=0U;i<3U;i++) {
+            uint32_t raw;
+            size_t pos=2U+4U*i;
+            if(!isfinite(next_mm[i]))
+                return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
+            memcpy(&raw,&next_mm[i],sizeof(raw));
+            payload[pos]=(uint8_t)raw;
+            payload[pos+1U]=(uint8_t)(raw>>8);
+            payload[pos+2U]=(uint8_t)(raw>>16);
+            payload[pos+3U]=(uint8_t)(raw>>24);
+        }
+        for(i=0U;i<ROBOT_JOINT_COUNT;i++) {
+            uint16_t raw=(uint16_t)joints->value[i];
+            size_t pos=2U+3U*4U+2U*i;
+            payload[pos]=(uint8_t)raw;
+            payload[pos+1U]=(uint8_t)(raw>>8);
+        }
+        payload[PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN-1U]=goal_reached;
+    }
+    return protocol_build_frame(CMD_APF_JOINT_PROPOSAL_RESPONSE,payload,
+        PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN,frame);
 }
 
 /* =========================================================

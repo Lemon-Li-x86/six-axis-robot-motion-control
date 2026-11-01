@@ -49,6 +49,10 @@ int main(void)
     for(i=0U;i<6U;i++) CHECK(request.apf_parameters[i]==values[i]);
 
     memcpy(original,&request,sizeof(request));
+    frame.command=CMD_REQUEST_APF_JOINT_PROPOSAL;
+    CHECK(protocol_parse_apf_step_request(&frame,&request)==ROBOT_STATUS_OK);
+    CHECK(request.sequence==57U);
+    frame.command=CMD_REQUEST_APF_STEP;
     frame.length--;
     CHECK(protocol_parse_apf_step_request(&frame,&request)==
           ROBOT_STATUS_ERROR_INVALID_LENGTH);
@@ -86,6 +90,27 @@ int main(void)
     for(i=6U;i<sizeof(response)-1U;i++) CHECK(response[i]==0U);
     CHECK(protocol_build_apf_step_response(58U,
           ROBOT_STATUS_OK,NULL,response)==ROBOT_STATUS_ERROR_NULL_POINTER);
+    {
+        robot_joint_angles_t proposed={{100,-500,1800,-17999,17500,0}};
+        uint8_t reply[PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN]={0};
+        CHECK(protocol_build_apf_joint_proposal_response(
+            37U,ROBOT_STATUS_OK,result,&proposed,0U,reply)==ROBOT_STATUS_OK);
+        CHECK(reply[2]==CMD_APF_JOINT_PROPOSAL_RESPONSE);
+        CHECK(reply[3]==PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN);
+        CHECK(reply[4]==37U && reply[5]==0U);
+        CHECK(reply[6+12]==100U && reply[7+12]==0U);
+        CHECK(reply[6+12+2]==(uint8_t)((uint16_t)-500 & 0xffU));
+        CHECK(reply[4+PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN-1U]==0U);
+        CHECK(protocol_build_apf_joint_proposal_response(
+            38U,ROBOT_STATUS_ERROR_NO_SOLUTION,NULL,NULL,0U,reply)
+            ==ROBOT_STATUS_OK);
+        CHECK(reply[4]==38U && (int8_t)reply[5]==
+              (int8_t)ROBOT_STATUS_ERROR_NO_SOLUTION);
+        for(i=6U;i<sizeof(reply)-1U;i++) CHECK(reply[i]==0U);
+        CHECK(protocol_build_apf_joint_proposal_response(
+            37U,ROBOT_STATUS_OK,NULL,&proposed,0U,reply)==
+              ROBOT_STATUS_ERROR_NULL_POINTER);
+    }
     printf("QEMU APF preview wire tests: %u failures\\n",failures);
     return failures ? 1 : 0;
 }

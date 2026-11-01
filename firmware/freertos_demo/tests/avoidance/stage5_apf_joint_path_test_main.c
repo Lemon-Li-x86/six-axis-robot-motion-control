@@ -1,10 +1,12 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include "stage5_apf_joint_path.h"
 #include "kinematics.h"
 #include "angle_utils.h"
 #include "motion_limits.h"
+#include "stage5_apf_proposal.h"
 
 static unsigned tests,failed;
 #define CHECK(x) do { ++tests; if(!(x)) { ++failed; \
@@ -115,9 +117,92 @@ static void authoritative_pose_limits(void)
           ==ROBOT_STATUS_ERROR_NULL_POINTER);
 }
 
+static void embedded_rtos_apf_single_step_proposal(void)
+{
+    /* Route via production C APF -> production C IK -> trapezoid.
+     * Start pose and limits are those used by the existing C IK test.
+     * The resulting proposal MUST NOT trigger any motor action.
+     */
+    protocol_apf_step_request_t request={0};
+    motion_stage4_config_t config={0};
+    stage5_apf_proposal_t result={0};
+    robot_joint_angles_t initial_canonical={{0}};
+    robot_transform_t fk={{{0}}};
+    size_t axis;
+    request.sequence=37U;
+    request.goal_offset_mm[0]=3;
+    request.goal_offset_mm[1]=2;
+    for(axis=0U;axis<3U;axis++) {
+        request.obstacle_min_offset_mm[axis]=100;
+        request.obstacle_max_offset_mm[axis]=120;
+    }
+    request.apf_parameters[0]=1.0F;
+    request.apf_parameters[1]=0.0F;
+    request.apf_parameters[2]=30.0F;
+    request.apf_parameters[3]=1.0F;
+    request.apf_parameters[4]=1.5F;
+    request.apf_parameters[5]=0.1F;
+    config.max_velocity_deg_s=velocities;
+    config.max_acceleration_deg_s2=accelerations;
+    config.cartesian_waypoint_position_tolerance_mm=
+        KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM;
+    config.cartesian_waypoint_rotation_matrix_tolerance=
+        KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL;
+
+    CHECK(robot_angles_canonicalize(&initial,&initial_canonical)==ROBOT_STATUS_OK);
+    CHECK(kinematics_forward(&initial_canonical,&fk)==ROBOT_STATUS_OK);
+    CHECK(stage5_apf_propose_from_feedback(
+        &initial,&request,&config,&result)==ROBOT_STATUS_OK);
+    CHECK(result.goal_reached==0U);
+    CHECK(isfinite(result.cartesian_mm.mm[0]));
+    CHECK(result.cartesian_mm.mm[0] > (double)fk.matrix[0][3]);
+    CHECK(result.cartesian_mm.mm[0] < (double)fk.matrix[0][3]+3.0);
+    {
+        robot_joint_angles_t chosen=result.canonical_joint;
+        robot_transform_t actual={{{0}}}, desired=fk;
+        CHECK(kinematics_forward(&chosen,&actual)==ROBOT_STATUS_OK);
+        for(axis=0U;axis<3U;axis++)
+            desired.matrix[axis][3]=(robot_real_t)result.cartesian_mm.mm[axis];
+        CHECK(kinematics_pose_within_tolerance(
+            &actual,&desired,
+            KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM,
+            KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL)==ROBOT_STATUS_OK);
+    }
+
+    /* A goal already reached is non-actuating: same canonical angles. */
+    request.goal_offset_mm[0]=0;
+    request.goal_offset_mm[1]=0;
+    CHECK(stage5_apf_propose_from_feedback(
+        &initial,&request,&config,&result)==ROBOT_STATUS_OK);
+    CHECK(result.goal_reached==1U);
+    for(axis=0U;axis<ROBOT_JOINT_COUNT;axis++)
+        CHECK(result.canonical_joint.value[axis]==initial_canonical.value[axis]);
+
+    /* Malformed obstacle and nonfinite gains must never modify the output. */
+    {
+        stage5_apf_proposal_t preserved=result;
+        for(axis=0U;axis<3U;axis++) {
+            request.obstacle_min_offset_mm[axis]=-1;
+            request.obstacle_max_offset_mm[axis]=1;
+        }
+        CHECK(stage5_apf_propose_from_feedback(
+            &initial,&request,&config,&result)!=ROBOT_STATUS_OK);
+        CHECK(memcmp(&preserved,&result,sizeof(result))==0);
+        for(axis=0U;axis<3U;axis++) {
+            request.obstacle_min_offset_mm[axis]=100;
+            request.obstacle_max_offset_mm[axis]=120;
+        }
+        request.apf_parameters[0]=NAN;
+        CHECK(stage5_apf_propose_from_feedback(
+            &initial,&request,&config,&result)!=ROBOT_STATUS_OK);
+        CHECK(memcmp(&preserved,&result,sizeof(result))==0);
+    }
+}
+
 int main(void)
 {
     authoritative_pose_limits();
+    embedded_rtos_apf_single_step_proposal();
     real_apf_to_production_ik();
     fail_closed_no_partial_joint_path();
     printf("Stage5 APF->C IK->trapezoid: %u checks, %u failures\\n",tests,failed);

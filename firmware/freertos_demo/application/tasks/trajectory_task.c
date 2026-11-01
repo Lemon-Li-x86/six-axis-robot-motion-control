@@ -17,6 +17,10 @@
 #include "motion_limits.h"
 #include "angle_utils.h"
 #include "robot_model.h"
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+#include "stage5_apf_proposal.h"
+#include "uart_tx_manager.h"
+#endif
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
 #include "stage4_timing_probe.h"
 #endif
@@ -114,6 +118,49 @@ static robot_status_t start_request(
     return ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
 }
 
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+/* QEMU-only C APF/IK plan is executed in the actual FreeRTOS Trajectory
+ * worker, never inside ProtocolRX or the Python host. The response is only
+ * a proposed joint goal. Full-link swept clearance belongs to the real
+ * PyBullet geometry gate; a separate UART joint request must follow it.
+ */
+static robot_status_t publish_apf_proposal(
+    motion_runtime_t *runtime, const protocol_apf_step_request_t *request)
+{
+    motor_state_observation_t observation={0};
+    stage5_apf_proposal_t proposed={0};
+    float xyz_mm[3]={0.0F,0.0F,0.0F};
+    uint8_t frame[PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN];
+    robot_status_t status;
+    uint32_t axis;
+    status=motor_state_get_fresh_feedback(
+        &observation,
+        (uint32_t)pdMS_TO_TICKS(runtime->config.feedback_timeout_ms));
+    if(status==ROBOT_STATUS_OK)
+        status=stage5_apf_propose_from_feedback(
+            &observation.feedback.unwrapped_positions,
+            request,&runtime->config,&proposed);
+    if(status==ROBOT_STATUS_OK) {
+        for(axis=0U;axis<3U;axis++)
+            xyz_mm[axis]=(float)proposed.cartesian_mm.mm[axis];
+    }
+    /* Error responses are deterministic and do not carry stale candidates.
+     * The parser's original sequence uniquely identifies the request.
+     */
+    if(protocol_build_apf_joint_proposal_response(
+            request->sequence,status,
+            status==ROBOT_STATUS_OK ? xyz_mm : NULL,
+            status==ROBOT_STATUS_OK ? &proposed.canonical_joint : NULL,
+            status==ROBOT_STATUS_OK ? proposed.goal_reached : 0U,
+            frame)!=ROBOT_STATUS_OK)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    if(uart_tx_manager_send_frame(
+         frame,PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN)!=ROBOT_STATUS_OK)
+        return ROBOT_STATUS_ERROR_INTERNAL;
+    return status;
+}
+#endif
+
 static void task_trajectory(void *arg)
 {
     motion_runtime_t *r=(motion_runtime_t *)arg;
@@ -165,6 +212,16 @@ static void task_trajectory(void *arg)
                 reference.enabled=0U;
                 reference.created_tick=xTaskGetTickCount();
                 (void)xQueueOverwrite(r->reference_queue,&reference);
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+                if(request.kind==MOTION_REQUEST_APF_PROPOSAL) {
+                    /* No armed plan: disable output before IK, return response
+                     * asynchronously and leave control inactive. */
+                    s=publish_apf_proposal(r,&request.apf_request);
+                    if(s!=ROBOT_STATUS_OK)
+                        motion_record_fault(s,0U);
+                    break;
+                }
+#endif
                 s=start_request(r,&request,&joint_plan,&last);
                 if(s!=ROBOT_STATUS_OK) {
                     cancel_motion(r,s);

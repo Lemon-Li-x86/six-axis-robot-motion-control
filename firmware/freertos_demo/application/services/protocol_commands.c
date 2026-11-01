@@ -573,6 +573,27 @@ static void handle_simulated_apf_step(
         (void)uart_tx_manager_send_frame(
             response,PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN);
 }
+/* APF joint proposal is intentionally asynchronous. ProtocolRX only
+ * validates bytes and queues work; the low-priority Trajectory task runs
+ * APF/FK/IK and sends the actual response, avoiding an expensive IK call on
+ * the small UART parser stack. A proposal is NEVER motor permission.
+ */
+static void handle_simulated_apf_joint_proposal(const protocol_frame_t *frame)
+{
+    protocol_apf_step_request_t request={0};
+    uint8_t response[PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN];
+    robot_status_t status;
+    if(frame==NULL || frame->length<1U) return;
+    status=protocol_parse_apf_step_request(frame,&request);
+    if(status==ROBOT_STATUS_OK)
+        status=motion_pipeline_submit_apf_proposal(&request);
+    if(status!=ROBOT_STATUS_OK) {
+        if(protocol_build_apf_joint_proposal_response(
+             frame->payload[0],status,NULL,NULL,0U,response)==ROBOT_STATUS_OK)
+            (void)uart_tx_manager_send_frame(
+                response,PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN);
+    }
+}
 #endif
 
 /* =========================================================
@@ -616,6 +637,9 @@ void protocol_commands_dispatch_frame(
             break;
         case CMD_REQUEST_APF_STEP:
             handle_simulated_apf_step(frame,current_tick,tick_rate_hz);
+            break;
+        case CMD_REQUEST_APF_JOINT_PROPOSAL:
+            handle_simulated_apf_joint_proposal(frame);
             break;
 #endif
 
