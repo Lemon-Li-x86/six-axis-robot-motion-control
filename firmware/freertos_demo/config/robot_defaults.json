@@ -35,72 +35,75 @@
     "pid": [
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       },
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       },
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       },
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       },
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       },
       {
         "kp": 0.25,
-        "ki": 0.0,
+        "ki": 0,
         "kd": 0.025,
-        "integral_limit_deg_s": 10.0,
-        "output_limit_deg": 3.0,
+        "integral_limit_deg_s": 10,
+        "output_limit_deg": 3,
         "deadband_deg": 0.02
       }
     ],
     "max_velocity_deg_s": [
-      15.0,
-      15.0,
-      15.0,
-      15.0,
-      15.0,
-      15.0
+      15,
+      15,
+      15,
+      15,
+      15,
+      15
     ],
     "max_acceleration_deg_s2": [
-      30.0,
-      30.0,
-      30.0,
-      30.0,
-      30.0,
-      30.0
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
     ],
     "feedback_timeout_ms": 3000,
     "reference_timeout_trajectory_periods": 3,
     "cartesian_start_tolerance_mm": 0.5,
     "cartesian_start_rotation_matrix_tolerance": 0.01
+  },
+  "stage5_monitor": {
+    "stack_watermark_sample_period_ms": 1000
   }
 }
