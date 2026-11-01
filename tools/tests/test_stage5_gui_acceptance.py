@@ -36,6 +36,26 @@ class RealGuiAcceptanceTests(unittest.TestCase):
     def test_native_c_uart_j6_full_link_evidence_accepts(self):
         self.assertEqual(evaluate(good()), [])
 
+    def test_second_j6_2deg_requires_real_second_C_return(self):
+        x = good()
+        x.update(safe_gui_jog_applied=2, safe_gui_jog_completed=2,
+                 hold_recoveries=2,
+                 obstacle_recovery_routes=[
+                     {"completed": True}, {"completed": True}],
+                 safe_gui_jog_events=[
+                     {"event":"safe_gui_jog_applied","joint":6,"displacement_deg":0.5},
+                     {"event":"safe_gui_jog_applied","joint":6,"displacement_deg":2.0},
+                 ])
+        self.assertEqual(evaluate(x, two_step=True), [])
+        self.assertNotEqual(evaluate(x), [])
+        for tamper in ("safe_gui_jog_completed", "hold_recoveries"):
+            y = dict(x)
+            y[tamper] = 1
+            self.assertNotEqual(evaluate(y, two_step=True), [])
+        y = dict(x)
+        y["safe_gui_jog_events"] = x["safe_gui_jog_events"][:1]
+        self.assertNotEqual(evaluate(y, two_step=True), [])
+
     def test_just_original_route_without_a_jog_is_not_pass(self):
         x = good()
         x.update(safe_gui_jog_applied=0, safe_gui_jog_completed=0,
