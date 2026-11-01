@@ -451,6 +451,7 @@ def hold_recovery_requested(deviation_deg: float, gui_safe_jog: bool, jog) -> bo
 def small_endpoint_rearm_ready(
     sequencer, measured: Sequence[int], stable_frames: int,
     now: float, *, max_rearms: int = GUI_ENDPOINT_REARMS_CLEAR,
+    full_link_preflight_required: bool = False,
 ) -> bool:
     """Finite, improving GUI recovery; NEVER substitutes for physical settle."""
     if (not sequencer.accepted or sequencer.done or
@@ -461,8 +462,13 @@ def small_endpoint_rearm_ready(
         return False
     error = max(abs(a-b)/wire.JOINT_ANGLE_SCALE
                 for a,b in zip(sequencer.goal, measured))
-    if not SETTLE_TOLERANCE_DEG < error <= HOLD_DEVIATION_TRIGGER_DEG:
+    if not (error > SETTLE_TOLERANCE_DEG):
         return False
+    if not full_link_preflight_required and error > HOLD_DEVIATION_TRIGGER_DEG:
+        return False
+    # A larger residual in an APF leg requires an independent, fresh
+    # measured-pose -> current-goal full-link check before UART submission.
+    # HOLD_DEVIATION_TRIGGER_DEG is not a collision or motion safety limit.
     # Every retry must measurably reduce the residual vs. the previous rearm.
     # The UART/measurement quantum is 0.01deg; non-improving loops fail closed.
     prior = sequencer.last_rearm_error_deg
@@ -1923,7 +1929,9 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     if small_endpoint_rearm_ready(
                                             sequencer, measured, endpoint_stable_frames,
                                             time.monotonic(),
-                                            max_rearms=max_endpoint_rearms):
+                                            max_rearms=max_endpoint_rearms,
+                                            full_link_preflight_required=bool(
+                                                safety_obstacles)):
                                         # The obstructed APF route must NOT
                                         # inherit the clear-scene rearm
                                         # permission. Validate the entire new
