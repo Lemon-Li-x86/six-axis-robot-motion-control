@@ -36,9 +36,29 @@ function Resolve-Stage5Python {
 
     $checked = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $failures = New-Object 'System.Collections.Generic.List[string]'
-    # Check actual binary import compatibility before CMake/QEMU; CI has tested
-    # multiple NumPy versions, so do not change or over-constrain installations.
-    $probe = "import sys, numpy, pybullet; print(sys.executable + ' (Python ' + sys.version.split()[0] + ', NumPy ' + numpy.__version__ + ')')"
+    $nl = [Environment]::NewLine
+    # Probe imports independently. Both candidates and the exact failure are
+    # printed without pip, file writes, or any environment activation.
+    $probe = @'
+import importlib
+import sys
+import traceback
+print("PYTHON=" + sys.executable + " VERSION=" + sys.version.split()[0])
+failed = False
+for module_name in ("numpy", "pybullet"):
+    try:
+        module = importlib.import_module(module_name)
+        print("OK " + module_name + " " + str(getattr(module, "__version__", "")))
+    except Exception as error:
+        failed = True
+        message = str(error).strip().splitlines()
+        print("FAIL " + module_name + " (" + type(error).__name__ + "): " +
+              (next((line.strip() for line in message if line.strip()), repr(error))))
+        print("TRACE " + module_name + ": " +
+              " | ".join(traceback.format_exc().strip().splitlines()[-7:]))
+sys.exit(1 if failed else 0)
+'@
+
     foreach ($candidate in $candidates) {
         if ([string]::IsNullOrWhiteSpace($candidate) -or -not $checked.Add($candidate)) {
             continue
@@ -49,13 +69,13 @@ function Resolve-Stage5Python {
                 Write-Host "[Stage5] Using existing Python: $($details | Select-Object -Last 1)"
                 return $candidate
             }
-            $failures.Add("$candidate : Python/NumPy/PyBullet import or version check failed")
+            $failureText = (@($details) | ForEach-Object { [string]$_ }) -join $nl
+            $failures.Add("$candidate : $failureText")
         } catch {
             $failures.Add("$candidate : $($_.Exception.Message)")
         }
     }
 
-    $nl = [Environment]::NewLine
     $message = "No existing Python interpreter could import both numpy and pybullet for Stage5."
     if ($failures.Count -gt 0) { $message += $nl + "Checked:" + $nl + ($failures -join $nl) }
     $message += $nl + "This command does NOT install or change any environment."
