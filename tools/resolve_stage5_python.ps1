@@ -36,9 +36,9 @@ function Resolve-Stage5Python {
 
     $checked = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $failures = New-Object 'System.Collections.Generic.List[string]'
-    # Match the project requirements and actual simulation imports before CMake
-    # or QEMU starts; avoid a misleading firmware/APF failure on bad Python.
-    $probe = "import sys, numpy, pybullet; assert int(numpy.__version__.split('.')[0]) < 2, 'requirements.txt needs numpy<2'; print(sys.executable + ' (Python ' + sys.version.split()[0] + ', NumPy ' + numpy.__version__ + ')')"
+    # Check actual binary import compatibility before CMake/QEMU; CI has tested
+    # multiple NumPy versions, so do not change or over-constrain installations.
+    $probe = "import sys, numpy, pybullet; print(sys.executable + ' (Python ' + sys.version.split()[0] + ', NumPy ' + numpy.__version__ + ')')"
     foreach ($candidate in $candidates) {
         if ([string]::IsNullOrWhiteSpace($candidate) -or -not $checked.Add($candidate)) {
             continue
@@ -56,7 +56,7 @@ function Resolve-Stage5Python {
     }
 
     $nl = [Environment]::NewLine
-    $message = "No existing Python interpreter passed Stage5's numpy<2 and pybullet checks."
+    $message = "No existing Python interpreter could import both numpy and pybullet for Stage5."
     if ($failures.Count -gt 0) { $message += $nl + "Checked:" + $nl + ($failures -join $nl) }
     $message += $nl + "This command does NOT install or change any environment."
     $message += $nl + "To select a previously working interpreter explicitly, pass -Python 'C:\path\to\python.exe'."
