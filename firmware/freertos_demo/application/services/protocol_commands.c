@@ -317,6 +317,46 @@ static robot_status_t get_diagnostics_value(
         }
         return ROBOT_STATUS_OK;
     }
+    if(selector>=DIAGNOSTICS_METRIC_CONTROL_TICK &&
+       selector<=DIAGNOSTICS_METRIC_MAX)
+    {
+        motion_stage5_control_trace_t trace={0};
+        uint32_t axis;
+        status=motion_pipeline_get_stage5_control_trace(&trace);
+        if(status!=ROBOT_STATUS_OK) return status;
+        switch(selector) {
+            case DIAGNOSTICS_METRIC_CONTROL_TICK:
+                *value=trace.rtos_tick; return ROBOT_STATUS_OK;
+            case DIAGNOSTICS_METRIC_CONTROL_DT_US:
+                *value=trace.control_dt_us; return ROBOT_STATUS_OK;
+            case DIAGNOSTICS_METRIC_REFERENCE_AGE_TICKS:
+                *value=trace.reference_age_ticks; return ROBOT_STATUS_OK;
+            case DIAGNOSTICS_METRIC_REQUEST_GENERATION:
+                *value=trace.request_generation; return ROBOT_STATUS_OK;
+            default: break;
+        }
+        if(selector>=DIAGNOSTICS_METRIC_REFERENCE_BASE &&
+           selector<DIAGNOSTICS_METRIC_FEEDBACK_BASE) {
+            axis=(uint32_t)(selector-DIAGNOSTICS_METRIC_REFERENCE_BASE);
+            *value=(uint32_t)trace.reference_raw[axis];
+        } else if(selector>=DIAGNOSTICS_METRIC_FEEDBACK_BASE &&
+                  selector<DIAGNOSTICS_METRIC_PID_CORRECTION_BASE) {
+            axis=(uint32_t)(selector-DIAGNOSTICS_METRIC_FEEDBACK_BASE);
+            *value=(uint32_t)trace.feedback_raw[axis];
+        } else if(selector>=DIAGNOSTICS_METRIC_PID_CORRECTION_BASE &&
+                  selector<DIAGNOSTICS_METRIC_LIMITER_POSITION_BASE) {
+            axis=(uint32_t)(selector-DIAGNOSTICS_METRIC_PID_CORRECTION_BASE);
+            *value=(uint32_t)trace.pid_correction_millideg[axis];
+        } else if(selector>=DIAGNOSTICS_METRIC_LIMITER_POSITION_BASE &&
+                  selector<DIAGNOSTICS_METRIC_COMMAND_BASE) {
+            axis=(uint32_t)(selector-DIAGNOSTICS_METRIC_LIMITER_POSITION_BASE);
+            *value=(uint32_t)trace.limiter_position_millicentideg[axis];
+        } else {
+            axis=(uint32_t)(selector-DIAGNOSTICS_METRIC_COMMAND_BASE);
+            *value=(uint32_t)trace.command_raw[axis];
+        }
+        return ROBOT_STATUS_OK;
+    }
 #endif
 
     /* Unknown selectors must not trigger an unnecessary metrics snapshot. */

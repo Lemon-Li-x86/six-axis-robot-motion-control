@@ -1,6 +1,8 @@
 # Stage 5 Windows 操作员验收：按钮可重复，独立 C/UART 回位
 
-**版本**：`feat/stage5-rtos-apf-closure-20261101`（PR #36，在 PR #35 的 GUI 修复之上新增固件内 APF/IK；请以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
+**本次人工验收版本**：`fix/stage5-verdict-docs-20261101`（PR #37，基于 PR #36 的 ARM RTOS APF/IK 和 PR #35 的 GUI 修复；以本页所在 Git HEAD 核对）。本项目是 **QEMU ARM/FreeRTOS + 生产 C APF/IK + UART + PyBullet 虚拟 UR5**，不是有实体伺服驱动的真实工业机器人。
+
+> **2026-11-01 几何变更注意：** 历史 2cm 障碍的 28段只属于旧提交。4cm 障碍曾在 ARM FreeRTOS C APF 完整路线中重新规划并完成 30段，但原生 GUI 物理运动触发 **10mm 净距门禁**（最小约9.4–9.8mm），不可视作综合验收通过。当前原始 `blocked` JSON 采用 **3cm** 边长（`half_extents_m=[0.015,0.015,0.015]`）；[新尺寸跨平台 CI](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41312169345) 已实测 Linux ARM 固件C APF全29段完成、Linux原生GUI五次连续点动回位通过；Windows其余作业和本机操作员验收仍须独立验证。预设 via 和安全门禁保持不变，不强制要求与2cm旧路线相同段数。
 
 ## 原始大纲对照
 
@@ -13,34 +15,66 @@
 
 详情见 [原大纲 24 项审计](../project_plan_progress_audit_2026-10-31.md)、[Stage5 原始 5.1–5.4 严格审计](19_stage5_original_requirements_evidence_review_2026-11-01.md)、[技术测试和性能量测](15_stage5_exit_review_2026-10-30.md)、[参数登记簿](01_parameter_register.md)。
 
+## 既有 CPython 3.11 + 旧虚拟环境扩展兼容运行（不修改任何环境）
+
+当原项目 `.venv` 的解释器是 Python 3.10，但 `.venv/Lib/site-packages` 的 NumPy 与 PyBullet 扩展实为 `cp311-win_amd64.pyd` 时，不能再用 `.venv/Scripts/python.exe` 启动仿真。**不应新建/替换该虚拟环境，也不应将系统 Python 3.11 当作已经安装所有依赖的环境。**
+
+本次 Windows 实测已确认：现有 `C:\Users\29753\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe` 添加旧 `.venv/Lib/site-packages` 到运行时 `sys.path` 后，可导入旧 NumPy 2.4.6 和 PyBullet 3.2.7。此项是**导入检查证据，不是完整场景验收**。仓库新增的 `-ExistingSitePackages` 是**显式选择项**，测试入口借助 `tools/stage5_existing_python.py` 仅在该 Python 进程中扩展导入路径，使用可被 Windows `multiprocessing.spawn` 正确导入的 GUI 模块名，不执行 pip、不改解释器、不写文件到环境目录、也不设置永久 `PYTHONPATH`。
+
+在 `stage5-acceptance` 工作树运行，先固定当前 Git HEAD；以下是人工确认后才可开始的两个实测命令：
+
+```powershell
+$existing311 = 'C:\Users\29753\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe'
+$existingPackages = 'D:\1_ToGo\Robo\code\six-axis-robot-motion-control\.venv\Lib\site-packages'
+
+# 仅导入检查，不修改依赖
+& $existing311 .\tools\stage5_existing_python.py --site-packages $existingPackages --probe
+if ($LASTEXITCODE -ne 0) { throw 'Existing dependency imports failed' }
+
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
+  -Python $existing311 -ExistingSitePackages $existingPackages `
+  -Qemu qemu-system-arm -TimeoutSeconds 300 `
+  -OutputDir build/stage5-windows-embedded-apf
+
+# 只有按当前场景真实规划的完整路线全部通过，才进入人工 GUI 操作
+powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
+  -Python $existing311 -ExistingSitePackages $existingPackages `
+  -Qemu qemu-system-arm -Stage5RouteCase blocked `
+  -SafeJog -RequireTwoStepJog -SafeJogHoldSeconds 600 `
+  -OutputDir build/stage5-windows-final-2step
+```
+
+首次 GUI 验收仍按照下面的原始 J6 `+0.5°`、`+2°`、后续至少三次可重复点动和 `FINISH` 程序执行，不能用导入成功代替物理到位。若后续 `numpy` 2.4.6 与其他生产依赖不兼容，**记录完整错误即可**，不得更改依赖或降低安全阈值来让验收通过。
+
 ## 提交与环境预检
 
 使用已安装的 arm-none-eabi-gcc、CMake、QEMU、Python+PyBullet、Windows PowerShell。先确认本地代码没有待保存改动。**不要**在有未提交修改时执行覆盖、`reset --hard` 或清理整个 build 目录。
 
+**多 worktree 的 Python 选择（2026-11-01 修订）**：两个 Windows 验收脚本均自动检查**现有**解释器能否实际导入 NumPy 与 PyBullet（`requirements.txt` 声明了 `numpy<2`，但检查器不修改、不强制安装版本），优先尝试当前工作树的 `.venv`，再尝试 Windows `py` 已安装解释器，最后检查 `python` 命令。**不安装任何东西，不新建环境**。不要传 `-Python python` 来强制选用另一个工作树已激活的旧 `.venv`。如需坚持使用已验收过的解释器，显式传 `-Python 'C:\path\to\working\python.exe'`；指定解释器若不能导入依赖则立即终止，不会默默改用另一个版本。
+
 ```powershell
-git status --short
+git status --short  # 如有未保存修改，先停止，不能覆盖
 git fetch origin
-git worktree add ..\stage5-acceptance origin/feat/stage5-rtos-apf-closure-20261101
-cd ..\stage5-acceptance
+# 直接在已经存在的 stage5-acceptance 工作树里切到 PR #37
+git switch --detach origin/fix/stage5-verdict-docs-20261101
 git rev-parse --short HEAD
 ```
 
-确认 HEAD 与 PR #36 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：
+确认 HEAD 与 PR #37 当前 head 一致。**先运行自动的 ARM 内 C APF 整路安全闭环**（它与 GUI 主机侧 APF 是两项独立证据）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
-  -Python python -Qemu qemu-system-arm `
+  -Qemu qemu-system-arm `
   -TimeoutSeconds 300 `
   -OutputDir build/stage5-windows-embedded-apf
 ```
 
-此命令必须 `passed=true`、`route_complete=true`、28/28（按该场景已知成功基线）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
+此命令必须 `passed=true`、`route_complete=true`、当前 3cm 场景的所有实际规划路段均经过验证（3cm Linux固件CI29段、Windows本机须单独核验）、所有 `approved_legs` 具有 ACK 和稳定物理到位、`uart_checksum_errors=0`，且 `runtime_full_link_queries` 非零并覆盖每个连杆。新增运行时逐连杆修复在最新 HEAD 的 CI 通过前不得提前标为已复验。
 
 随后运行**一次**原始避障 + 连续多次点动的完整 GUI 仿真（不是分别启动多个演示）。`-RequireTwoStepJog` 仅要求**前两次** J6 +0.5°、+2.0°，不限制之后正常按钮使用的次数：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
-  -Python python `
   -Qemu qemu-system-arm `
   -Stage5RouteCase blocked `
   -SafeJog -RequireTwoStepJog `
@@ -69,6 +103,6 @@ Compress-Archive -Path .\build\stage5-windows-final-2step\* `
 - `Stage5 live QEMU PyBullet observer`：`native-gui-no-drag-xvfb`、`native-gui-scripted-j6-xvfb`、`native-gui-j6-two-step-xvfb` 及新增 `native-gui-j6-five-repeat-xvfb` 都必须 PASS。新增五次测试完整串行调用真实 C APF、QEMU/FreeRTOS UART、五次物理反馈回位、碰撞和时钟门禁；脚本化点击**不是** Windows 鼠标操作的替代。
 - Windows/Linux 单测、ARM 固件回归、Windows C APF DLL、两平台 QEMU 实际 UART 和 Windows 控制回位均须 PASS，且必须对应**同一提交 HEAD**。
 - 不得降低 0.15°、安全净距或修改 UR5/驱动/PID 参数来刷绿。仍保留 Stage5 原大纲 5.2/5.3 范围差距，不能把此 GUI 验收作为“完整自主固件 APF + CPU/内存优化全部完成”的证明。
-- PR #36 在最新提交 CI 与 Windows 连续至少五次成功前保持 Draft；PR #35 是下层 GUI 修复基线，`main` 与历史 Stage4 快照不改动。
+- PR #37 在最新提交 CI 与 Windows 连续至少五次成功前保持 Draft；PR #35 是下层 GUI 修复基线，`main` 与历史 Stage4 快照不改动。
 
 **签收条件**：同一代码版本的 ARM 固件内 APF 整路测试、逐连杆运行时监测、GUI 和固件回归门禁通过 + Windows 同一轮至少五次合法点动无拒绝、全部真实回位。5.3 的抖动改善仍须单独提供可重复高负载数据，否则阶段结论必须保留该性能限制，不能声称全面优化或实体工业机器人安全认证。

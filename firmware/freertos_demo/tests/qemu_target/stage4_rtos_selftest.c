@@ -20,6 +20,9 @@
 #include "task_config.h"
 #include "stage4_motion_config.h"
 #include "stage4_timing_probe.h"
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+#include "stage5_cpu_trace.h"
+#endif
 
 typedef struct
 {
@@ -196,6 +199,12 @@ static void stage4_rtos_test_task(void *argument)
             /* Freeze the configurable healthy-window timing sample before
              * inducing the intentional stale-feedback safety stop. */
             stage4_timing_capture();
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+            /* Freeze CPU utilization at the same healthy-window boundary
+             * as Timer0 timing: no stale-feedback or polynomial-fault
+             * workload is included, and no 100ms Monitor snapshot skew. */
+            stage5_cpu_trace_snapshot();
+#endif
             vTaskDelay(pdMS_TO_TICKS(
                 cfg->feedback_timeout_ms+
                 (5U*TASK_PERIOD_TRAJECTORY_MS)));

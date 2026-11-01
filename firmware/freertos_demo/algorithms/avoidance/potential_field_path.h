@@ -22,4 +22,28 @@ robot_status_t robot_apf_plan_path(
     robot_apf_point_t *points,
     size_t capacity,
     size_t *count);
+
+/* Deterministic, allocation-free AABB bypass candidates.
+ * This is a geometric proposal generator, NOT a second potential-field law.
+ * The application must run each proposed via through production C APF,
+ * C IK, the complete PyBullet swept-link preflight and runtime clearance.
+ *
+ * The current bounded version supports one static AABB intersecting the
+ * direct segment. Other obstacle sets are rejected rather than ignored.
+ * Generated candidates depend only on observed geometry and the caller's
+ * existing APF clearance/step policy: no hidden robot/scene defaults.
+ */
+#define ROBOT_APF_BYPASS_MAX_CANDIDATES 12U
+/* Host ctypes asks C for the authoritative maximum; no mirrored literal. */
+size_t robot_apf_bypass_capacity(void);
+robot_status_t robot_apf_generate_bypass_vias(
+    const robot_apf_point_t *start,
+    const robot_apf_point_t *goal,
+    const robot_apf_aabb_t *obstacle,
+    size_t obstacle_count,
+    const robot_apf_config_t *config,
+    robot_apf_point_t *via_candidates,
+    size_t capacity,
+    size_t *out_count);
+
 #endif

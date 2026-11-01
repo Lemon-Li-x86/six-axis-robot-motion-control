@@ -147,9 +147,39 @@ static void task_control(void *arg)
 #else
             (void)canonical; /* algorithm/task dry-run; no actuator commands */
 #endif
+#if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
+            {
+                motion_stage5_control_trace_t trace={0};
+                uint32_t j;
+                trace.rtos_tick=(uint32_t)xTaskGetTickCount();
+                trace.control_dt_us=(uint32_t)(dt*1000000.0+0.5);
+                trace.reference_age_ticks=(uint32_t)(trace.rtos_tick-reference.created_tick);
+                trace.request_generation=reference.request_generation;
+                for(j=0U;j<ROBOT_JOINT_COUNT;j++) {
+                    double correction_milli=(double)correction.value[j]*1000.0;
+                    double limiter_milli=limiter.command_raw[j]*1000.0;
+                    trace.reference_raw[j]=reference.target.value[j];
+                    trace.feedback_raw[j]=observation.feedback.unwrapped_positions.value[j];
+                    /* Both values are bounded by validated PID/UR5 limits. */
+                    trace.pid_correction_millideg[j]=(int32_t)(
+                        correction_milli>=0.0 ? correction_milli+0.5 :
+                                                 correction_milli-0.5);
+                    trace.limiter_position_millicentideg[j]=(int32_t)(
+                        limiter_milli>=0.0 ? limiter_milli+0.5 :
+                                              limiter_milli-0.5);
+                    trace.command_raw[j]=candidate.value[j];
+                }
+                trace.valid=1U;
+                taskENTER_CRITICAL();
+                r->control_trace=trace;
+                r->diagnostics.controller_steps++;
+                taskEXIT_CRITICAL();
+            }
+#else
             taskENTER_CRITICAL();
             r->diagnostics.controller_steps++;
             taskEXIT_CRITICAL();
+#endif
         } while(0);
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
         stage4_timing_end(STAGE4_TIMING_CONTROL,timing_start);

@@ -49,9 +49,9 @@
           0
         ],
         "half_extents_m": [
-          0.01,
-          0.01,
-          0.01
+          0.015,
+          0.015,
+          0.015
         ]
       },
       "apf": {
@@ -72,7 +72,9 @@
           90
         ]
       ],
-      "shortcut_cartesian": true
+      "shortcut_cartesian": true,
+      "automatic_bypass": true,
+      "planning_extra_clearance_mm": 3
     }
   }
 }

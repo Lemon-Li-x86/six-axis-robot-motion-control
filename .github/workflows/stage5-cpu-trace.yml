@@ -2,13 +2,16 @@ name: Stage5 FreeRTOS task CPU measurement
 
 on:
   push:
-    branches: [feat/stage5-cpu-trace-main-20261029, feat/stage5-rtos-apf-closure-20261101]
+    branches: [feat/stage5-cpu-trace-main-20261029, feat/stage5-rtos-apf-closure-20261101, fix/stage5-verdict-docs-20261101]
     paths:
       - 'firmware/freertos_demo/**'
       - 'tools/ci_stage5_cpu_trace_qemu.sh'
       - 'tools/analyze_stage5_cpu_trace.py'
       - 'tools/analyze_stage5_task_timing.py'
       - 'tools/compare_stage5_perf_ab.py'
+      - 'tools/run_stage5_perf_repeats.sh'
+      - 'tools/aggregate_stage5_perf_repeats.py'
+      - 'tools/tests/test_stage5_perf_repeats.py'
       - 'tools/tests/test_stage5_task_timing.py'
       - '.github/workflows/stage5-cpu-trace.yml'
   pull_request:
@@ -19,6 +22,9 @@ on:
       - 'tools/analyze_stage5_cpu_trace.py'
       - 'tools/analyze_stage5_task_timing.py'
       - 'tools/compare_stage5_perf_ab.py'
+      - 'tools/run_stage5_perf_repeats.sh'
+      - 'tools/aggregate_stage5_perf_repeats.py'
+      - 'tools/tests/test_stage5_perf_repeats.py'
       - 'tools/tests/test_stage5_task_timing.py'
       - '.github/workflows/stage5-cpu-trace.yml'
   workflow_dispatch:
@@ -29,24 +35,26 @@ permissions:
 jobs:
   task-cpu-measurement:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install ARM toolchain and QEMU GDB
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm gdb-multiarch ninja-build
-      - name: Unit-test GDB task timing analysis, including malformed snapshots
-        run: python -m unittest discover -s tools/tests -p 'test_stage5_task_timing.py' -v
-      - name: Build exact-commit baseline - every 100ms monitor stack scan
+      - name: Unit-test GDB timing analysis and paired-repeat evidence aggregation
         run: |
-          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=OFF
+          python -m unittest discover -s tools/tests -p 'test_stage5_task_timing.py' -v
+          python -m unittest discover -s tools/tests -p 'test_stage5_perf_repeats.py' -v
+      - name: Build exact-commit 5s healthy baseline - every 100ms monitor stack scan
+        run: |
+          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=5000 -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=OFF
           cmake --build build/stage5-cpu-trace --target freertos_demo
       - name: GDB capture same-commit unoptimized CPU/stack and Timer0 jitter
         run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-trace/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-trace/observed
-      - name: Build optimized FreeRTOS Monitor with JSON-owned stack-scan cadence
+      - name: Build exact-commit 5s healthy optimized Monitor with JSON-owned stack-scan cadence
         run: |
-          cmake -S . -B build/stage5-cpu-optimized -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON
+          cmake -S . -B build/stage5-cpu-optimized -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=5000 -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON
           cmake --build build/stage5-cpu-optimized --target freertos_demo
       - name: GDB capture optimized CPU/stack and Timer0 jitter
         run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-optimized/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-optimized/observed
@@ -58,6 +66,12 @@ jobs:
             build/stage5-cpu-trace/observed-timing.json \
             build/stage5-cpu-optimized/observed-timing.json \
             --output build/stage5-cpu-optimized/monitor-stack-cpu-ab.json
+      - name: Interleaved A/B repeated GDB CPU and timing snapshots (6 pairs, no fake PASS)
+        run: |
+          bash tools/run_stage5_perf_repeats.sh \
+            build/stage5-cpu-trace/firmware/freertos_demo/freertos_demo.elf \
+            build/stage5-cpu-optimized/firmware/freertos_demo/freertos_demo.elf \
+            build/stage5-perf-repeat 6
       - name: Build same-commit Stage5 ARM memory map without dead-data pruning
         run: |
           cmake -S . -B build/stage5-map-before -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=ON -DROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION=ON -DROBOT_ENABLE_STAGE5_LINK_MAP=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON -DROBOT_ENABLE_STAGE5_LINK_GC=OFF
@@ -85,6 +99,7 @@ jobs:
             build/stage5-cpu-optimized/observed.json
             build/stage5-cpu-optimized/observed-timing.json
             build/stage5-cpu-optimized/monitor-stack-cpu-ab.json
+            build/stage5-perf-repeat/
             build/stage5-cpu-optimized/arm-link-memory-ab.json
             build/stage5-map-before/firmware/freertos_demo/stage5_firmware.map
             build/stage5-map-after/firmware/freertos_demo/stage5_firmware.map

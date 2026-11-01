@@ -81,6 +81,26 @@ robot_status_t pid_step(pid_controller_t *state,double setpoint_deg,
         new_i=next.integral_deg_s;
         raw=next.output_deg+delta_p+delta_d;
     }
+
+    /*
+     * An incrementally accumulated P/D output can retain a permanent bias
+     * after clipping: with identical successive quantized feedback errors,
+     * delta_p and delta_d are both zero, even if the remaining position
+     * error is substantial. The controller can then command almost zero
+     * (or the wrong sign) forever while the motor reaches that stale target.
+     *
+     * With Ki disabled, a genuinely stationary three-sample error has no
+     * derivative or integral contribution. Re-anchor ONLY that equilibrium
+     * to the proportional term already defined by the caller's config.
+     * Transients keep the original velocity-form PID; all existing output
+     * limits still apply. No extra tuning/threshold or motor-side shortcut.
+     */
+    if(!first_sample && next.config.ki==0.0F &&
+       error==next.prev_error_deg &&
+       error==next.prev_prev_error_deg) {
+        raw=(double)next.config.kp*error;
+        if(!isfinite(raw)) return ROBOT_STATUS_ERROR_OUT_OF_RANGE;
+    }
     output=clamp(raw,-olim,olim);
     if(!isfinite(output) || fabs(output)>FLT_MAX)
         return ROBOT_STATUS_ERROR_OUT_OF_RANGE;

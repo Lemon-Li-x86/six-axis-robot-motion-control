@@ -35,6 +35,33 @@ class CartesianGoalAlreadyReached(RejectedRoute):
     """
 
 
+def select_bypass_candidate(candidate_vias, try_route):
+    """Bounded ordered retries; never authorize a failed safety preflight.
+
+    try_route must be the existing complete C APF/IK/full-link gate.
+    Kept separate from geometry generation to test fallback deterministically.
+    """
+    if not candidate_vias:
+        candidate_vias = [()]  # C reports no obstruction: ordinary route
+    failures = []
+    for index, via in enumerate(candidate_vias):
+        try:
+            route = try_route(via)
+        except RejectedRoute as error:
+            failures.append({"candidate": index, "reason": str(error)})
+            continue
+        if not route.get("passed", False):
+            failures.append({"candidate": index, "reason": "preflight did not pass"})
+            continue
+        route["automatic_bypass"] = True
+        route["bypass_candidates_attempted"] = index + 1
+        route["bypass_candidate_rejections"] = failures
+        return route
+    raise RejectedRoute(
+        f"all {len(candidate_vias)} C geometry bypass candidates failed "
+        f"the unchanged C APF/IK/full-link gate: {failures}")
+
+
 class JointPositions(ctypes.Structure):
     _fields_ = [("value", ctypes.c_int32 * JOINT_COUNT)]
 
@@ -72,8 +99,70 @@ def preflight_joint_avoidance(
     minimum_full_link_clearance_m: float | None = None,
     via_points_mm: Sequence[Sequence[float]] = (),
     shortcut_cartesian: bool = False,
+    automatic_bypass: bool = False,
 ) -> dict:
     """Compute C path and C joint targets, and reject unsafe joint routes."""
+    if automatic_bypass:
+        if via_points_mm:
+            raise RejectedRoute("auto bypass and fixed vias are mutually exclusive")
+        if not library.is_file():
+            raise FileNotFoundError(library)
+        if not obstacle_ids or len(obstacle_ids) != 1:
+            raise RejectedRoute("C automatic bypass currently requires one static AABB")
+        # Only geometry/candidate creation belongs to the pure C path module.
+        # Python merely tries its bounded proposals using the existing C
+        # APF -> C IK -> exact whole-arm safety gate below, without actuation.
+        ee_m = physics.getLinkState(
+            robot_id, end_link, computeForwardKinematics=True,
+            physicsClientId=physics_client_id)[4]
+        low, high = physics.getAABB(
+            obstacle_ids[0], physicsClientId=physics_client_id)
+        bbox = AABB(point([v * 1000.0 for v in low]),
+                    point([v * 1000.0 for v in high]))
+        c = ctypes.CDLL(str(library.resolve()))
+        c.robot_apf_generate_bypass_vias.restype = ctypes.c_int
+        c.robot_apf_generate_bypass_vias.argtypes = [
+            ctypes.POINTER(Point), ctypes.POINTER(Point),
+            ctypes.POINTER(AABB), ctypes.c_size_t,
+            ctypes.POINTER(Config), ctypes.POINTER(Point),
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t),
+        ]
+        start = point([v * 1000.0 for v in ee_m])
+        end = point(goal_mm)
+        c.robot_apf_bypass_capacity.restype = ctypes.c_size_t
+        candidate_capacity = c.robot_apf_bypass_capacity()
+        if not 1 <= candidate_capacity <= 256:
+            raise RejectedRoute("C bypass ABI reports invalid capacity")
+        proposals = (Point * candidate_capacity)()
+        count = ctypes.c_size_t(0)
+        status = c.robot_apf_generate_bypass_vias(
+            ctypes.byref(start), ctypes.byref(end), ctypes.byref(bbox),
+            1, ctypes.byref(apf_config), proposals, candidate_capacity,
+            ctypes.byref(count))
+        if status:
+            raise RejectedRoute(f"C bypass candidate geometry rejected: status={status}")
+        if count.value > len(proposals):
+            raise RejectedRoute("C bypass candidate count exceeded output capacity")
+        candidate_vias = [tuple(proposals[i].mm) for i in range(count.value)]
+        def try_candidate(via):
+            return preflight_joint_avoidance(
+                    library, physics, robot_id, obstacle_ids, joint_indices,
+                    end_link, goal_mm,
+                    apf_config=apf_config,
+                    max_velocity_deg_s=max_velocity_deg_s,
+                    max_acceleration_deg_s2=max_acceleration_deg_s2,
+                    max_fk_position_error_mm=max_fk_position_error_mm,
+                    max_fk_rotation_element_error=max_fk_rotation_element_error,
+                    waypoint_capacity=waypoint_capacity,
+                    max_joint_step_rad=max_joint_step_rad,
+                    max_collision_samples=max_collision_samples,
+                    physics_client_id=physics_client_id,
+                    minimum_full_link_clearance_m=minimum_full_link_clearance_m,
+                    via_points_mm=[via] if via else (),
+                    shortcut_cartesian=shortcut_cartesian,
+                    automatic_bypass=False,
+                )
+        return select_bypass_candidate(candidate_vias, try_candidate)
     # Cartesian APF point clearance and physical link clearance are
     # different constraints. An EE point does not include wrist/link volume.
     # Preserve the original API default for callers that did not specify

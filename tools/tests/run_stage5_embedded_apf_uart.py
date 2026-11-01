@@ -32,6 +32,96 @@ from stage4_dynamic_closed_loop import (  # noqa: E402
 from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
+def describe_joint_tracking(candidate_raw, observed_raw, commanded_raw) -> dict:
+    """Read-only centidegree diagnostics; never used for safety decisions."""
+    if any(len(seq) != wire.JOINT_COUNT for seq in
+           (candidate_raw, observed_raw, commanded_raw)):
+        raise ValueError("tracking diagnostics require six joint samples")
+    scale = wire.JOINT_ANGLE_SCALE
+    return {
+        "candidate_target_raw": list(candidate_raw),
+        "last_physical_feedback_raw": list(observed_raw),
+        "last_firmware_command_raw": list(commanded_raw),
+        "feedback_minus_candidate_deg": [
+            round((actual - target) / scale, 4)
+            for actual, target in zip(observed_raw, candidate_raw)
+        ],
+        "feedback_minus_command_deg": [
+            round((actual - command) / scale, 4)
+            for actual, command in zip(observed_raw, commanded_raw)
+        ],
+        "firmware_command_minus_candidate_deg": [
+            round((command - target) / scale, 4)
+            for command, target in zip(commanded_raw, candidate_raw)
+        ],
+    }
+
+
+def decode_firmware_motion_diagnostic(metric_name: str, payload: bytes) -> int:
+    """Decode an existing UART diagnostic response, with signed fault code."""
+    if len(payload) != 4:
+        raise ValueError("firmware diagnostic response must be 4 bytes")
+    value = struct.unpack("<I", payload)[0]
+    if (metric_name == "last_fault" or metric_name.startswith((
+            "trace_reference_raw_j",
+            "trace_feedback_raw_j",
+            "trace_pid_correction_millideg_j",
+            "trace_limiter_position_millicentideg_j",
+            "trace_command_raw_j",
+        ))) and value >= (1 << 31):
+        value -= 1 << 32
+    return value
+
+
+# Existing firmware diagnostics selector registry, not a duplicated wire map.
+MOTION_DIAGNOSTIC_SELECTORS = tuple(
+    (name, wire.SIM_MOTION_DIAGNOSTIC_SELECTORS[name])
+    for name in (
+        "requests_accepted",
+        "trajectory_samples",
+        "controller_steps",
+        "controller_faults",
+        "planner_faults",
+        "feedback_stale_count",
+        "last_fault",
+        "monitoring_ticks",
+    )
+) + tuple(
+    (name, selector)
+    for name, selector in wire.SIM_MOTION_DIAGNOSTIC_SELECTORS.items()
+    if name.startswith("trace_")
+)
+
+
+def summarize_stalled_control_trace(metrics: dict) -> dict | None:
+    """Group six-axis QEMU-only trace selectors; never alter motion outcome."""
+    groups=(
+        "reference_raw", "feedback_raw", "pid_correction_millideg",
+        "limiter_position_millicentideg", "command_raw",
+    )
+    scalars=(
+        "rtos_tick", "control_dt_us", "reference_age_ticks",
+        "request_generation",
+    )
+    keys=[f"trace_{name}" for name in scalars]
+    keys += [
+        f"trace_{name}_j{axis}"
+        for name in groups for axis in range(1, wire.JOINT_COUNT+1)
+    ]
+    if any(name not in metrics for name in keys):
+        return None
+    result={name:metrics[f"trace_{name}"] for name in scalars}
+    result.update({
+        name:[metrics[f"trace_{name}_j{axis}"]
+              for axis in range(1, wire.JOINT_COUNT+1)]
+        for name in groups
+    })
+    # The selector replies are acquired sequentially over UART, not at a
+    # single instant. Only interpret them for a verified stalled command.
+    result["coherent_across_axes"]=False
+    return result
+
+
 def require_runtime_full_link_clearance(
     bullet, robot: int, obstacle: int, clearance_m: float, client: int,
 ) -> int:
@@ -144,14 +234,20 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                               computeForwardKinematics=True,
                               physicsClientId=client)[4]
             box_center=[ee[i]+center_mm[i]/1000 for i in range(3)]
-            route_goals=[
-                [ee[i]+float(delta[i])/1000 for i in range(3)]
-                for delta in (
-                    list(scene.get("via_offsets_ee_mm",[]))+
-                    [scene["goal_offset_mm"]])
-            ] if full_route else [
-                [ee[i]+offsets[i]/1000 for i in range(3)]
+            # The diagnostic 1/3-proposal probe must use the SAME first
+            # mission leg as the full-route run. The blocked scene includes a
+            # documented overhead via: probing the direct final goal instead
+            # would silently test a different, potentially unsafe mission.
+            mission_offsets = (
+                list(scene.get("via_offsets_ee_mm", []))
+                + [scene["goal_offset_mm"]]
+            )
+            route_goals = [
+                [ee[i] + float(delta[i]) / 1000 for i in range(3)]
+                for delta in mission_offsets
             ]
+            if not full_route:
+                route_goals = route_goals[:1]
             goal_index=0
             absolute_goal=route_goals[goal_index]
             shape=p.createCollisionShape(
@@ -171,6 +267,17 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
             settle=0
             max_change=0.0
             frames=0
+            previous_firmware_command=None
+            unchanged_firmware_command_frames=0
+            diagnostic_waiting=None
+            diagnostic_pending=[]
+            diagnostic_snapshot=None
+            diagnostic_leg=-1
+            diagnostic_snapshot_index=0
+            current_motion_start_frame=0
+            best_motion_error_deg=math.inf
+            within_tolerance_frames=0
+            last_progress_report=time.monotonic()
             last_feedback=start
             # Startup transaction: the ARM firmware must ACK real feedback
             # before it may read FK and issue its on-device proposal.
@@ -290,6 +397,17 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             wire.CMD_REQUEST_JOINT_MOVE,
                             bytes([motion_seq])+struct.pack("<6h",*candidate)))
                         move_sent=True
+                    elif command==wire.CMD_DIAGNOSTICS_RESPONSE and len(payload)==4:
+                        if diagnostic_waiting is not None and diagnostic_snapshot is not None:
+                            name, _selector=diagnostic_waiting
+                            diagnostic_snapshot["metrics"][name] = (
+                                decode_firmware_motion_diagnostic(name, payload))
+                            diagnostic_waiting=None
+                            if not diagnostic_pending:
+                                snapshot_trace=summarize_stalled_control_trace(
+                                    diagnostic_snapshot["metrics"])
+                                if snapshot_trace is not None:
+                                    diagnostic_snapshot["control_trace"]=snapshot_trace
                     elif command==wire.CMD_JOINT_MOVE_ACK and len(payload)==2:
                         seq,status=struct.unpack("<Bb",payload)
                         if seq!=motion_seq or status!=0:
@@ -298,9 +416,17 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                         result["joint_motion_acks"]+=1
                         result["approved_legs"][-1]["ack"]=True
                         move_ack=status
+                        current_motion_start_frame=frames
+                        best_motion_error_deg=math.inf
+                        within_tolerance_frames=0
                     elif command==wire.CMD_SET_JOINT_TARGETS and len(payload)==12:
                         values=struct.unpack("<6h",payload)
                         frames+=1
+                        if values==previous_firmware_command:
+                            unchanged_firmware_command_frames+=1
+                        else:
+                            unchanged_firmware_command_frames=0
+                        previous_firmware_command=values
                         if move_ack==0:
                             p.setJointMotorControlArray(
                                 arm,joints,p.POSITION_CONTROL,
@@ -329,6 +455,65 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             err=max(abs(a-b)/100
                                     for a,b in zip(observed,candidate))
                             settle=settle+1 if err<=0.15 else 0
+                            best_motion_error_deg=min(best_motion_error_deg, err)
+                            if err<=0.15:
+                                within_tolerance_frames+=1
+                            diagnostics=describe_joint_tracking(
+                                candidate, observed, values)
+                            diagnostics.update(
+                                unchanged_firmware_command_frames=unchanged_firmware_command_frames,
+                                leg_number=len(result["approved_legs"]),
+                                frames_since_ack=frames-current_motion_start_frame,
+                                last_max_error_deg=round(err,4),
+                                best_max_error_deg=round(best_motion_error_deg,4),
+                                within_tolerance_frames=within_tolerance_frames,
+                                consecutive_settle_frames=settle,
+                            )
+                            result["last_motion_diagnostics"]=diagnostics
+                            current_leg=len(result["approved_legs"])
+                            # A stalled command must not silently masquerade
+                            # as a long move. Request existing on-ARM counters
+                            # through the read-only diagnostics UART opcode.
+                            # Capture twice so task activity can be compared.
+                            if (err>0.15 and
+                                    unchanged_firmware_command_frames>=200 and
+                                    not diagnostic_pending and
+                                    diagnostic_waiting is None and
+                                    (diagnostic_leg!=current_leg or
+                                     (diagnostic_snapshot_index==1 and
+                                      unchanged_firmware_command_frames>=700))):
+                                if diagnostic_leg!=current_leg:
+                                    diagnostic_leg=current_leg
+                                    diagnostic_snapshot_index=0
+                                diagnostic_snapshot_index+=1
+                                diagnostic_snapshot={
+                                    "leg_number":current_leg,
+                                    "frame":frames,
+                                    "snapshot_index":diagnostic_snapshot_index,
+                                    "metrics":{},
+                                }
+                                result.setdefault(
+                                    "firmware_runtime_diagnostics",[]
+                                ).append(diagnostic_snapshot)
+                                diagnostic_pending=list(MOTION_DIAGNOSTIC_SELECTORS)
+                            if diagnostic_waiting is None and diagnostic_pending:
+                                diagnostic_waiting=diagnostic_pending.pop(0)
+                                sock.sendall(frame(
+                                    wire.CMD_GET_DIAGNOSTICS,
+                                    bytes([diagnostic_waiting[1]])))
+                            now=time.monotonic()
+                            if now-last_progress_report>=15.0:
+                                print(
+                                    "[Stage5 APF] leg="
+                                    f'{len(result["approved_legs"])} '
+                                    f'frame={frames} err={err:.3f}deg '
+                                    f'best={best_motion_error_deg:.3f}deg '
+                                    f'settle={settle}/15 '
+                                    f'observed={list(observed)} '
+                                    f'command={list(values)}',
+                                    flush=True,
+                                )
+                                last_progress_report=now
                             if settle>=15 and max_change>=0.20:
                                 result["approved_legs"][-1]["settled"]=True
                                 result["approved_legs"][-1]["final_error_deg"]=err
@@ -380,6 +565,10 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
         if qemu.poll() is None: qemu.terminate()
         try: qemu.wait(timeout=3)
         except subprocess.TimeoutExpired: qemu.kill()
+        if not result["passed"] and result.get("firmware_runtime_diagnostics"):
+            snapshots=result["firmware_runtime_diagnostics"]
+            print("[Stage5] ARM control trace on failure:",
+                  json.dumps(snapshots,ensure_ascii=False),flush=True)
         (output_dir/"result.json").write_text(
             json.dumps(result,indent=2),encoding="utf-8")
     return result

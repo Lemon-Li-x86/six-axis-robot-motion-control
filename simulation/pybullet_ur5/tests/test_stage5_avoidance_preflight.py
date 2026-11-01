@@ -91,6 +91,27 @@ class RealCJointRoutePreflightTests(unittest.TestCase):
                             for x in result["segment_duration_s"]))
         self.assert_unmodified()
 
+    def test_auto_bypass_clear_route_uses_c_capacity_without_fake_via(self):
+        distant = self.box([5, 5, 5], [0.05]*3)
+        route = preflight_joint_avoidance(
+            LIBRARY, p, self.robot, [distant], self.joints, self.ee,
+            self.goal,
+            apf_config=Config(1.0, 0.0, 150.0, 5.0, 1.5, 0.1),
+            max_velocity_deg_s=[15.0]*6,
+            max_acceleration_deg_s2=[30.0]*6,
+            max_fk_position_error_mm=0.5,
+            max_fk_rotation_element_error=0.003,
+            waypoint_capacity=16,
+            max_joint_step_rad=0.02,
+            max_collision_samples=1000,
+            physics_client_id=self.client,
+            automatic_bypass=True)
+        self.assertTrue(route["passed"])
+        self.assertTrue(route["automatic_bypass"])
+        self.assertEqual(route["via_points_mm"], [])
+        self.assertEqual(route["bypass_candidates_attempted"], 1)
+        self.assert_unmodified()
+
     def test_point_clearance_is_not_full_link_clearance(self):
         # 5mm Cartesian APF point clearance is separate from a 20mm
         # required robot-body clearance, the original source of false safety.

@@ -60,6 +60,8 @@ Monitor 任务 / GDB / .map / 丢帧 / 故障日志
 
 ## 3. 5.3 性能优化：CPU、RAM/FLASH、优先级与抖动
 
+> **后续复验索引**：本节以下的 2026-11-01 初始单轮 QEMU/Map A/B 属于早期提交。后续新增 **[6组交错重复 CPU/jitter 和更新同提交 ARM map](20_stage5_5_3_repeated_performance_evidence_2026-11-01.md)**；重复测试仍观察到 Control/Trajectory 抖动偶发退化、Monitor 抖动更多退化，不能将原来的“实时性保留项”改成无保留完成。
+
 ### 3.1 代码级优化及单一参数来源
 
 - `Monitor` 每 100ms 运行。原来每周期调用三次 `uxTaskGetStackHighWaterMark` 扫描任务栈；新 JSON `stage5_monitor.stack_watermark_sample_period_ms=1000` 使栈扫描改为每 1000ms 一次，同时仍每 100ms 更新 `monitoring_ticks`。生成器校验它必须是 Monitor 周期整数倍，拒绝非法配置。优化可以独立关闭，Stage4 frozen self-test 默认 OFF。
