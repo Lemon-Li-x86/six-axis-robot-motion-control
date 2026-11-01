@@ -78,3 +78,21 @@
 - **根因 C（集成联调）**：过去 Linux 原生 GUI 双次真实 C APF/UART 回位的 CI，第二次 J6 +2° 固件已 ACK 但停在距 HOLD 约 0.42° 并保持 BUSY；同一末端收敛问题需要受控的真实反馈闭环纠偏，而不是延长 timeout 或放宽误差门禁。
 - **修改**：正常操作按钮无会话成功次数限制；只有 `BUSY`、非 HOLD、FINISH/CANCEL、关节机械限位、全臂离散碰撞或生产 C 回程预检失败会拒绝。每次真实 UART ACK + 物理稳定到位后重新 READY，合法点击无次数耗尽。生产裁决直接要求 `refused==0`、FINISH 事件和所有物理回位完成；独立 checker 的两步验收仅规定前缀 `J6 +0.5°，J6 +2°`，**其后无限合法动作继续计数，且必须 100% 回位**。新增 `native-gui-j6-five-repeat-xvfb` 从同一 QEMU/FreeRTOS/PyBullet 真实循环验证 `[+0.5,+2,+2,+2,+2]` 并核对每次动作及全连杆净距。第二次回位独立新增最多 2 次、有改善且碰撞校验通过的实测端点重规划，原 0.15° 到位标准保持不变。
 - **当前状态**：修改在 PR #35，`main`/Stage4 未更改。**仅在相同 HEAD 的 Windows/Linux、双步和五次连续集成 CI 均 PASS，再完成用户本机五次按钮验收后才关闭**。GUI 回归修复不等于原 PDF 5.2 固件内完整 APF 或 5.3 全部性能优化已经完成。
+
+
+## S5-013（2026-11-01）：静态障碍 APF 原先未在固件规划任务真正运行
+
+- **现象**：历史 Stage5 虽已把 `potential_field.c`、`stage5_apf_joint_path.c` 编入 ARM 固件，完整 APF 路线仍由仿真主机同源码共享库编排，然后按关节航点通过 UART 控制；原 PDF 要求的是“使用 C APF，嵌入嵌入式固件的路径规划模块”，两者不能视为等价。
+- **根因**：现有 `motion_pipeline` 只有 JOINT/POLYNOMIAL/CARTESIAN 三种 FreeRTOS request；`CMD_REQUEST_APF_STEP` 是 ProtocolRX 上直接计算末端下一点的**非驱动预览**，既没有 ARM IK，也没有调入 Trajectory Worker，更没有物理全连杆安全门禁。
+- **修复**：新增事务式 `CMD_REQUEST_APF_JOINT_PROPOSAL=0x05`→`CMD_APF_JOINT_PROPOSAL_RESPONSE=0x88`；ProtocolRX 只处理字节及入队，FreeRTOS Trajectory Task 从实时 `motor_state_get_fresh_feedback` 读取连续关节角，调用生产 C `robot_apf_step` → C FK/IK 解算、最近合法关节选解、FK 残差、梯形速度/加速度检验，打包 UART 真实候选点返回。**规划响应绝不直接驱动电机**。PyBullet 使用真实 UR5 URDF 全连杆扫掠路径预检，批准后才发送原有 `CMD_REQUEST_JOINT_MOVE` 单独执行。无隐式驱动、无越过全连杆门禁。解析失败/浮点非法/不可达/过期反馈均必须失败，不返回旧候选。
+- **实测**：[Actions #41265049762](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41265049762)，工件 `stage5-embedded-arm-apf-verified-physical`。ARM FreeRTOS 实际 APF+IK 候选 1 次、返回 `[3046,-4683,6287,1613,539,-716]` centidegree，PyBullet 采样 5 次全连杆，最小测得净距 40.95 mm，批准后 QEMU C 轨迹/PID 执行，真实关节变化最大 4.38°、15 帧收敛、最终误差 0.07°，新 UART 错帧 0。主机未运行 C APF 共享库替固件决策。
+- **边界与验收**：这是**固件内单步 APF/IK 实际路径调整执行**，**尚非**固件独立完成整条带障碍物的多段自主路线。复杂被阻挡静态障碍整条路线的 4/4 或 28/28 通过仍为主机侧 C APF 编排、ARM 执行；如按 PDF 最严格理解要求“整条路线均固件自主规划”，后者必须另有整路实测才可无保留完成 5.2。
+
+## S5-014（2026-11-01）：FreeRTOS 高耗时监测与链接内存裁剪及实时性测量
+
+- **现象**：原 Monitor 任务每 100ms 都调用三次 `uxTaskGetStackHighWaterMark`，该 FreeRTOS 高水位统计对 StackType_t 栈检查存在随分配栈深度增长的成本。原控制周期抖动 QEMU 测量存在，但没有同编译配置真正优化对比。ARM map 尚有不可达函数和没有引用的全局数据占用 FLASH。
+- **修复**：`robot_defaults.json` 唯一配置 `stage5_monitor.stack_watermark_sample_period_ms=1000`，由生成器验证与 monitor 周期整数倍关系，Monitor 仍每 100ms 监测一次，但每 1000ms 才重新扫描栈高水位。Stage5-only `ROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT` 可关闭以 A/B；同构建增加 `ROBOT_ENABLE_STAGE5_LINK_GC` 对 ARM 函数和数据启用 section 级 `--gc-sections`。Stage4 冻结路径默认 OFF，PID/电机参数不改、任务优先级不在无证据情况下盲调。
+- **CPU/调度 A/B**：在同提交 [Actions #41265306540](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41265306540) 上真实 QEMU/GDB/Timer0 约 4.72s 自测，Monitor CPU **0.07% → 0.04%**、Control **1.09% → 1.06%**、Trajectory **0.19% → 0.18%**。但本次 Control 抖动 P99 **0.01328ms → 0.18532ms**、Trajectory **0.03136 → 0.18788ms**、Monitor **0.02184 → 0.13488ms**，出现退化；另一短时 run 则 Control 抖动改善。说明虚拟 QEMU 时间基准负载波动较大，**不能宣称该优化已经稳定降低控制抖动，不能宣称 WCET 保证**。
+- **ARM .map 同条件 A/B**：同一提交相同编译器/版本/使能特性、仅切换链接 GC，FLASH **105256 → 87384 B**（−17872 B，约 −17.0%），RAM 链接静态占用 **33796 → 33796 B**（无下降）；真实 map 文件、CPU 时序和 JSON 由上述 Actions 工件 `stage5-freeRTOS-cpu-trace` 归档。**RAM 无法说成优化成功**。
+- **IRQ/调度审查**：当前 QEMU MPS2-AN386 NVIC 为 8 priority bits，`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY=0x80`；UART RX/TX ISR、Timer1 ISR 都使用 0x80，满足 FromISR 优先级约束。Control/ProtocolRX/Trajectory 优先级来自 JSON 为 4/3/2，协议解析只入队；重 APF/IK 在低优先级 Trajectory 执行，避免阻塞高优先级 UART RX。调度使用现有 `motion_task_wait_next_period` 对过期激活丢帧而非忙循环。**未有单独 IRQ 0x80 vs 不同 IRQ 配置对照实验，不能写“IRQ 优先级优化使抖动降低”**。
+- **验收限制**：CPU 数据来自短时 QEMU 自测（低负载）、不代表完整 PyBullet 长时高负载，更不是物理 Cortex-M4 芯片绝对实时性担保；需要进一步相同负载多次独立 jitter 对比才可严格签收“降低控制周期抖动”。
