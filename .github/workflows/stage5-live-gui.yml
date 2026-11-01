@@ -274,6 +274,57 @@ jobs:
           test ! -f build/stage5-ci-gui-two-step/worker.log || tail -n 100 build/stage5-ci-gui-two-step/worker.log
           test ! -f build/stage5-ci-gui-two-step/result.json || cat build/stage5-ci-gui-two-step/result.json
 
+  native-gui-j6-five-repeat-xvfb:
+    # Reproduce the operator's 5 GUI clicks: 0.5,2,2,2,2deg.
+    # Former code rejected clicks 4 and 5 after three real returns.
+    # Test all five real QEMU/FreeRTOS UART returns, not only UI counters.
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ARM QEMU, Bullet and virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            qemu-system-arm ninja-build xvfb xauth libgl1-mesa-dri libglx-mesa0
+          python -m pip install numpy pybullet
+      - name: Build ARM FreeRTOS and real C APF joint-route library
+        run: |
+          cmake --preset stage5-live-uart
+          cmake --build --preset stage5-live-uart
+          cmake -S firmware/freertos_demo/tests/avoidance -B build/stage5-repeat-apf -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/stage5-repeat-apf --parallel 2
+          ctest --test-dir build/stage5-repeat-apf --output-on-failure
+      - name: Real native GUI, five verified J6 clicks and firmware recoveries
+        run: |
+          timeout 460s xvfb-run -a -s "-screen 0 1280x800x24" \
+            python simulation/pybullet_ur5/src/stage5_qemu_uart_live_gui.py \
+            --elf build/stage5-live-uart/firmware/freertos_demo/freertos_demo.elf \
+            --scenario six_axis --opengl2 --timeout-s 150 --hold-seconds 310 \
+            --stage5-c-apf-library build/stage5-repeat-apf/libstage5_apf_bridge.so \
+            --stage5-route-case blocked --safe-gui-jog --ci-scripted-safe-jog-repeat \
+            --output-dir build/stage5-ci-gui-five-repeat
+      - name: Fail unless all five movements physically return with no refusals
+        run: |
+          python tools/check_stage5_safe_gui_acceptance.py \
+            build/stage5-ci-gui-five-repeat/result.json --repeat
+      - name: Retain five-click UART/PyBullet evidence including failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-gui-five-repeat-xvfb
+          path: build/stage5-ci-gui-five-repeat/*
+          if-no-files-found: ignore
+      - name: Print failure reasons and last C/UART trace
+        if: failure()
+        run: |
+          test ! -f build/stage5-ci-gui-five-repeat/worker.log || tail -n 100 build/stage5-ci-gui-five-repeat/worker.log
+          test ! -f build/stage5-ci-gui-five-repeat/result.json || cat build/stage5-ci-gui-five-repeat/result.json
+
   native-firmware-regression:
     runs-on: ubuntu-latest
     steps:
