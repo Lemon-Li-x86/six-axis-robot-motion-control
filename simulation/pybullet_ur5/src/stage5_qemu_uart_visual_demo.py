@@ -217,6 +217,38 @@ def assess_clock_alignment(trajectory_samples: int | None,
     return ratio, abs(ratio - 1.0) <= CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR
 
 
+def assess_monitor_clock_window(
+    baseline: tuple[int, int] | None,
+    final_monitor_ticks: int | None,
+    final_target_frames: int,
+    monitor_period_s: float,
+) -> tuple[float | None, bool]:
+    """Compare two *simultaneous* RTOS/physics snapshots, not boot-time ticks.
+
+    Monitoring starts when FreeRTOS boots, several seconds BEFORE the native
+    GUI loads URDF, constructs collision geometry and begins physics. Raw
+    monitoring_ticks/target_frames therefore compares different epochs.
+    A first live UART monitoring sample fixes a common epoch for both clocks;
+    every later tick and feedback frame must still pass the unchanged
+    fraction tolerance. Missing, nonadvancing, or implausible timestamps fail.
+    """
+    if (baseline is None or final_monitor_ticks is None or
+            type(final_monitor_ticks) is not int or
+            not 0 <= final_monitor_ticks <= 0xFFFFFFFF):
+        return None, False
+    start_ticks, start_frames = baseline
+    if (type(start_ticks) is not int or
+            not 0 <= start_ticks <= 0xFFFFFFFF or
+            type(start_frames) is not int or start_frames < 1 or
+            final_target_frames <= start_frames):
+        return None, False
+    elapsed_ticks = (final_monitor_ticks - start_ticks) & 0xFFFFFFFF
+    if not 0 < elapsed_ticks < 0x80000000:
+        return None, False
+    return assess_clock_alignment(
+        elapsed_ticks, final_target_frames - start_frames, monitor_period_s)
+
+
 def configure_physics_stepping(bullet, headless: bool) -> tuple[int, int]:
     """Return (API calls per feedback, warm-up calls).
 
@@ -1025,6 +1057,7 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
     endpoint_rearm_events: list[dict] = []
     trace = deque(maxlen=6000) if options.interactive_hold else []
     diagnostic_values: dict[str, int] = {}
+    first_monitor_clock_sample: tuple[int, int] | None = None
     names = tuple(wire.SIM_MOTION_DIAGNOSTIC_SELECTORS)
     parser = integration.FrameStream()
     firmware_defaults = json.loads(DEFAULT_JSON.read_text(encoding="utf-8"))
@@ -2042,6 +2075,14 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                                     diagnostics_pending)
                                 diagnostic_values[diagnostics_pending] = (
                                     struct.unpack("<I", payload)[0])
+                                if (diagnostics_pending == "monitoring_ticks" and
+                                        first_monitor_clock_sample is None and
+                                        target_frames > 0):
+                                    # Both measurements are observed in this
+                                    # SAME UART callback, after GUI preparation.
+                                    first_monitor_clock_sample = (
+                                        diagnostic_values[diagnostics_pending],
+                                        target_frames)
                                 audit.write(json.dumps(dict(diagnostic=diagnostics_pending,
                                     value=diagnostic_values[diagnostics_pending],
                                     wall_s=time.monotonic()-start_wall)) + "\n")
@@ -2121,16 +2162,25 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
             trajectory_ratio, trajectory_aligned = assess_clock_alignment(
                 diagnostic_values.get("trajectory_samples"), target_frames,
                 trajectory_period_s)
-            monitor_ratio, monitor_aligned = assess_clock_alignment(
+            monitor_ratio, _ = assess_clock_alignment(
                 diagnostic_values.get("monitoring_ticks"), target_frames,
                 monitor_period_s)
-            # A short APF route has a larger fraction of idle/settle time;
-            # Monitor ticks include it, while planner samples do not.
+            monitor_window_ratio, monitor_window_aligned = (
+                assess_monitor_clock_window(
+                    first_monitor_clock_sample,
+                    diagnostic_values.get("monitoring_ticks"),
+                    target_frames, monitor_period_s))
+            # Monitor is a continuously running RTOS task, including during
+            # GUI/URDF/APF preparation before the *first* physics frame.
+            # For APF also cover idle HOLD via the monitor tick counter, but
+            # subtract the live first-sample epoch; never compare raw
+            # power-on lifetime to a shorter PyBullet execution lifetime.
             clock_ratio, clock_aligned = (
                 (trajectory_ratio, trajectory_aligned) if prepare_motion is None
-                else (monitor_ratio, monitor_aligned))
+                else (monitor_window_ratio, monitor_window_aligned))
             clock_reference = (
-                "trajectory_samples" if prepare_motion is None else "monitoring_ticks")
+                "trajectory_samples" if prepare_motion is None
+                else "monitoring_ticks_live_window")
             passed = (
                 clock_aligned
                 and (not options.gui_safe_jog or (
@@ -2185,11 +2235,17 @@ def run(elf: Path, output_dir: Path, qemu_executable: str,
                     diagnostic_values.get("trajectory_samples", 0) * trajectory_period_s, 3),
                 "rtos_trajectory_to_physics_time_ratio": trajectory_ratio,
                 "rtos_monitor_to_physics_time_ratio": monitor_ratio,
+                "rtos_monitor_live_window_ratio": monitor_window_ratio,
+                "rtos_monitor_live_window_baseline": (
+                    list(first_monitor_clock_sample)
+                    if first_monitor_clock_sample is not None else None),
                 "clock_alignment_reference": clock_reference,
                 "clock_alignment_passed": clock_aligned,
                 "clock_alignment_tolerance_fraction": CLOCK_ALIGNMENT_MAX_RELATIVE_ERROR,
-                "clock_alignment_note": "Planning task sample count times configured period; "
-                                        "not a hardware-tick precision measurement",
+                "clock_alignment_note": (
+                    "Planning samples and live-epoch monitoring deltas are "
+                    "compared against physically advanced UART feedback frames; "
+                    "raw RTOS monitor lifetime since boot is diagnostic only."),
                 "pybullet_step_calls_per_feedback": step_calls_per_feedback,
                 "internal_substeps_per_feedback": SIMULATED_STEPS_PER_TARGET,
                 "target_frames": target_frames,
