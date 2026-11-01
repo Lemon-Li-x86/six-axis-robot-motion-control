@@ -32,6 +32,31 @@ from stage4_dynamic_closed_loop import (  # noqa: E402
 from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
+def describe_joint_tracking(candidate_raw, observed_raw, commanded_raw) -> dict:
+    """Read-only centidegree diagnostics; never used for safety decisions."""
+    if any(len(seq) != wire.JOINT_COUNT for seq in
+           (candidate_raw, observed_raw, commanded_raw)):
+        raise ValueError("tracking diagnostics require six joint samples")
+    scale = wire.JOINT_ANGLE_SCALE
+    return {
+        "candidate_target_raw": list(candidate_raw),
+        "last_physical_feedback_raw": list(observed_raw),
+        "last_firmware_command_raw": list(commanded_raw),
+        "feedback_minus_candidate_deg": [
+            round((actual - target) / scale, 4)
+            for actual, target in zip(observed_raw, candidate_raw)
+        ],
+        "feedback_minus_command_deg": [
+            round((actual - command) / scale, 4)
+            for actual, command in zip(observed_raw, commanded_raw)
+        ],
+        "firmware_command_minus_candidate_deg": [
+            round((command - target) / scale, 4)
+            for command, target in zip(commanded_raw, candidate_raw)
+        ],
+    }
+
+
 def require_runtime_full_link_clearance(
     bullet, robot: int, obstacle: int, clearance_m: float, client: int,
 ) -> int:
@@ -171,6 +196,10 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
             settle=0
             max_change=0.0
             frames=0
+            current_motion_start_frame=0
+            best_motion_error_deg=math.inf
+            within_tolerance_frames=0
+            last_progress_report=time.monotonic()
             last_feedback=start
             # Startup transaction: the ARM firmware must ACK real feedback
             # before it may read FK and issue its on-device proposal.
@@ -298,6 +327,9 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                         result["joint_motion_acks"]+=1
                         result["approved_legs"][-1]["ack"]=True
                         move_ack=status
+                        current_motion_start_frame=frames
+                        best_motion_error_deg=math.inf
+                        within_tolerance_frames=0
                     elif command==wire.CMD_SET_JOINT_TARGETS and len(payload)==12:
                         values=struct.unpack("<6h",payload)
                         frames+=1
@@ -329,6 +361,33 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                             err=max(abs(a-b)/100
                                     for a,b in zip(observed,candidate))
                             settle=settle+1 if err<=0.15 else 0
+                            best_motion_error_deg=min(best_motion_error_deg, err)
+                            if err<=0.15:
+                                within_tolerance_frames+=1
+                            diagnostics=describe_joint_tracking(
+                                candidate, observed, values)
+                            diagnostics.update(
+                                leg_number=len(result["approved_legs"]),
+                                frames_since_ack=frames-current_motion_start_frame,
+                                last_max_error_deg=round(err,4),
+                                best_max_error_deg=round(best_motion_error_deg,4),
+                                within_tolerance_frames=within_tolerance_frames,
+                                consecutive_settle_frames=settle,
+                            )
+                            result["last_motion_diagnostics"]=diagnostics
+                            now=time.monotonic()
+                            if now-last_progress_report>=15.0:
+                                print(
+                                    "[Stage5 APF] leg="
+                                    f'{len(result["approved_legs"])} '
+                                    f'frame={frames} err={err:.3f}deg '
+                                    f'best={best_motion_error_deg:.3f}deg '
+                                    f'settle={settle}/15 '
+                                    f'observed={list(observed)} '
+                                    f'command={list(values)}',
+                                    flush=True,
+                                )
+                                last_progress_report=now
                             if settle>=15 and max_change>=0.20:
                                 result["approved_legs"][-1]["settled"]=True
                                 result["approved_legs"][-1]["final_error_deg"]=err
