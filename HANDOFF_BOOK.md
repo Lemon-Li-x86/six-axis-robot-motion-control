@@ -4,6 +4,8 @@
 >
 > 最新操作入口：[README](README.md) · [Stage5 Windows 操作员验收](docs/part5/18_stage5_windows_final_two_step_acceptance.md) · [Stage5 原始要求审计](docs/part5/19_stage5_original_requirements_evidence_review_2026-11-01.md) · [参数登记簿](docs/part5/01_parameter_register.md) · [Stage5 Issue Log](docs/part5/02_integration_issue_log.md)。
 
+> **场景变更（2026-11-01，注意历史数值已过期）**：当前 `simulation/pybullet_ur5/scenarios/stage5_static_obstacles.json` 的 `blocked` 障碍物从 2cm 边长放大到 **4cm**（`half_extents_m=[0.02,0.02,0.02]`）。历史 2cm 场景的 **28/28** 是旧提交证据，不是新的固定段数。[首次4cm ARM C APF 完整路线测试](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41311516679) 实际 **30段**、`route_complete=true` 且全连杆门禁通过；该旧CI有测试曾写死2cm而失败，相关测试已按场景 JSON 调整。短程 C APF 诊断应从配置的第一段 `via` 开始，而非绕过场景定义直接朝最后终点规划；若未通过安全门禁必须拒绝动作。后续同提交跨平台完整 CI 状态需重新核查。保留原来的真实物理日志，不修改 PID、APF安全净距或固件限位。
+
 ## 0. 给接手者的十条硬约束
 
 1. **先检查仓库状态，后提修改方案。** 读取本书与 README，获取当前目标分支 `git rev-parse HEAD`、`git status --short`、PR 变更与该提交的 CI；不从聊天记忆猜代码状态。
@@ -36,7 +38,7 @@
 | [Stage5 CI：5dcec15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41305051218) | **completed / success** | 这是 README 更新后、创建本书前的 CI 记录 |
 | [Native firmware CI：5dcec15](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41305055339) | **completed / success** | 与同 SHA 对齐 |
 | [Stage5 控制修复 CI：23d1faa](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/actions/runs/41299105613) | **13/13 Jobs PASS** | 已含 Linux/Windows 集成、UART/ARM APF、GUI 回归 |
-| Windows 本机最终验收 | **尚未在当前控制修复提交取得新的完整 PASS 记录** | 需要用户本机 28 段 + 人工 GUI 五次连续回位 |
+| Windows 本机最终验收 | **尚未在当前控制修复提交取得新的完整 PASS 记录** | 需要用户本机按当前 JSON 动态规划完整路线（现4cm CI为30段）+ 人工 GUI 五次连续回位 |
 | [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) | 2026-11-01 检索时仍 **open** | 旧 `six_axis` 首段不收敛历史 Issue；现有 CI 修复成功≠Issue 管理状态已关闭 |
 | Stage6 | 尚未实现/验收最终搬运作业 | 不要把 Stage5 全绿等同整个项目完工 |
 
@@ -164,7 +166,7 @@ six-axis-robot-motion-control/
 │   ├── generate_firmware_defaults.py          [B] JSON → C 默认配置
 │   ├── test_stage4_once.ps1                   [B] 历史阶段回归入口
 │   ├── test_stage4_closure.ps1                [B] Stage4 综合回归
-│   ├── run_stage5_embedded_apf_windows.ps1    [M] ARM APF 28 段本机验收
+│   ├── run_stage5_embedded_apf_windows.ps1    [M] ARM APF 整路本机验收（段数由场景决定）
 │   ├── run_stage5_live_windows.ps1            [M] GUI 人工点动验收
 │   ├── run_stage5_controlled_recovery_windows.ps1 [S5] 受控恢复
 │   ├── resolve_stage5_python.ps1              [+] 既有解释器检查
@@ -212,7 +214,7 @@ GUI/静态场景 → 宿主同源 C APF/IK 候选
              → 人工 SAFE JOG → 独立安全批准及真实 C/UART 回位
 ```
 
-### 路径 B：固件内 C APF 完整 28 段路线
+### 路径 B：固件内 C APF 完整路线（旧2cm 28段，新4cm 30段）
 
 ```text
 PyBullet 当前真实六轴反馈 + 静态 AABB / 目标
@@ -254,7 +256,7 @@ PyBullet 当前真实六轴反馈 + 静态 AABB / 目标
 
 ### 4.2 保留项（不要涂绿）
 
-- Windows 本机**人工**原生 GUI：先完成真实 ARM 28 段，然后原始主机 APF 4/4、J6 `+0.5°`、`+2.0°`、另外至少三次合法点动（总计至少五次），每次等待 `RETURN COMPLETE`，最终点击 `SAFE JOG FINISH/EXIT`；记录实际点击数、`safe_gui_jog_refused=0`、物理收敛、零故障。此项目**暂未在当前版本完成**。
+- Windows 本机**人工**原生 GUI：先完成当前场景对应的真实 ARM 整路（4cm场景实测30段），然后原始主机 APF 4/4、J6 `+0.5°`、`+2.0°`、另外至少三次合法点动（总计至少五次），每次等待 `RETURN COMPLETE`，最终点击 `SAFE JOG FINISH/EXIT`；记录实际点击数、`safe_gui_jog_refused=0`、物理收敛、零故障。此项目**暂未在当前版本完成**。
 - Stage5 原 5.3 的“稳定降低控制周期 jitter”：多轮 QEMU 短窗口 A/B 有改善也有退化，尚无同负载可重复的长期改善证据、实体 WCET 或硬件保证。FLASH 基线 `105256 → 87384 B`、RAM `33796 → 33796 B`，仅可如实说明这些指标。
 - [Issue #34](https://github.com/Lemon-Li-x86/six-axis-robot-motion-control/issues/34) 仍 open；后续若关闭，应附同 SHA 可复现测试/证据，不要凭一次成功自动关闭。
 - **Stage6** 尚未实现：虚拟抓取/放置、原点→抓取→避障→放置→返回、多场景故障、长时运行、交付归档。接口要求见 [Stage6 设计契约](docs/part6/00_stage6_interface_and_acceptance_contract.md)。
@@ -289,7 +291,7 @@ $packages = 'D:\1_ToGo\Robo\code\six-axis-robot-motion-control\.venv\Lib\site-pa
 & $py311 .\tools\stage5_existing_python.py --site-packages $packages --probe
 if ($LASTEXITCODE -ne 0) { throw 'Existing PyBullet / NumPy import FAIL' }
 
-# 第一关：真正 ARM Cortex-M4/FreeRTOS 中 C APF/IK 的完整 28 段
+# 第一关：真正 ARM Cortex-M4/FreeRTOS 中 C APF/IK 的完整场景路线
 powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_embedded_apf_windows.ps1 `
   -Python $py311 -ExistingSitePackages $packages `
   -Qemu qemu-system-arm -TimeoutSeconds 300 `
@@ -309,7 +311,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 
 ### 5.3 成功判据与故障证据
 
-- `run_stage5_embedded_apf_windows.ps1`：`result.json` 必须 `passed=true`、`route_complete=true`、已批准航段均真实 ACK + 物理到位、`full_link_safe=true`、`joint_motion_submitted_only_after_gate=true`、`uart_checksum_errors=0`、`runtime_full_link_queries >= 7*joint_motion_acks`。该已知场景的已验证完整基线为 28 段。
+- `run_stage5_embedded_apf_windows.ps1`：`result.json` 必须 `passed=true`、`route_complete=true`、已批准航段均真实 ACK + 物理到位、`full_link_safe=true`、`joint_motion_submitted_only_after_gate=true`、`uart_checksum_errors=0`、`runtime_full_link_queries >= 7*joint_motion_acks`。旧2cm场景历史验收为28段；最新4cm场景已在Linux CI完成30段，实际段数随规划结果变化。
 - `run_stage5_live_windows.ps1`：必须人工看见原始 4/4 航点完成、按钮 READY、每次独立回位与最终 FINISH；拒绝/未完成的任何一次点动不能获得 PASS。已配置的默认连续稳定收敛判据为 0.15°、15 个反馈帧。
 - 失败优先收集：`build/<output>/result.json`、`worker.log`、`worker_exit.json`（如有）、`joint_trace.csv`、`uart_live.jsonl`、`qemu_stderr.log` 和程序终端输出。不能只报告“exit 1”。
 - GUI 有 **真实操作** 和 CI 下 **自动脚本点击** 两种不同验证，不得互相冒充。既有脚本可能在 PASS 后生成 ZIP，失败时不能把旧 ZIP 当作新结果。
@@ -335,7 +337,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\run_stage5_live_windows.ps1 `
 
 1. 等当前文档提交对应 GitHub CI 完成，核对是否同提交全绿；记录具体 SHA/Actions URL。
 2. 让 Windows `stage5-acceptance` 安全同步到目标工作分支，**复用已存在的 Python 3.11 与旧 site-packages**；不移动用户虚拟环境。
-3. 使用 `run_stage5_embedded_apf_windows.ps1` 完整验证 ARM 内真实 C APF 28 段，检查 `result.json` 和全连杆门禁。
+3. 使用 `run_stage5_embedded_apf_windows.ps1` 完整验证 ARM 内真实 C APF 当前场景全部路段，检查 `result.json` 和全连杆门禁。
 4. 仅在上述通过后，用 `run_stage5_live_windows.ps1` 进行一次原生 GUI **至少五次合法点动**，依次 J6 +0.5°、+2°、再三次，逐次回位后 FINISH；若 FAIL，保存工件，停止无依据的下一步。
 5. 本机 PASS 后更新 Stage5 Issue Log、验收文档、README、本书的 SHA 与签收状态；才考虑 PR #37 是否满足解除 Draft 的条件。需另审控制抖动目标和性能保留项。
 6. Stage6 后续应从 [接口约束](docs/part6/00_stage6_interface_and_acceptance_contract.md) 构建搬运任务状态机；绝不可新写 PID/IK/APF 复制件或把 GUI 当硬件控制层。
