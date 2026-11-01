@@ -329,7 +329,9 @@ class GuardedJogTests(unittest.TestCase):
                 self.assertTrue(ctl.available)
                 self.assertEqual(ctl.completed, cycle+1)
         p.click(ctl.buttons[-1])
-        ctl(p, 0, range(6), 10, True, False)
+        with patch("stage5_safe_gui_jog.validate_joint_path",
+                   return_value=safe_gate()):
+            ctl(p, 0, range(6), 10, True, False)
         self.assertEqual(ctl.applied, 8)
         ctl.complete_recovery()
         self.assertTrue(ctl.available)
