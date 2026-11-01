@@ -50,7 +50,12 @@ static void task_monitor(void *arg)
             r->diagnostics.monitor_stack_free_words=monitor_free;
         }
         taskEXIT_CRITICAL();
-#if ROBOT_ENABLE_STAGE5_CPU_TRACE
+#if ROBOT_ENABLE_STAGE5_CPU_TRACE && !ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
+        /* Production diagnostics may refresh the published task report.
+         * In QEMU timing A/B self-tests, the test task captures CPU and
+         * jitter at the SAME healthy-window boundary, exactly once.
+         * Periodic snapshots inside the timed Monitor loop would add
+         * probe-induced overhead (task names + 64-bit divisions). */
         stage5_cpu_trace_snapshot();
 #endif
 #if ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST
