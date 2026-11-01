@@ -46,15 +46,15 @@ jobs:
         run: |
           python -m unittest discover -s tools/tests -p 'test_stage5_task_timing.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_perf_repeats.py' -v
-      - name: Build exact-commit baseline - every 100ms monitor stack scan
+      - name: Build exact-commit 5s healthy baseline - every 100ms monitor stack scan
         run: |
-          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=OFF
+          cmake -S . -B build/stage5-cpu-trace -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=5000 -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=OFF
           cmake --build build/stage5-cpu-trace --target freertos_demo
       - name: GDB capture same-commit unoptimized CPU/stack and Timer0 jitter
         run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-trace/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-trace/observed
-      - name: Build optimized FreeRTOS Monitor with JSON-owned stack-scan cadence
+      - name: Build exact-commit 5s healthy optimized Monitor with JSON-owned stack-scan cadence
         run: |
-          cmake -S . -B build/stage5-cpu-optimized -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON
+          cmake -S . -B build/stage5-cpu-optimized -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi-gcc.cmake -DROBOT_ENABLE_STAGE4_TASKS=ON -DROBOT_ENABLE_STAGE4_COMMAND_OUTPUT=OFF -DROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST=ON -DROBOT_STAGE4_QEMU_HEALTHY_RUN_MS=5000 -DROBOT_ENABLE_STAGE5_CPU_TRACE=ON -DROBOT_ENABLE_STAGE5_MONITOR_STACK_OPT=ON
           cmake --build build/stage5-cpu-optimized --target freertos_demo
       - name: GDB capture optimized CPU/stack and Timer0 jitter
         run: bash tools/ci_stage5_cpu_trace_qemu.sh build/stage5-cpu-optimized/firmware/freertos_demo/freertos_demo.elf build/stage5-cpu-optimized/observed
