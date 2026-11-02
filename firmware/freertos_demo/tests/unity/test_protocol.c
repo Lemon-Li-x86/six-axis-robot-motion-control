@@ -1,16 +1,6 @@
-/*
- * 文件：test_protocol.c
- *
- * 用途：
- * 使用 Unity 验证 Protocol 模块的：
- *
- * 1. 正常 Frame 解析；
- * 2. Checksum 异常恢复；
- * 3. Payload Length 边界；
- * 4. Runtime Parameter 解析；
- * 5. Parameter ACK 构造；
- * 6. Diagnostics 请求；
- * 7. Signed Joint State 编解码。
+/**
+ * @file test_protocol.c
+ * @brief 回归测试或夹具：test protocol。
  */
 
 #include <stdint.h>
@@ -21,10 +11,7 @@
 #include "robot_types.h"
 #include "error_code.h"
 
-
-/* =========================================================
- * Test Helpers
- * ========================================================= */
+/* Test Helpers */
 
 /**
  * @brief 计算完整测试 Frame 的 Protocol Checksum。
@@ -65,7 +52,6 @@ static uint8_t calculate_checksum(
 
     return checksum;
 }
-
 
 /**
  * @brief 将完整 Byte Stream 逐字节送入 Protocol Parser。
@@ -140,10 +126,7 @@ void test_protocol_parser_expires_partial_frame(void)
     TEST_ASSERT_EQUAL(CMD_SET_JOINT_TARGETS, output.command);
 }
 
-
-/* =========================================================
- * Parser Tests
- * ========================================================= */
+/* Parser Tests */
 
 /**
  * @brief 验证 Parser 可以接受合法完整 Frame。
@@ -207,7 +190,6 @@ void test_protocol_parser_accepts_valid_frame(void)
         output.length
     );
 }
-
 
 /**
  * @brief 验证错误 Checksum 被拒绝，
@@ -296,7 +278,6 @@ void test_protocol_parser_rejects_bad_checksum_and_recovers(void)
     );
 }
 
-
 /**
  * @brief 验证超长 Payload 被拒绝，
  *        且 Parser 可以重新同步。
@@ -379,10 +360,7 @@ void test_protocol_parser_rejects_oversized_payload_and_recovers(void)
     );
 }
 
-
-/* =========================================================
- * Parameter Tests
- * ========================================================= */
+/* Parameter Tests */
 
 /**
  * @brief 验证 SET_PARAMETER Payload 的 Little Endian 解析。
@@ -434,7 +412,6 @@ void test_protocol_parse_set_parameter(void)
     );
 }
 
-
 /**
  * @brief 验证 SET_PARAMETER 非法 Payload Length 被拒绝。
  */
@@ -462,7 +439,6 @@ void test_protocol_parse_set_parameter_rejects_invalid_length(void)
         )
     );
 }
-
 
 /**
  * @brief 验证 PARAMETER_ACK Frame 构造结果。
@@ -553,10 +529,7 @@ void test_protocol_build_parameter_ack(void)
     );
 }
 
-
-/* =========================================================
- * Diagnostics Tests
- * ========================================================= */
+/* Diagnostics Tests */
 
 /**
  * @brief 验证空 Diagnostics Payload
@@ -586,10 +559,7 @@ void test_protocol_parse_diagnostics_default_selector(void)
     );
 }
 
-
-/* =========================================================
- * Joint State Tests
- * ========================================================= */
+/* Joint State Tests */
 
 /**
  * @brief 验证带符号 int16_t 关节角

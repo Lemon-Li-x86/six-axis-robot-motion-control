@@ -1,7 +1,6 @@
-/*
- * Pure Stage4 joint command gate tests.
- * Acceleration cap uses unquantized internal velocity; the integer
- * driver boundary is deliberately checked independently.
+/**
+ * @file command_limiter_test_main.c
+ * @brief 回归测试或夹具：command limiter。
  */
 #include <math.h>
 #include <stdio.h>

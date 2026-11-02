@@ -1,6 +1,6 @@
-/*
- * Native end-to-end Cartesian point conversion against production
- * Classic UR5 FK / IK and the same motion selector as QEMU.
+/**
+ * @file cartesian_ik_test_main.c
+ * @brief 回归测试或夹具：cartesian ik。
  */
 #include <stdio.h>
 #include "cartesian_trajectory.h"

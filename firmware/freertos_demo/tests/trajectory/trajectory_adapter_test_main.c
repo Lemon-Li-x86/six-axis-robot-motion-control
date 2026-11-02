@@ -1,6 +1,6 @@
-/*
- * Integration-only host test: existing model limits + IK result -> stage 4.
- * Uses the production model, motion limits and trajectory implementations.
+/**
+ * @file trajectory_adapter_test_main.c
+ * @brief 回归测试或夹具：trajectory adapter。
  */
 #include <stdio.h>
 #include "trajectory_request_adapter.h"
