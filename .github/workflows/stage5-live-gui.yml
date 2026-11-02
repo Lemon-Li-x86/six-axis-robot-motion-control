@@ -80,6 +80,7 @@ jobs:
           python -m unittest discover -s tools/tests -p 'test_stage5_embedded_apf_runtime.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_auto_bypass_selection.py' -v
           python -m unittest discover -s tools/tests -p 'test_readme_links.py' -v
+          python -m unittest discover -s tools/tests -p 'test_repository_architecture.py' -v
           python -m unittest discover -s tools/tests -p 'test_stage5_existing_python.py' -v
 
   genuine-qemu-uart-live-observer:
