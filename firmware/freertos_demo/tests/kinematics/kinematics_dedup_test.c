@@ -1,19 +1,6 @@
-
-/*
- * 文件：kinematics_dedup_test.c
- *
- * 用途：
- * 验证 IK Solution 去重机制。
- *
- * 设计原则：
- *
- * 去重属于 Solution Container 行为。
- *
- * 因此本测试不依赖 Analytic IK
- * 在近奇异位置计算出固定数量的解。
- *
- * 这样可以单独判断：
- * 去重机制是否正确。
+/**
+ * @file kinematics_dedup_test.c
+ * @brief 回归测试或夹具：kinematics dedup。
  */
 
 #include <stddef.h>
@@ -27,10 +14,7 @@
  */
 #include "kinematics_private.h"
 
-
-/* =========================================================
- * Joint Comparison
- * ========================================================= */
+/* Joint Comparison */
 
 /**
  * @brief 比较两组量化后的关节角。
@@ -63,10 +47,7 @@ static uint8_t joint_angles_equal(
     return 1U;
 }
 
-
-/* =========================================================
- * Deduplication Test
- * ========================================================= */
+/* Deduplication Test */
 
 robot_status_t kinematics_dedup_test_run(void)
 {

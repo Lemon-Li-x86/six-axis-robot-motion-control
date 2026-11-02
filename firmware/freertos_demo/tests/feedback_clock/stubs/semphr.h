@@ -1,3 +1,8 @@
+/**
+ * @file semphr.h
+ * @brief 测试共享声明/夹具：semphr。
+ */
+
 #ifndef TEST_SEMPHR_H
 #define TEST_SEMPHR_H
 #include <stdint.h>

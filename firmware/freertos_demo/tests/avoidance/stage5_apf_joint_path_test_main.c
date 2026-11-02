@@ -1,3 +1,8 @@
+/**
+ * @file stage5_apf_joint_path_test_main.c
+ * @brief 回归测试或夹具：stage5 apf joint path。
+ */
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>

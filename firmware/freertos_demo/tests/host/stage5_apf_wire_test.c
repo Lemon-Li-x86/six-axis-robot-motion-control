@@ -1,5 +1,7 @@
-/* QEMU-only embedded APF preview contract. No motor command or actuation.
- * C protocol.h is authoritative, not a Python redefinition of wire bits. */
+/**
+ * @file stage5_apf_wire_test.c
+ * @brief 回归测试或夹具：stage5 apf wire。
+ */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
