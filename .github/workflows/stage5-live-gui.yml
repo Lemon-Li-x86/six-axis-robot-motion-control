@@ -3,6 +3,7 @@ name: Stage5 live QEMU PyBullet observer
 on:
   push:
     branches:
+      - main
       - feat/stage5-live-qemu-pybullet-gui-20261027
       - fix/stage5-native-pybullet-interaction-20261027
       - fix/stage5-qmp-physics-clock-gate-20261028
