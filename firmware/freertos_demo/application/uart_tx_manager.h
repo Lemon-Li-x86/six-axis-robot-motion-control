@@ -1,15 +1,6 @@
-/*
- * 文件：uart_tx_manager.h
- *
- * 用途：
- * 定义 UART 完整协议帧的任务级串行发送接口。
- *
- * UART Driver 本身保持与 FreeRTOS 解耦。
- *
- * 多个 FreeRTOS Task 如果需要发送完整协议帧，
- * 应通过本模块发送，
- * 避免多个 Task 同时调用 UART Driver
- * 导致协议帧字节交叉。
+/**
+ * @file uart_tx_manager.h
+ * @brief 串口帧发送接口。
  */
 
 #ifndef UART_TX_MANAGER_H
@@ -18,7 +9,6 @@
 #include <stdint.h>
 
 #include "error_code.h"
-
 
 /**
  * @brief 初始化 UART TX Manager。
@@ -34,7 +24,6 @@
  * Mutex 创建失败。
  */
 robot_status_t uart_tx_manager_init(void);
-
 
 /**
  * @brief 原子地发送一整个 UART 协议帧。
@@ -76,6 +65,5 @@ robot_status_t uart_tx_manager_send_frame(
     const uint8_t *data,
     uint32_t length
 );
-
 
 #endif

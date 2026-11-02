@@ -1,8 +1,6 @@
-/*
- * Stage 4 periodic feedback/PID consumer.
- * Motor access is ONLY through the existing synchronized motor_state API.
- * No command is emitted before request + fresh feedback. Output is gated
- * separately by ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT (default OFF).
+/**
+ * @file control_task.c
+ * @brief FreeRTOS 控制任务、PID 和限幅驱动流程。
  */
 #include <stddef.h>
 #include <stdint.h>

@@ -1,4 +1,7 @@
-/* Private FreeRTOS task bindings for Stage 4. */
+/**
+ * @file motion_tasks_internal.h
+ * @brief 运动任务共享的内部状态/队列契约。
+ */
 #ifndef ROBOT_MOTION_TASKS_INTERNAL_H
 #define ROBOT_MOTION_TASKS_INTERNAL_H
 #include "FreeRTOS.h"
