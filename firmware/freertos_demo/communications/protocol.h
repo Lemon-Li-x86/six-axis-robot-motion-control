@@ -20,11 +20,11 @@
 
 #define CMD_SET_JOINT_TARGETS        0x01U
 #define CMD_SET_PARAMETER            0x02U
-/* PyBullet -> firmware: command admission, NOT an actuator target. */
+/* PyBullet -> 固件：关节运动请求，需单独完成轨迹与执行校验。 */
 #define CMD_REQUEST_JOINT_MOVE       0x03U
-/* QEMU simulation ONLY: non-actuating embedded C APF preview. */
+/* QEMU 仿真：固件计算 APF 航点预览。 */
 #define CMD_REQUEST_APF_STEP         0x04U
-/* ARM FreeRTOS Trajectory task computes C APF/IK proposal (never actuates). */
+/* ARM Trajectory Task 计算 APF/IK 提案；运动指令另行发送。 */
 #define CMD_REQUEST_APF_JOINT_PROPOSAL 0x05U
 
 #define CMD_JOINT_STATE              0x81U
@@ -62,7 +62,7 @@
 #define PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN (2U + 1U + 1U + PROTOCOL_APF_STEP_RESPONSE_PAYLOAD_LEN + 1U)
 /* sequence | int8 status | xyz (3 little-endian f32 mm) |
  * six canonical int16 centidegrees | reached (u8).
- * A successful proposal is informational, NOT motion approval.
+ * 提案返回规划信息，运动授权使用独立请求。
  */
 #define PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN (2U + 3U*4U + ROBOT_JOINT_COUNT*2U + 1U)
 #define PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN (2U+1U+1U+PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN+1U)
@@ -484,7 +484,7 @@ robot_status_t protocol_parse_apf_step_request(
 
 /* Reply carries absolute base-link EE coordinates in millimetres,
  * not permission for motion. On failure coordinates are all zero.
- * The actual servo target is NEVER modified by this API. */
+ * 此 API 不更新电机目标位置。 */
 robot_status_t protocol_build_apf_step_response(
     uint8_t sequence, robot_status_t status,
     const float next_mm[3],

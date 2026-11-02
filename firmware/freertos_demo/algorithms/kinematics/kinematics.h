@@ -11,17 +11,7 @@
 #include "robot_types.h"
 #include "error_code.h"
 
-/*
- * UR5 Analytic IK：
- *
- * Shoulder × Wrist × Elbow
- *
- * 2 × 2 × 2
- *
- * =
- *
- * 8。
- */
+/* UR5 解析 IK：Shoulder × Wrist × Elbow = 2 × 2 × 2 分支。 */
 #define KINEMATICS_MAX_IK_SOLUTIONS 8U
 
 /**
@@ -126,34 +116,19 @@ robot_status_t kinematics_inverse(
     kinematics_ik_solutions_t *solutions
 );
 
-/*
- * Numerical acceptance gate for the optional reference-conditioned IK
- * branch recovery. These are the authoritative IK pose-validation limits.
- * The Stage4 simulation defaults may initialize their independent runtime
- * gate from these values, but applications may demand STRICTER limits.
- */
+/* 解析 IK 姿态残差上限；应用层可采用更严格的容差。 */
 #define KINEMATICS_IK_MAX_POSITION_RESIDUAL_MM 0.5F
 #define KINEMATICS_IK_MAX_ROTATION_ELEMENT_RESIDUAL 0.003F
 
 /**
- * @brief Analytic IK with an optional near-wrist-singularity reference.
+ * @brief 使用邻近关节参考解恢复部分近腕奇异 IK 分支。
+ * @param[in] transform 目标 base->ee 变换，平移单位 mm。
+ * @param[in] reference 邻近连续测量/指令对应的规范角，0.01°。
+ * @param[out] solutions 合法的量化候选解。
+ * @return 与 kinematics_inverse 相同的状态码。
  *
- * Identical to kinematics_inverse outside the explicitly conditioned
- * neighborhood. When a shoulder/wrist branch matches reference and the
- * q6 angle recovery is ill-conditioned, a close reference q6 may be
- * substituted BEFORE q3/p13 evaluation. Each substituted candidate
- * must also pass a production FK pose-residual check after quantization.
- *
- * The reference is a nearby measured/commanded canonical joint pose,
- * never an assumed hidden "ground truth" for the requested Cartesian
- * pose. Unrelated shoulder/wrist branches are never seeded.
- *
- * An exactly singular wrist is still reported as singular by the underlying
- * branch solver; this API does NOT bypass the selector's hard-singularity,
- * joint-limit or velocity checks, and never guarantees eight solutions.
- *
- * @param reference Canonical [-180°,180°) joint reference, centidegrees.
- * @return Same status semantics as kinematics_inverse.
+ * @note 参考关节角仅参与相匹配分支的 q6 恢复，候选解经过 FK
+ *       残差校验；精确奇异仍由底层求解器报告。
  */
 robot_status_t kinematics_inverse_with_reference(
     const robot_transform_t *transform,
@@ -161,17 +136,13 @@ robot_status_t kinematics_inverse_with_reference(
     kinematics_ik_solutions_t *solutions);
 
 /**
- * Compare two public base->ee transforms with explicit independent limits.
- * Translation residual is Euclidean distance in mm; rotation residual is
- * maximum absolute 3x3 matrix-element difference (NOT angular radians).
- *
- * Pure calculation; no FK, IK, allocation, motor state or FreeRTOS.
- * Always rejects nonfinite inputs and non-positive/nonfinite thresholds.
- * Caller supplies possibly stricter application limits, never a second
- * hardcoded algorithm tolerance.
- *
- * Returns OK for passing pose; OUT_OF_RANGE for failed residual;
- * INVALID_ARGUMENT for malformed numeric inputs; NULL_POINTER if needed.
+ * @brief 比较两个 base->ee 变换的位置和旋转残差。
+ * @param[in] actual 实际变换。
+ * @param[in] requested 目标变换。
+ * @param[in] maximum_position_error_mm 欧氏位置误差上限，mm。
+ * @param[in] maximum_rotation_element_error 3×3 旋转矩阵最大元素差上限。
+ * @return OK 表示达标；OUT_OF_RANGE 表示超差；
+ *         INVALID_ARGUMENT 表示非有限输入或无效容差。
  */
 robot_status_t kinematics_pose_within_tolerance(
     const robot_transform_t *actual,
