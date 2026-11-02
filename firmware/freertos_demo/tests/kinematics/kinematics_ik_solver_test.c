@@ -1,18 +1,6 @@
-/*
- * 文件：kinematics_ik_solver_test.c
- *
- * 用途：
- * 验证 UR5 Analytic IK 各阶段数学求解器。
- *
- * 当前覆盖：
- *
- * q1
- * q5
- * q6
- * q3
- * q2
- * q4
- * Wrist Singularity
+/**
+ * @file kinematics_ik_solver_test.c
+ * @brief 回归测试或夹具：kinematics ik solver。
  */
 
 #include "kinematics_ik_solver_test.h"
@@ -21,10 +9,7 @@
 #include "kinematics_internal.h"
 #include "kinematics_test_support.h"
 
-
-/* =========================================================
- * Known Expected Angles
- * ========================================================= */
+/* Known Expected Angles */
 
 #define KINEMATICS_TEST_Q1_ZERO_BRANCH_A_RAD \
     (-2.8760488F)
@@ -32,17 +17,14 @@
 #define KINEMATICS_TEST_Q1_ZERO_BRANCH_B_RAD \
     0.0F
 
-
 #define KINEMATICS_TEST_Q1_60_BRANCH_A_RAD \
     (-1.8288512F)
 
 #define KINEMATICS_TEST_Q1_60_BRANCH_B_RAD \
     1.0471976F
 
-
 #define KINEMATICS_TEST_Q1_30_RAD \
     0.5235988F
-
 
 #define KINEMATICS_TEST_Q5_POSITIVE_40_RAD \
     0.6981317F
@@ -50,13 +32,11 @@
 #define KINEMATICS_TEST_Q5_NEGATIVE_40_RAD \
     (-0.6981317F)
 
-
 #define KINEMATICS_TEST_Q6_NEGATIVE_10_RAD \
     (-0.1745329F)
 
 #define KINEMATICS_TEST_Q6_POSITIVE_170_RAD \
     2.9670597F
-
 
 #define KINEMATICS_TEST_Q3_POSITIVE_60_RAD \
     1.0471976F
@@ -64,13 +44,11 @@
 #define KINEMATICS_TEST_Q3_NEGATIVE_60_RAD \
     (-1.0471976F)
 
-
 #define KINEMATICS_TEST_Q3_FLIP_POSITIVE_RAD \
     1.5909281F
 
 #define KINEMATICS_TEST_Q3_FLIP_NEGATIVE_RAD \
     (-1.5909281F)
-
 
 #define KINEMATICS_TEST_Q2_ORIGINAL_POSITIVE_ELBOW_RAD \
     (-0.7853982F)
@@ -78,13 +56,11 @@
 #define KINEMATICS_TEST_Q2_ORIGINAL_NEGATIVE_ELBOW_RAD \
     0.2155343F
 
-
 #define KINEMATICS_TEST_Q2_FLIP_POSITIVE_ELBOW_RAD \
     (-0.8319115F)
 
 #define KINEMATICS_TEST_Q2_FLIP_NEGATIVE_ELBOW_RAD \
     0.6777868F
-
 
 #define KINEMATICS_TEST_Q4_ORIGINAL_POSITIVE_ELBOW_RAD \
     0.3490659F
@@ -92,17 +68,13 @@
 #define KINEMATICS_TEST_Q4_ORIGINAL_NEGATIVE_ELBOW_RAD \
     1.4425279F
 
-
 #define KINEMATICS_TEST_Q4_FLIP_POSITIVE_ELBOW_RAD \
     2.9929408F
 
 #define KINEMATICS_TEST_Q4_FLIP_NEGATIVE_ELBOW_RAD \
     (-1.6175851F)
 
-
-/* =========================================================
- * q1 Reference Branch Test
- * ========================================================= */
+/* q1 Reference Branch Test */
 
 static robot_status_t
 run_q1_test_case(
@@ -113,7 +85,6 @@ run_q1_test_case(
 {
     robot_real_t
         q1_candidates_rad[2];
-
 
     if (
         kinematics_internal_solve_q1_candidates(
@@ -128,7 +99,6 @@ run_q1_test_case(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q1_candidates_rad[0],
@@ -140,7 +110,6 @@ run_q1_test_case(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         !kinematics_test_scalar_is_close(
@@ -154,15 +123,11 @@ run_q1_test_case(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Complete Analytic Formula Chain
- * ========================================================= */
+/* Complete Analytic Formula Chain */
 
 static robot_status_t
 run_partial_ik_chain_test(
@@ -172,17 +137,14 @@ run_partial_ik_chain_test(
     robot_transform_t
         transform;
 
-
     robot_real_t
         q1_candidates_rad[2];
 
     robot_real_t
         selected_q1_rad;
 
-
     robot_real_t
         q5_candidates_rad[2];
-
 
     robot_real_t
         q6_original_rad;
@@ -190,13 +152,11 @@ run_partial_ik_chain_test(
     robot_real_t
         q6_flip_rad;
 
-
     robot_real_t
         q3_original_rad[2];
 
     robot_real_t
         q3_flip_rad[2];
-
 
     robot_real_t
         q2_original_positive_rad;
@@ -204,13 +164,11 @@ run_partial_ik_chain_test(
     robot_real_t
         q2_original_negative_rad;
 
-
     robot_real_t
         q2_flip_positive_rad;
 
     robot_real_t
         q2_flip_negative_rad;
-
 
     robot_real_t
         q4_original_positive_rad;
@@ -218,20 +176,17 @@ run_partial_ik_chain_test(
     robot_real_t
         q4_original_negative_rad;
 
-
     robot_real_t
         q4_flip_positive_rad;
 
     robot_real_t
         q4_flip_negative_rad;
 
-
     robot_real_t
         difference_0;
 
     robot_real_t
         difference_1;
-
 
     if (
         kinematics_forward(
@@ -246,10 +201,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q1
-     * ===================================================== */
+    /* q1 */
 
     if (
         kinematics_internal_solve_q1_candidates(
@@ -264,7 +216,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     difference_0 =
         kinematics_test_abs_real(
             q1_candidates_rad[0]
@@ -272,14 +223,12 @@ run_partial_ik_chain_test(
             KINEMATICS_TEST_Q1_30_RAD
         );
 
-
     difference_1 =
         kinematics_test_abs_real(
             q1_candidates_rad[1]
             -
             KINEMATICS_TEST_Q1_30_RAD
         );
-
 
     if (
         difference_0
@@ -296,7 +245,6 @@ run_partial_ik_chain_test(
             q1_candidates_rad[1];
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             selected_q1_rad,
@@ -309,10 +257,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q5
-     * ===================================================== */
+    /* q5 */
 
     if (
         kinematics_internal_solve_q5_candidates(
@@ -328,7 +273,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q5_candidates_rad[0],
@@ -340,7 +284,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         !kinematics_test_scalar_is_close(
@@ -354,10 +297,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q6
-     * ===================================================== */
+    /* q6 */
 
     if (
         kinematics_internal_solve_q6(
@@ -374,7 +314,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q6_original_rad,
@@ -386,7 +325,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q6(
@@ -403,7 +341,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q6_flip_rad,
@@ -416,10 +353,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q3
-     * ===================================================== */
+    /* q3 */
 
     if (
         kinematics_internal_solve_q3_candidates(
@@ -437,7 +371,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q3_original_rad[0],
@@ -450,7 +383,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q3_original_rad[1],
@@ -462,7 +394,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q3_candidates(
@@ -480,7 +411,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q3_flip_rad[0],
@@ -492,7 +422,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         !kinematics_test_scalar_is_close(
@@ -506,10 +435,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q2
-     * ===================================================== */
+    /* q2 */
 
     if (
         kinematics_internal_solve_q2(
@@ -528,7 +454,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q2_original_positive_rad,
@@ -540,7 +465,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q2(
@@ -559,7 +483,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q2_original_negative_rad,
@@ -571,7 +494,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q2(
@@ -590,7 +512,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q2_flip_positive_rad,
@@ -602,7 +523,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q2(
@@ -621,7 +541,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q2_flip_negative_rad,
@@ -634,10 +553,7 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
-    /* =====================================================
-     * q4
-     * ===================================================== */
+    /* q4 */
 
     if (
         kinematics_internal_solve_q4(
@@ -657,7 +573,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q4_original_positive_rad,
@@ -669,7 +584,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q4(
@@ -689,7 +603,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q4_original_negative_rad,
@@ -701,7 +614,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q4(
@@ -721,7 +633,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q4_flip_positive_rad,
@@ -733,7 +644,6 @@ run_partial_ik_chain_test(
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     if (
         kinematics_internal_solve_q4(
@@ -753,7 +663,6 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         !kinematics_test_scalar_is_close(
             q4_flip_negative_rad,
@@ -766,15 +675,11 @@ run_partial_ik_chain_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Wrist Singularity
- * ========================================================= */
+/* Wrist Singularity */
 
 static robot_status_t
 run_wrist_singularity_test(
@@ -784,14 +689,11 @@ run_wrist_singularity_test(
     robot_transform_t
         transform;
 
-
     robot_real_t
         q6_rad;
 
-
     robot_status_t
         status;
-
 
     if (
         kinematics_forward(
@@ -806,7 +708,6 @@ run_wrist_singularity_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     status =
         kinematics_internal_solve_q6(
             &transform,
@@ -814,7 +715,6 @@ run_wrist_singularity_test(
             0.0F,
             &q6_rad
         );
-
 
     if (
         status
@@ -826,15 +726,11 @@ run_wrist_singularity_test(
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Complete Solver Test Suite
- * ========================================================= */
+/* Complete Solver Test Suite */
 
 robot_status_t
 kinematics_ik_solver_test_run(void)
@@ -853,7 +749,6 @@ kinematics_ik_solver_test_run(void)
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         run_q1_test_case(
             kinematics_test_get_expected_q1_60(),
@@ -868,7 +763,6 @@ kinematics_ik_solver_test_run(void)
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         run_partial_ik_chain_test(
             kinematics_test_get_joints_ik_validation()
@@ -881,7 +775,6 @@ kinematics_ik_solver_test_run(void)
             ROBOT_STATUS_ERROR_INTERNAL;
     }
 
-
     if (
         run_wrist_singularity_test(
             kinematics_test_get_joints_zero()
@@ -893,7 +786,6 @@ kinematics_ik_solver_test_run(void)
         return
             ROBOT_STATUS_ERROR_INTERNAL;
     }
-
 
     return
         ROBOT_STATUS_OK;

@@ -1,8 +1,6 @@
-/*
- * 文件：kinematics_test_support.c
- *
- * 用途：
- * 实现 Kinematics Test Suites 共用辅助逻辑和固定测试数据。
+/**
+ * @file kinematics_test_support.c
+ * @brief 回归测试或夹具：kinematics test support。
  */
 
 #include <stddef.h>
@@ -10,10 +8,7 @@
 
 #include "kinematics_test_support.h"
 
-
-/* =========================================================
- * Shared Test Fixtures
- * ========================================================= */
+/* Shared Test Fixtures */
 
 /*
  * Zero Configuration。
@@ -31,7 +26,6 @@ static const robot_joint_angles_t
         0
     }
 };
-
 
 static const robot_transform_t
     expected_zero =
@@ -68,7 +62,6 @@ static const robot_transform_t
     }
 };
 
-
 /*
  * q1 = +60 degree。
  */
@@ -85,7 +78,6 @@ static const robot_joint_angles_t
         0
     }
 };
-
 
 static const robot_transform_t
     expected_q1_60 =
@@ -122,7 +114,6 @@ static const robot_transform_t
     }
 };
 
-
 /*
  * q2 = -90 degree。
  */
@@ -139,7 +130,6 @@ static const robot_joint_angles_t
         0
     }
 };
-
 
 static const robot_transform_t
     expected_q2_minus_90 =
@@ -176,7 +166,6 @@ static const robot_transform_t
     }
 };
 
-
 /*
  * 普通非奇异 IK Validation Pose：
  *
@@ -203,10 +192,7 @@ static const robot_joint_angles_t
     }
 };
 
-
-/* =========================================================
- * Scalar Helpers
- * ========================================================= */
+/* Scalar Helpers */
 
 robot_real_t
 kinematics_test_abs_real(
@@ -223,11 +209,9 @@ kinematics_test_abs_real(
             -value;
     }
 
-
     return
         value;
 }
-
 
 uint8_t
 kinematics_test_scalar_is_close(
@@ -250,15 +234,11 @@ kinematics_test_scalar_is_close(
             0U;
     }
 
-
     return
         1U;
 }
 
-
-/* =========================================================
- * Joint Helpers
- * ========================================================= */
+/* Joint Helpers */
 
 uint8_t
 kinematics_test_joint_angles_are_equal(
@@ -268,7 +248,6 @@ kinematics_test_joint_angles_are_equal(
 {
     uint32_t
         joint_index;
-
 
     if (
         left
@@ -283,7 +262,6 @@ kinematics_test_joint_angles_are_equal(
         return
             0U;
     }
-
 
     for (
         joint_index = 0U;
@@ -306,11 +284,9 @@ kinematics_test_joint_angles_are_equal(
         }
     }
 
-
     return
         1U;
 }
-
 
 uint8_t
 kinematics_test_joint_angles_are_canonical(
@@ -319,7 +295,6 @@ kinematics_test_joint_angles_are_canonical(
 {
     uint32_t
         joint_index;
-
 
     if (
         joints
@@ -330,7 +305,6 @@ kinematics_test_joint_angles_are_canonical(
         return
             0U;
     }
-
 
     for (
         joint_index = 0U;
@@ -357,15 +331,11 @@ kinematics_test_joint_angles_are_canonical(
         }
     }
 
-
     return
         1U;
 }
 
-
-/* =========================================================
- * Transform Helpers
- * ========================================================= */
+/* Transform Helpers */
 
 static uint8_t
 kinematics_test_transform_is_close_with_tolerance(
@@ -381,7 +351,6 @@ kinematics_test_transform_is_close_with_tolerance(
     uint32_t
         column;
 
-
     if (
         actual
         ==
@@ -395,7 +364,6 @@ kinematics_test_transform_is_close_with_tolerance(
         return
             0U;
     }
-
 
     for (
         row = 0U;
@@ -412,10 +380,8 @@ kinematics_test_transform_is_close_with_tolerance(
             robot_real_t
                 tolerance;
 
-
             robot_real_t
                 difference;
-
 
             /*
              * Homogeneous Transform：
@@ -446,7 +412,6 @@ kinematics_test_transform_is_close_with_tolerance(
                     rotation_tolerance;
             }
 
-
             difference =
                 kinematics_test_abs_real(
                     actual->matrix[
@@ -462,7 +427,6 @@ kinematics_test_transform_is_close_with_tolerance(
                     ]
                 );
 
-
             if (
                 difference
                 >
@@ -475,11 +439,9 @@ kinematics_test_transform_is_close_with_tolerance(
         }
     }
 
-
     return
         1U;
 }
-
 
 uint8_t
 kinematics_test_transform_is_close(
@@ -496,7 +458,6 @@ kinematics_test_transform_is_close(
         );
 }
 
-
 uint8_t
 kinematics_test_transform_round_trip_is_close(
     const robot_transform_t *actual,
@@ -512,10 +473,7 @@ kinematics_test_transform_round_trip_is_close(
         );
 }
 
-
-/* =========================================================
- * Shared Fixture Access
- * ========================================================= */
+/* Shared Fixture Access */
 
 const robot_joint_angles_t *
 kinematics_test_get_joints_zero(void)
@@ -524,14 +482,12 @@ kinematics_test_get_joints_zero(void)
         &joints_zero;
 }
 
-
 const robot_transform_t *
 kinematics_test_get_expected_zero(void)
 {
     return
         &expected_zero;
 }
-
 
 const robot_joint_angles_t *
 kinematics_test_get_joints_q1_60(void)
@@ -540,14 +496,12 @@ kinematics_test_get_joints_q1_60(void)
         &joints_q1_60;
 }
 
-
 const robot_transform_t *
 kinematics_test_get_expected_q1_60(void)
 {
     return
         &expected_q1_60;
 }
-
 
 const robot_joint_angles_t *
 kinematics_test_get_joints_q2_minus_90(void)
@@ -556,14 +510,12 @@ kinematics_test_get_joints_q2_minus_90(void)
         &joints_q2_minus_90;
 }
 
-
 const robot_transform_t *
 kinematics_test_get_expected_q2_minus_90(void)
 {
     return
         &expected_q2_minus_90;
 }
-
 
 const robot_joint_angles_t *
 kinematics_test_get_joints_ik_validation(void)

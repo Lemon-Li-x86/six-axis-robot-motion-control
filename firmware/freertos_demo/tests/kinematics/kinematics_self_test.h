@@ -1,15 +1,12 @@
-/*
- * 文件：kinematics_self_test.h
- *
- * 用途：
- * 定义完整 Kinematics Startup Self Test 入口。
+/**
+ * @file kinematics_self_test.h
+ * @brief 测试共享声明/夹具：kinematics self。
  */
 
 #ifndef TESTS_KINEMATICS_KINEMATICS_SELF_TEST_H
 #define TESTS_KINEMATICS_KINEMATICS_SELF_TEST_H
 
 #include "error_code.h"
-
 
 /**
  * @brief 执行完整 Kinematics Self Test。
@@ -29,6 +26,5 @@
  */
 robot_status_t
 kinematics_self_test_run(void);
-
 
 #endif
