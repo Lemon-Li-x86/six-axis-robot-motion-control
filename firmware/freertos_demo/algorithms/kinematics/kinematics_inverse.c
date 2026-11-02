@@ -1,21 +1,6 @@
-/*
- * 文件：kinematics_inverse.c
- *
- * 用途：
- * 实现 UR5 Public Analytic IK Orchestration。
- *
- * 数学公式本身位于：
- *
- * ur5_analytic_ik.c
- *
- * 本文件负责：
- *
- * 1. Public -> DH Transform；
- * 2. Branch Enumeration；
- * 3. Singular Branch Handling；
- * 4. Solution Assembly；
- * 5. Duplicate Removal；
- * 6. Public Result。
+/**
+ * @file kinematics_inverse.c
+ * @brief 解析 IK 的组织、过滤、结果封装。
  */
 
 #include <stddef.h>
@@ -26,7 +11,6 @@
 #include "kinematics_private.h"
 
 #include "robot_model.h"
-
 
 static robot_status_t kinematics_inverse_implementation(
     const robot_transform_t *transform,
@@ -640,9 +624,7 @@ static robot_status_t kinematics_inverse_implementation(
         }
     }
 
-    /* =====================================================
-     * Final Result
-     * ===================================================== */
+    /* Final Result */
 
     if (solutions->count > 0U)
     {

@@ -1,30 +1,11 @@
-/*
- * 文件：ring_buffer.c
- *
- * 用途：
- * 实现单生产者、单消费者
- * Byte Ring Buffer。
- *
- * 当前主要用于：
- *
- * UART RX ISR
- *      ↓
- * Ring Buffer
- *      ↓
- * ProtocolRX Task
- *
- * Producer 只修改 head；
- * Consumer 只修改 tail。
- *
- * 因此不需要共享 count 变量。
+/**
+ * @file ring_buffer.c
+ * @brief 收发环形缓冲操作。
  */
 
 #include "ring_buffer.h"
 
-
-/* =========================================================
- * Public API
- * ========================================================= */
+/* Public API */
 
 void ring_buffer_init(
     ring_buffer_t *ring_buffer
@@ -33,7 +14,6 @@ void ring_buffer_init(
     ring_buffer->head = 0U;
     ring_buffer->tail = 0U;
 }
-
 
 uint8_t ring_buffer_write(
     ring_buffer_t *ring_buffer,
@@ -73,7 +53,6 @@ uint8_t ring_buffer_write(
     return 1U;
 }
 
-
 uint8_t ring_buffer_read(
     ring_buffer_t *ring_buffer,
     uint8_t *data
@@ -106,7 +85,6 @@ uint8_t ring_buffer_read(
     return 1U;
 }
 
-
 uint8_t ring_buffer_is_empty(
     const ring_buffer_t *ring_buffer
 )
@@ -115,7 +93,6 @@ uint8_t ring_buffer_is_empty(
         ring_buffer->head == ring_buffer->tail
     ) ? 1U : 0U;
 }
-
 
 uint8_t ring_buffer_is_full(
     const ring_buffer_t *ring_buffer

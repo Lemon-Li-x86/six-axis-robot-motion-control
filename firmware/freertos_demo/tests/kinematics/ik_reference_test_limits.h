@@ -1,7 +1,6 @@
-/*
- * Shared numeric ASSERTION limits for the Stage3 seeded-IK regression.
- * This is a matching/search window, not a production motion tolerance.
- * Production geometry/reliability limits live in kinematics.h/private.h.
+/**
+ * @file ik_reference_test_limits.h
+ * @brief 测试共享声明/夹具：ik reference test limits。
  */
 #ifndef IK_REFERENCE_TEST_LIMITS_H
 #define IK_REFERENCE_TEST_LIMITS_H

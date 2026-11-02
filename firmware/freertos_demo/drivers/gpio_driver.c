@@ -1,34 +1,6 @@
-/*
- * 文件：gpio_driver.c
- *
- * 用途：
- * 实现 GPIO0 输出控制抽象。
- *
- * 当前项目默认运行于：
- *
- * QEMU MPS2-AN386
- *
- * 当前 QEMU 环境下 GPIO 不执行真实 MMIO，
- * 因此默认采用 Shadow Backend。
- *
- * Shadow Backend 会完整保存：
- *
- * 1. Output Enable 状态；
- * 2. Output Data 状态。
- *
- * 从而可以验证 GPIO Driver 的：
- *
- * configure
- * write
- * toggle
- * read-back
- *
- * 等逻辑。
- *
- * 当未来迁移至支持 CMSDK AHB GPIO
- * 的真实硬件或仿真平台时，
- * 将 GPIO_DRIVER_USE_MMIO 设置为 1，
- * 即可启用真实 MMIO Backend。
+/**
+ * @file gpio_driver.c
+ * @brief GPIO 驱动/仿真影子寄存器。
  */
 
 #include <stddef.h>
@@ -36,10 +8,7 @@
 
 #include "gpio_driver.h"
 
-
-/* =========================================================
- * Backend Configuration
- * ========================================================= */
+/* Backend Configuration */
 
 /*
  * 当前 QEMU MPS2-AN386：
@@ -56,30 +25,22 @@
 
 #endif
 
-
-/* =========================================================
- * CMSDK GPIO0 Register
- * ========================================================= */
+/* CMSDK GPIO0 Register */
 
 #define CMSDK_GPIO0_BASE \
     0x40010000UL
 
-
 #define GPIO_DATAOUT_OFFSET \
     0x004UL
-
 
 #define GPIO_OUTENSET_OFFSET \
     0x010UL
 
-
 #define GPIO_ALTFUNCCLR_OFFSET \
     0x01CUL
 
-
 #define REG32(address) \
     (*(volatile uint32_t *)(address))
-
 
 #define GPIO0_DATAOUT \
     REG32( \
@@ -88,14 +49,12 @@
         GPIO_DATAOUT_OFFSET \
     )
 
-
 #define GPIO0_OUTENSET \
     REG32( \
         CMSDK_GPIO0_BASE \
         + \
         GPIO_OUTENSET_OFFSET \
     )
-
 
 #define GPIO0_ALTFUNCCLR \
     REG32( \
@@ -104,14 +63,10 @@
         GPIO_ALTFUNCCLR_OFFSET \
     )
 
-
-/* =========================================================
- * Driver State
- * ========================================================= */
+/* Driver State */
 
 static uint8_t
     gpio_driver_initialized = 0U;
-
 
 /*
  * 保存当前已经配置为 Output
@@ -122,7 +77,6 @@ static uint8_t
 static uint32_t
     gpio_output_enable_shadow = 0U;
 
-
 /*
  * 保存当前 GPIO Output Data。
  *
@@ -131,10 +85,7 @@ static uint32_t
 static uint32_t
     gpio_output_data_shadow = 0U;
 
-
-/* =========================================================
- * Pin Validation
- * ========================================================= */
+/* Pin Validation */
 
 static robot_status_t
 gpio_driver_validate_pin(
@@ -151,15 +102,11 @@ gpio_driver_validate_pin(
             ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Pin Mask
- * ========================================================= */
+/* Pin Mask */
 
 static uint32_t
 gpio_driver_pin_mask(
@@ -174,10 +121,7 @@ gpio_driver_pin_mask(
         );
 }
 
-
-/* =========================================================
- * Driver Init
- * ========================================================= */
+/* Driver Init */
 
 robot_status_t
 gpio_driver_init(void)
@@ -188,23 +132,17 @@ gpio_driver_init(void)
     gpio_output_enable_shadow =
         0U;
 
-
     gpio_output_data_shadow =
         0U;
 
-
     gpio_driver_initialized =
         1U;
-
 
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Configure Output
- * ========================================================= */
+/* Configure Output */
 
 robot_status_t
 gpio_driver_configure_output(
@@ -214,10 +152,8 @@ gpio_driver_configure_output(
     uint32_t
         mask;
 
-
     robot_status_t
         status;
-
 
     /*
      * Driver 必须先初始化。
@@ -230,12 +166,10 @@ gpio_driver_configure_output(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     status =
         gpio_driver_validate_pin(
             pin
         );
-
 
     if (
         status
@@ -247,19 +181,16 @@ gpio_driver_configure_output(
             status;
     }
 
-
     mask =
         gpio_driver_pin_mask(
             pin
         );
-
 
     /*
      * 记录该 Pin 已配置为 Output。
      */
     gpio_output_enable_shadow |=
         mask;
-
 
 #if GPIO_DRIVER_USE_MMIO
 
@@ -270,7 +201,6 @@ gpio_driver_configure_output(
     GPIO0_ALTFUNCCLR =
         mask;
 
-
     /*
      * 设置 Output Enable。
      */
@@ -279,15 +209,11 @@ gpio_driver_configure_output(
 
 #endif
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Write Output
- * ========================================================= */
+/* Write Output */
 
 robot_status_t
 gpio_driver_write(
@@ -298,10 +224,8 @@ gpio_driver_write(
     uint32_t
         mask;
 
-
     robot_status_t
         status;
-
 
     /*
      * Driver 尚未初始化。
@@ -314,12 +238,10 @@ gpio_driver_write(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     status =
         gpio_driver_validate_pin(
             pin
         );
-
 
     if (
         status
@@ -330,7 +252,6 @@ gpio_driver_write(
         return
             status;
     }
-
 
     /*
      * Level 必须为合法枚举值。
@@ -349,12 +270,10 @@ gpio_driver_write(
             ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     }
 
-
     mask =
         gpio_driver_pin_mask(
             pin
         );
-
 
     /*
      * 未配置为 Output 的 Pin
@@ -374,7 +293,6 @@ gpio_driver_write(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     /*
      * 更新 Shadow Output Data。
      */
@@ -393,7 +311,6 @@ gpio_driver_write(
             ~mask;
     }
 
-
 #if GPIO_DRIVER_USE_MMIO
 
     /*
@@ -405,15 +322,11 @@ gpio_driver_write(
 
 #endif
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Toggle Output
- * ========================================================= */
+/* Toggle Output */
 
 robot_status_t
 gpio_driver_toggle(
@@ -423,10 +336,8 @@ gpio_driver_toggle(
     uint32_t
         mask;
 
-
     robot_status_t
         status;
-
 
     if (
         !gpio_driver_initialized
@@ -436,12 +347,10 @@ gpio_driver_toggle(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     status =
         gpio_driver_validate_pin(
             pin
         );
-
 
     if (
         status
@@ -453,12 +362,10 @@ gpio_driver_toggle(
             status;
     }
 
-
     mask =
         gpio_driver_pin_mask(
             pin
         );
-
 
     /*
      * 必须先配置为 Output。
@@ -477,13 +384,11 @@ gpio_driver_toggle(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     /*
      * 翻转目标 Bit。
      */
     gpio_output_data_shadow ^=
         mask;
-
 
 #if GPIO_DRIVER_USE_MMIO
 
@@ -492,15 +397,11 @@ gpio_driver_toggle(
 
 #endif
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Get Output Level
- * ========================================================= */
+/* Get Output Level */
 
 robot_status_t
 gpio_driver_get_output_level(
@@ -511,10 +412,8 @@ gpio_driver_get_output_level(
     uint32_t
         mask;
 
-
     robot_status_t
         status;
-
 
     if (
         level
@@ -526,7 +425,6 @@ gpio_driver_get_output_level(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !gpio_driver_initialized
     )
@@ -535,12 +433,10 @@ gpio_driver_get_output_level(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     status =
         gpio_driver_validate_pin(
             pin
         );
-
 
     if (
         status
@@ -552,12 +448,10 @@ gpio_driver_get_output_level(
             status;
     }
 
-
     mask =
         gpio_driver_pin_mask(
             pin
         );
-
 
     /*
      * 尚未配置为 Output。
@@ -575,7 +469,6 @@ gpio_driver_get_output_level(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     /*
      * 从 Shadow State 读取当前输出。
@@ -595,15 +488,11 @@ gpio_driver_get_output_level(
             GPIO_DRIVER_LEVEL_LOW;
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Backend Query
- * ========================================================= */
+/* Backend Query */
 
 uint8_t
 gpio_driver_is_mmio_backend(void)

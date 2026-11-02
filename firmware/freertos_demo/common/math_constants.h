@@ -1,8 +1,6 @@
-/*
- * Shared pure mathematical constants for model and motion algorithms.
- * These are mathematical unit conversions, NOT runtime configuration.
- * Keep the numerical value in a single definition site; do not create
- * module-specific copies of pi or degree/radian conversion constants.
+/**
+ * @file math_constants.h
+ * @brief 公共数学常量。
  */
 #ifndef ROBOT_MATH_CONSTANTS_H
 #define ROBOT_MATH_CONSTANTS_H

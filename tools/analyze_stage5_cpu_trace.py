@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Validate GDB-sampled FreeRTOS per-task runtime, without inventing CPU %. """
 from __future__ import annotations
 

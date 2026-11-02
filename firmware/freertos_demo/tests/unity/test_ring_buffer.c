@@ -1,13 +1,6 @@
-/*
- * 文件：test_ring_buffer.c
- *
- * 用途：
- * 使用 Unity 验证 Ring Buffer 的：
- *
- * 1. 初始化状态；
- * 2. FIFO 顺序；
- * 3. 容量边界；
- * 4. Index Wraparound。
+/**
+ * @file test_ring_buffer.c
+ * @brief 回归测试或夹具：test ring buffer。
  */
 
 #include <stdint.h>
@@ -16,10 +9,7 @@
 
 #include "ring_buffer.h"
 
-
-/* =========================================================
- * Initialization Tests
- * ========================================================= */
+/* Initialization Tests */
 
 /**
  * @brief 验证 Ring Buffer 初始化后为空，
@@ -57,10 +47,7 @@ void test_ring_buffer_initially_empty(void)
     );
 }
 
-
-/* =========================================================
- * FIFO Tests
- * ========================================================= */
+/* FIFO Tests */
 
 /**
  * @brief 验证 Ring Buffer 保持
@@ -140,10 +127,7 @@ void test_ring_buffer_preserves_fifo_order(void)
     );
 }
 
-
-/* =========================================================
- * Capacity Tests
- * ========================================================= */
+/* Capacity Tests */
 
 /**
  * @brief 验证 Ring Buffer 的实际可用容量
@@ -201,10 +185,7 @@ void test_ring_buffer_capacity_boundary(void)
     );
 }
 
-
-/* =========================================================
- * Wraparound Tests
- * ========================================================= */
+/* Wraparound Tests */
 
 /**
  * @brief 验证 head / tail 跨越数组末尾后

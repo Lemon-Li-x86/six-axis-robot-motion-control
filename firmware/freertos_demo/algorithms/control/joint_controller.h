@@ -1,5 +1,6 @@
-/* Six axis PID wrapper. One controller instance per joint; no global state.
- * Inputs positions in continuous 0.01deg; output CORRECTIONS in degrees.
+/**
+ * @file joint_controller.h
+ * @brief 控制器 API。
  */
 #ifndef ROBOT_JOINT_CONTROLLER_H
 #define ROBOT_JOINT_CONTROLLER_H

@@ -1,3 +1,8 @@
+/**
+ * @file cartesian_control_test_main.c
+ * @brief 回归测试或夹具：cartesian control。
+ */
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>

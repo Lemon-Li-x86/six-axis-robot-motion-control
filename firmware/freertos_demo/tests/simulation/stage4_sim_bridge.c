@@ -1,10 +1,6 @@
-/*
- * Host-only C bridge for deterministic PyBullet dynamic trials.
- * The Python caller NEVER reimplements PID, trapezoid or command limits.
- * The same production firmware algorithm objects are linked into this DLL.
- *
- * The bridge is NOT compiled into the ARM firmware; malloc is host-only.
- * Every configuration value comes from stage4_motion_default_config().
+/**
+ * @file stage4_sim_bridge.c
+ * @brief 回归测试或夹具：stage4 sim bridge。
  */
 #include <stdint.h>
 #include <stdlib.h>

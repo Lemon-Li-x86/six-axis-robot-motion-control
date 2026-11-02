@@ -1,12 +1,6 @@
-/*
- * 文件：runtime_config.c
- *
- * 用途：
- * 实现机器人固件运行时参数配置。
- *
- * 当前支持：
- *
- * ProtocolTX Period。
+/**
+ * @file runtime_config.c
+ * @brief 运行时可修改参数及其同步。
  */
 
 #include <stdint.h>
@@ -14,10 +8,7 @@
 #include "runtime_config.h"
 #include "task_config.h"
 
-
-/* =========================================================
- * Runtime State
- * ========================================================= */
+/* Runtime State */
 
 /*
  * 当前 Cortex-M4 为 32 bit 平台。
@@ -36,10 +27,7 @@
 static volatile uint32_t runtime_protocol_tx_period_ms =
     TASK_PERIOD_PROTOCOL_TX_MS;
 
-
-/* =========================================================
- * Public API
- * ========================================================= */
+/* Public API */
 
 robot_status_t runtime_config_init(void)
 {
@@ -52,7 +40,6 @@ robot_status_t runtime_config_init(void)
 
     return ROBOT_STATUS_OK;
 }
-
 
 robot_status_t runtime_config_set_protocol_tx_period_ms(
     uint32_t period_ms
@@ -70,7 +57,6 @@ robot_status_t runtime_config_set_protocol_tx_period_ms(
 
     return ROBOT_STATUS_OK;
 }
-
 
 uint32_t runtime_config_get_protocol_tx_period_ms(void)
 {

@@ -1,18 +1,6 @@
-/*
- * 文件：timer_driver.h
- *
- * 用途：
- * 定义 MPS2-AN386 CMSDK APB Timer 驱动接口。
- *
- * 当前使用：
- *
- * Timer0：
- * 32 bit 自由运行高分辨率计时器，
- * 用于性能测量。
- *
- * Timer1：
- * 周期中断定时器，
- * 用于周期事件和后续实时控制任务。
+/**
+ * @file timer_driver.h
+ * @brief 定时器接口。
  */
 
 #ifndef TIMER_DRIVER_H
@@ -22,10 +10,7 @@
 
 #include "error_code.h"
 
-
-/* =========================================================
- * Periodic Timer Callback
- * ========================================================= */
+/* Periodic Timer Callback */
 
 /*
  * Timer1 周期中断 Callback。
@@ -43,10 +28,7 @@ typedef void (*timer_driver_periodic_callback_t)(
     void
 );
 
-
-/* =========================================================
- * Driver Init
- * ========================================================= */
+/* Driver Init */
 
 /**
  * @brief 初始化 Timer Driver。
@@ -63,10 +45,7 @@ typedef void (*timer_driver_periodic_callback_t)(
  */
 void timer_driver_init(void);
 
-
-/* =========================================================
- * Timer0 - Performance Counter
- * ========================================================= */
+/* Timer0 - Performance Counter */
 
 /**
  * @brief 读取当前 Timer0 原始计数值。
@@ -75,7 +54,6 @@ void timer_driver_init(void);
  * 当前 32 bit 向下计数值。
  */
 uint32_t timer_driver_get_counter(void);
-
 
 /**
  * @brief 计算两个 Timer0 采样点之间经过的 Tick 数。
@@ -99,7 +77,6 @@ uint32_t timer_driver_elapsed_ticks(
     uint32_t end_counter
 );
 
-
 /**
  * @brief 获取 Timer 输入时钟频率。
  *
@@ -112,10 +89,7 @@ uint32_t timer_driver_elapsed_ticks(
  */
 uint32_t timer_driver_get_frequency_hz(void);
 
-
-/* =========================================================
- * Timer1 - Periodic Interrupt
- * ========================================================= */
+/* Timer1 - Periodic Interrupt */
 
 /**
  * @brief 启动 Timer1 周期中断。
@@ -158,12 +132,10 @@ robot_status_t timer_driver_start_periodic(
     timer_driver_periodic_callback_t callback
 );
 
-
 /**
  * @brief 停止 Timer1 周期中断。
  */
 void timer_driver_stop_periodic(void);
-
 
 /**
  * @brief 获取 Timer1 实际配置的周期中断频率。
@@ -174,7 +146,6 @@ void timer_driver_stop_periodic(void);
  * Timer 尚未启动时返回 0。
  */
 uint32_t timer_driver_get_periodic_frequency_hz(void);
-
 
 /**
  * @brief 获取 Timer1 IRQ 累计次数。
@@ -188,7 +159,6 @@ uint32_t timer_driver_get_periodic_frequency_hz(void);
  */
 uint32_t timer_driver_get_periodic_irq_count(void);
 
-
 /**
  * @brief 判断 Timer1 周期定时器是否正在运行。
  *
@@ -197,6 +167,5 @@ uint32_t timer_driver_get_periodic_irq_count(void);
  * 0：未运行。
  */
 uint8_t timer_driver_is_periodic_running(void);
-
 
 #endif

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Turn real QEMU/GDB Timer0 task timing and FreeRTOS stack samples into evidence.
 
 The firmware's existing stage4_timing_probe owns all capture/percentile math;

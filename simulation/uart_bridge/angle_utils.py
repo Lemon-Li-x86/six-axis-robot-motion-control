@@ -1,27 +1,7 @@
-"""
-文件：angle_utils.py
-
-用途：
-统一 Python 仿真与测试侧的关节角处理规则。
-
-与 Cortex-M4 固件保持一致：
-
-1. Canonical Angle 范围：
-   [-180°, 180°)
-
-2. UART Joint Angle：
-   signed int16
-   1 unit = 0.01 degree
-
-3. Continuous Angle：
-   根据上一连续角恢复距离 reference 最近的等价角。
-"""
+"""Python 角度转换。"""
 
 
-# ==========================================================
 # Angle Constants
-# ==========================================================
-
 # 一整圈角度，单位 degree。
 ANGLE_FULL_TURN_DEG = 360.0
 
@@ -36,10 +16,7 @@ ANGLE_HALF_TURN_RAW = 18000
 JOINT_ANGLE_UNIT_DEG = 0.01
 
 
-# ==========================================================
 # Canonical Angle
-# ==========================================================
-
 def normalize_angle_deg(angle_deg: float) -> float:
     """
     将任意 degree 角度规范化到 [-180°, 180°)。
@@ -72,10 +49,7 @@ def normalize_angle_raw(raw_angle: int) -> int:
     ) - ANGLE_HALF_TURN_RAW
 
 
-# ==========================================================
 # Degree / Raw Conversion
-# ==========================================================
-
 def degree_to_canonical_raw(angle_deg: float) -> int:
     """
     将 degree 角度转换为 Canonical UART Raw Angle。
@@ -117,10 +91,7 @@ def canonical_raw_to_degree(raw_angle: int) -> float:
     )
 
 
-# ==========================================================
 # Continuous Angle
-# ==========================================================
-
 def unwrap_angle_deg(
     canonical_angle_deg: float,
     reference_angle_deg: float,

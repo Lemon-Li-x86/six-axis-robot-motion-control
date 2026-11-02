@@ -81,6 +81,7 @@ target_include_directories(
 
     ${UNITY_DIR}/src
 
+    ${FIRMWARE_DIR}
     ${FIRMWARE_DIR}/common
     ${FIRMWARE_DIR}/communications
     ${FIRMWARE_DIR}/drivers

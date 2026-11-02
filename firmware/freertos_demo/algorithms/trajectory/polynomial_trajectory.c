@@ -1,7 +1,6 @@
-/*
- * Six-axis cubic/quintic time-normalized Hermite interpolation.
- * Position inputs are continuous centidegrees; polynomial coefficients
- * represent degrees as a function of u=t/T. No motor commands.
+/**
+ * @file polynomial_trajectory.c
+ * @brief 三/五次多项式插补。
  */
 #include <float.h>
 #include <limits.h>

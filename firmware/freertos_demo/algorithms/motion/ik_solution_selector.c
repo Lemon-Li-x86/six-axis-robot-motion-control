@@ -1,11 +1,6 @@
-
-/*
- * File: ik_solution_selector.c
- *
- * UR5 IK candidate selection policy.
- *
- * Pure algorithm module:
- * no FreeRTOS, UART, motor driver or application state.
+/**
+ * @file ik_solution_selector.c
+ * @brief IK 候选解的运动策略筛选。
  */
 
 #include <stddef.h>
@@ -18,10 +13,7 @@
 #include "robot_model.h"
 #include "math_constants.h"
 
-
-/* =========================================================
- * Configuration
- * ========================================================= */
+/* Configuration */
 
 #define IK_SELECTOR_DEG_TO_RAD ROBOT_DEG_TO_RAD_F
 
@@ -62,10 +54,7 @@
 #define IK_SELECTOR_SCORE_TIE_EPS \
     (0.00001F)
 
-
-/* =========================================================
- * Helpers
- * ========================================================= */
+/* Helpers */
 
 static robot_real_t soft_penalty(
     robot_real_t value,
@@ -79,7 +68,6 @@ static robot_real_t soft_penalty(
 
     return (threshold - value) / threshold;
 }
-
 
 static uint32_t abs_difference(
     robot_joint_position_t lhs,
@@ -98,10 +86,7 @@ static uint32_t abs_difference(
     return (uint32_t)delta;
 }
 
-
-/* =========================================================
- * Input Validation
- * ========================================================= */
+/* Input Validation */
 
 static robot_status_t validate_inputs(
     const kinematics_ik_solutions_t *solutions,
@@ -168,10 +153,7 @@ static robot_status_t validate_inputs(
     );
 }
 
-
-/* =========================================================
- * Singularity Risk Estimation
- * ========================================================= */
+/* Singularity Risk Estimation */
 
 /*
  * Current heuristic:
@@ -227,10 +209,7 @@ static robot_real_t singular_penalty(
         );
 }
 
-
-/* =========================================================
- * Public Selection API
- * ========================================================= */
+/* Public Selection API */
 
 robot_status_t ik_solution_selector_select(
     const kinematics_ik_solutions_t *solutions,

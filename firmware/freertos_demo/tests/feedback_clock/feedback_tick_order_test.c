@@ -1,7 +1,6 @@
-/* Runs the real motor_state.c gateway with deterministic FreeRTOS mocks.
- * Reproduce an RX frame accepted after a trajectory task's old Tick read
- * but before it obtains the mutex-protected feedback snapshot.
- * No fake controller or alternative motion planner is involved.
+/**
+ * @file feedback_tick_order_test.c
+ * @brief 回归测试或夹具：feedback tick order。
  */
 #include <stdio.h>
 #include <stdint.h>

@@ -1,6 +1,6 @@
-/*
- * Stage 4 RTOS-facing request queue and task startup.
- * Data remains owned by callers; work is performed only in tasks.
+/**
+ * @file motion_pipeline.c
+ * @brief 运动请求队列、任务启动、诊断与故障记录。
  */
 #include <stddef.h>
 #include <string.h>

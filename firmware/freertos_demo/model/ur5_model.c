@@ -1,35 +1,17 @@
-
-/*
- * 文件：ur5_model.c
+/**
+ * @file ur5_model.c
+ * @brief UR5 geometry and continuous joint limits used by this simulation.
  *
- * 用途：
- * 定义当前项目使用的 UR5
- * 静态机器人几何与关节限位模型。
+ * DH lengths are millimetres; alpha angles are radians. Joint limits use
+ * centidegrees and correspond to the bundled URDF, not a hardware datasheet.
  */
 
 #include "robot_model.h"
 #include "math_constants.h"
 
-
-/* =========================================================
- * Model Constants
- * ========================================================= */
-
-/* All geometry angles use the shared mathematical constant. */
-
-
-/* =========================================================
- * UR5 Model
- * ========================================================= */
-
 static const robot_model_t ur5_model =
 {
-    /*
-     * Standard DH Parameter a。
-     *
-     * 单位：
-     * mm。
-     */
+
     .dh_a_mm =
     {
         0.0F,
@@ -40,13 +22,6 @@ static const robot_model_t ur5_model =
         0.0F
     },
 
-
-    /*
-     * Standard DH Parameter d。
-     *
-     * 单位：
-     * mm。
-     */
     .dh_d_mm =
     {
         89.159F,
@@ -57,13 +32,6 @@ static const robot_model_t ur5_model =
         82.3F
     },
 
-
-    /*
-     * Standard DH Parameter alpha。
-     *
-     * 单位：
-     * radian。
-     */
     .dh_alpha_rad =
     {
         ROBOT_PI_F / 2.0F,
@@ -73,20 +41,10 @@ static const robot_model_t ur5_model =
         -ROBOT_PI_F / 2.0F,
         0.0F
     },
-
-
-    /*
-     * Public Base Frame
-     * ->
-     * Standard DH Base Frame。
-     *
-     * 当前矩阵自身等于其逆矩阵，
-     * 但仍显式保存 inverse。
-     *
-     * 这样 Robot Model API
-     * 不依赖当前矩阵具有自逆这一偶然性质，
-     * 后续替换机器人模型时无需修改算法层。
+    /* Public base and DH base differ by a 180-degree Z rotation.
+     * The explicit inverse keeps model replacement independent of symmetry.
      */
+
     .base_frame_conversion =
     {
         .matrix =
@@ -121,12 +79,6 @@ static const robot_model_t ur5_model =
         }
     },
 
-
-    /*
-     * Standard DH Base Frame
-     * ->
-     * Public Base Frame。
-     */
     .base_frame_conversion_inverse =
     {
         .matrix =
@@ -160,13 +112,8 @@ static const robot_model_t ur5_model =
             }
         }
     },
+    /* Map the DH tool frame to the public URDF ee_link frame. */
 
-
-    /*
-     * Standard DH Tool Frame
-     * ->
-     * Public ee_link。
-     */
     .tool_frame_conversion =
     {
         .matrix =
@@ -201,12 +148,6 @@ static const robot_model_t ur5_model =
         }
     },
 
-
-    /*
-     * Public ee_link
-     * ->
-     * Standard DH Tool Frame。
-     */
     .tool_frame_conversion_inverse =
     {
         .matrix =
@@ -240,38 +181,8 @@ static const robot_model_t ur5_model =
             }
         }
     },
+    /* Continuous J3 range is +/-180 degrees; other joints +/-360 degrees. */
 
-
-    /* =========================================================
-     * Joint Position Limits
-     * ========================================================= */
-
-    /*
-     * 当前项目所使用 UR5 URDF 的关节限位。
-     *
-     * 来源：
-     * simulation/pybullet_ur5/models/ur5/urdf/ur5.urdf
-     *
-     * 关节顺序：
-     * J1 Shoulder Pan；
-     * J2 Shoulder Lift；
-     * J3 Elbow；
-     * J4 Wrist 1；
-     * J5 Wrist 2；
-     * J6 Wrist 3。
-     *
-     * 范围：
-     * J3：[-180°, +180°]；
-     * 其他关节：[-360°, +360°]。
-     *
-     * 单位：
-     * 0.01 degree。
-     *
-     * 注意：
-     * 这些数值来自当前仿真模型，
-     * 不应直接视为其他 UR5 实物的安全限位。
-     * 本模块只存储限位，不执行目标关节检查。
-     */
     .joint_min_positions =
     {
         .value =
@@ -298,11 +209,6 @@ static const robot_model_t ur5_model =
         }
     }
 };
-
-
-/* =========================================================
- * Public API
- * ========================================================= */
 
 const robot_model_t *robot_model_get_active(void)
 {

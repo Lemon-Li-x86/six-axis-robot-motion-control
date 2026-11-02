@@ -1,22 +1,6 @@
-
-/*
- * 文件：robot_model_limits_test.c
- *
- * 用途：
- * 在 QEMU Cortex-M4 上验证 UR5 Robot Model 的关节限位：
- *
- * 1. Active Robot Model 不为空；
- * 2. 六轴下限与当前 URDF 一致；
- * 3. 六轴上限与当前 URDF 一致；
- * 4. 每个关节的下限小于上限；
- * 5. 关节零位位于限位之内。
- *
- * 测试使用生产固件中的 ur5_model.c。
- *
- * 注意：
- * 本测试运行在 -nostdlib 的裸机环境中，
- * 不使用 printf()、puts() 或其他标准输出函数。
- * 测试结果保存在全局变量中，由 GDB 读取。
+/**
+ * @file robot_model_limits_test.c
+ * @brief 回归测试或夹具：robot model limits。
  */
 
 #include <stddef.h>
@@ -24,10 +8,7 @@
 
 #include "robot_model.h"
 
-
-/* =========================================================
- * Test Configuration
- * ========================================================= */
+/* Test Configuration */
 
 /*
  * 1 项模型指针检查 + 每轴 4 项限位检查。
@@ -38,10 +19,7 @@
 #define MODEL_LIMITS_TEST_COUNT \
     (1U + ROBOT_JOINT_COUNT * 4U)
 
-
-/* =========================================================
- * Expected Joint Limits
- * ========================================================= */
+/* Expected Joint Limits */
 
 /*
  * 当前仿真 UR5 URDF 的关节限位。
@@ -78,10 +56,7 @@ static const robot_joint_positions_t expected_max_positions =
     }
 };
 
-
-/* =========================================================
- * Test Report
- * ========================================================= */
+/* Test Report */
 
 /*
  * 通过 GDB 读取：
@@ -114,10 +89,7 @@ volatile model_limits_test_report_t
 volatile uint32_t
     g_model_limits_finished = 0U;
 
-
-/* =========================================================
- * Record Test Result
- * ========================================================= */
+/* Record Test Result */
 
 static void record_test_result(
     uint32_t condition
@@ -148,10 +120,7 @@ static void record_test_result(
     }
 }
 
-
-/* =========================================================
- * Joint Limit Validation
- * ========================================================= */
+/* Joint Limit Validation */
 
 static void run_joint_limit_test(void)
 {
@@ -214,10 +183,7 @@ static void run_joint_limit_test(void)
     }
 }
 
-
-/* =========================================================
- * GDB Completion Breakpoint
- * ========================================================= */
+/* GDB Completion Breakpoint */
 
 /*
  * 所有测试执行完毕后停在这里。
@@ -232,10 +198,7 @@ void qemu_model_limits_done(void)
     }
 }
 
-
-/* =========================================================
- * Main
- * ========================================================= */
+/* Main */
 
 int main(void)
 {

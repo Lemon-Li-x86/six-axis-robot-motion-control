@@ -1,7 +1,6 @@
-/* Timer0-based QEMU-only scheduling and processing-window samples.
- * For extended runs, retain the most recent 128 per-task samples.
- * No heap, no libc sorting, no duplicate clock constants and no
- * potentially blocking diagnostic calls in the production task path.
+/**
+ * @file stage4_timing_probe.c
+ * @brief Stage4 周期及执行时长探针。
  */
 #include <stdint.h>
 #include <string.h>

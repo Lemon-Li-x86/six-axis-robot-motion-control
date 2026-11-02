@@ -1,3 +1,8 @@
+/**
+ * @file uart_tx_manager.c
+ * @brief 串口完整帧发送互斥。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -7,9 +12,7 @@
 #include "uart_driver.h"
 #include "uart_tx_manager.h"
 
-
 static SemaphoreHandle_t uart_tx_mutex = NULL;
-
 
 robot_status_t uart_tx_manager_init(void)
 {
@@ -28,7 +31,6 @@ robot_status_t uart_tx_manager_init(void)
 
     return ROBOT_STATUS_OK;
 }
-
 
 robot_status_t uart_tx_manager_send_frame(
     const uint8_t *data,

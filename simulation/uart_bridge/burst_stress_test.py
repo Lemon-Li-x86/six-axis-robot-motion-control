@@ -1,10 +1,4 @@
-"""
-文件：burst_stress_test.py
-
-用途：
-对当前 QEMU Cortex-M4 UART 接收链路
-执行 Burst 压力测试。
-"""
+"""仿真脚本：burst stress。"""
 
 import select
 import socket
@@ -23,19 +17,13 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 # QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
 PORT = 5555
 
 
-# ==========================================================
 # Burst Configuration
-# ==========================================================
-
 # 每轮一次性发送的 Frame 数量。
 #
 # 从较小 Burst 开始逐级提高，
@@ -57,10 +45,7 @@ ACK_TIMEOUT = 10.0
 TEST_GAP = 0.5
 
 
-# ==========================================================
 # Test Payload Builder
-# ==========================================================
-
 def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
@@ -115,10 +100,7 @@ def build_joint_state_frame(
     return frame, payload
 
 
-# ==========================================================
 # Socket Settle
-# ==========================================================
-
 def settle_socket(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -176,10 +158,7 @@ def settle_socket(
         )
 
 
-# ==========================================================
 # Diagnostics
-# ==========================================================
-
 def query_rx_drop_count(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -282,10 +261,7 @@ def query_rx_drop_count(
     )
 
 
-# ==========================================================
 # ACK Collection
-# ==========================================================
-
 def collect_burst_acks(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -378,10 +354,7 @@ def collect_burst_acks(
     return received_payloads
 
 
-# ==========================================================
 # Single Burst Test
-# ==========================================================
-
 def run_burst_test(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -533,10 +506,7 @@ def run_burst_test(
     }
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     连接 QEMU UART 并依次执行所有 Burst Test。

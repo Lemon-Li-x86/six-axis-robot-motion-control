@@ -1,18 +1,6 @@
-
-/*
- * 文件：kinematics_self_test.c
- *
- * 用途：
- * 编排 Cortex-M4 启动前的运动学自测。
- *
- * 测试顺序：
- *
- * 1. Forward Kinematics；
- * 2. Analytic IK Solver；
- * 3. Solution Deduplication；
- * 4. Public IK Integration。
- *
- * 任何一项失败都阻止固件继续启动。
+/**
+ * @file kinematics_self_test.c
+ * @brief 回归测试或夹具：kinematics self。
  */
 
 #include "kinematics_self_test.h"
@@ -21,7 +9,6 @@
 #include "kinematics_ik_solver_test.h"
 #include "kinematics_dedup_test.h"
 #include "kinematics_ik_test.h"
-
 
 robot_status_t kinematics_self_test_run(void)
 {

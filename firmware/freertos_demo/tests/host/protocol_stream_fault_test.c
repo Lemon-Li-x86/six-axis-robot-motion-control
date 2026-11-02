@@ -1,7 +1,6 @@
-/*
- * Stage5 fault injection against the EXACT production C byte parser.
- * In-memory serial byte stream, not a claimed UART/FreeRTOS integration.
- * No alternative checksum implementation or duplicated wire constants.
+/**
+ * @file protocol_stream_fault_test.c
+ * @brief 回归测试或夹具：protocol stream fault。
  */
 #include <stddef.h>
 #include <stdint.h>

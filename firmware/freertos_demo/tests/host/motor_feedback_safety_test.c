@@ -1,9 +1,6 @@
-/*
- * Host-only long-run regression for feedback position overflow.
- *
- * The existing QEMU motor tests exercise short sequences. This test
- * deliberately accumulates enough valid wrap transitions to approach
- * int32 limits and verifies that a rejected frame changes no joint.
+/**
+ * @file motor_feedback_safety_test.c
+ * @brief 回归测试或夹具：motor feedback safety。
  */
 #include <stdint.h>
 #include <stdio.h>

@@ -1,0 +1,8 @@
+# Optional historical FK/IK numerical comparison tools (tools/analyze_ik_batch.py).
+# Install into a SEPARATE Python 3.11 virtual environment from Stage5 runtime.
+# This toolchain was not part of the 13-job Stage5 integration CI verdict.
+# Robot Toolbox compatibility is conservatively restricted to NumPy 1.x.
+numpy>=1.26,<2
+scipy>=1.11,<2
+roboticstoolbox-python
+spatialmath-python

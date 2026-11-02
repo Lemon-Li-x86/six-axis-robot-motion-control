@@ -1,19 +1,4 @@
-"""
-文件：communication_stress_test.py
-
-用途：
-对当前 QEMU Cortex-M4 UART 通信链路
-执行连续高频压力测试。
-
-测试内容：
-
-1. 按目标发送频率连续发送 JOINT_STATE；
-2. 同时消费 MCU 返回的 JOINT_STATE_ACK；
-3. 统计匹配 ACK 数量；
-4. 统计最终丢失 Frame 数量；
-5. 记录实际发送耗时；
-6. 根据实际耗时计算真实平均发送频率。
-"""
+"""仿真脚本：communication stress。"""
 
 import select
 import socket
@@ -29,18 +14,12 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 HOST = "127.0.0.1"
 PORT = 5555
 
 
-# ==========================================================
 # Stress Test Configuration
-# ==========================================================
-
 # 每一轮要求 Python 尝试达到的目标发送频率。
 #
 # 单位：
@@ -63,10 +42,7 @@ ACK_DRAIN_TIMEOUT = 2.0
 RATE_TEST_GAP = 0.5
 
 
-# ==========================================================
 # Test Payload Builder
-# ==========================================================
-
 def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
@@ -120,10 +96,7 @@ def build_joint_state_frame(
     return frame, payload
 
 
-# ==========================================================
 # Receive Current Data
-# ==========================================================
-
 def receive_current_data(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -186,10 +159,7 @@ def receive_current_data(
                 )
 
 
-# ==========================================================
 # ACK Drain
-# ==========================================================
-
 def drain_remaining_acks(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -279,10 +249,7 @@ def drain_remaining_acks(
                 )
 
 
-# ==========================================================
 # Single Rate Test
-# ==========================================================
-
 def run_rate_test(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -445,10 +412,7 @@ def run_rate_test(
     )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     连接 QEMU UART 并依次执行全部 Rate Test。

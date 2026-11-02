@@ -1,15 +1,6 @@
-/*
- * Stage4 QEMU-only RTOS closed-loop TASK PATH smoke.
- *
- * Tests feedback -> request -> trajectory -> control PID -> monitor.
- * This uses an intentionally IMMOBILE plant (feedback remains fixed),
- * with ROBOT_ENABLE_STAGE4_COMMAND_OUTPUT forcibly OFF at CMake level.
- *
- * Does not claim dynamic tracking or UART acceptance; those require
- * PyBullet/native bridge and later end-to-end UART integration.
- *
- * Compiled ONLY under ROBOT_ENABLE_STAGE4_QEMU_MOTION_SELF_TEST. Never
- * enable this in deployable production builds.
+/**
+ * @file stage4_rtos_selftest.c
+ * @brief 回归测试或夹具：stage4 rtos selftest。
  */
 #include <stdint.h>
 

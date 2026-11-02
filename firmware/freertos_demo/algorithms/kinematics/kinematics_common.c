@@ -1,8 +1,6 @@
-/*
- * 文件：kinematics_common.c
- *
- * 用途：
- * 实现 Kinematics Module 内部真正共享的基础逻辑。
+/**
+ * @file kinematics_common.c
+ * @brief 运动学共享换算函数。
  */
 
 #include <stddef.h>
@@ -11,7 +9,6 @@
 
 #include "kinematics_private.h"
 #include "matrix4.h"
-
 
 robot_real_t
 kinematics_abs_real(
@@ -32,7 +29,6 @@ kinematics_abs_real(
         value;
 }
 
-
 robot_real_t
 kinematics_normalize_angle_rad(
     robot_real_t angle_rad
@@ -48,7 +44,6 @@ kinematics_normalize_angle_rad(
             KINEMATICS_TWO_PI_F;
     }
 
-
     while (
         angle_rad
         <
@@ -59,11 +54,9 @@ kinematics_normalize_angle_rad(
             KINEMATICS_TWO_PI_F;
     }
 
-
     return
         angle_rad;
 }
-
 
 robot_real_t
 kinematics_sqrt_nonnegative(
@@ -73,10 +66,8 @@ kinematics_sqrt_nonnegative(
     robot_real_t
         estimate;
 
-
     uint32_t
         iteration;
-
 
     if (
         value
@@ -88,7 +79,6 @@ kinematics_sqrt_nonnegative(
             0.0F;
     }
 
-
     estimate =
         (
             value
@@ -99,7 +89,6 @@ kinematics_sqrt_nonnegative(
         value
         :
         1.0F;
-
 
     for (
         iteration = 0U;
@@ -119,15 +108,11 @@ kinematics_sqrt_nonnegative(
             );
     }
 
-
     return
         estimate;
 }
 
-
-/* =========================================================
- * Joint Angle Conversion
- * ========================================================= */
+/* Joint Angle Conversion */
 
 static int16_t
 kinematics_angle_rad_to_joint_value(
@@ -137,32 +122,26 @@ kinematics_angle_rad_to_joint_value(
     robot_real_t
         angle_deg;
 
-
     robot_real_t
         scaled_value;
 
-
     int32_t
         rounded_value;
-
 
     angle_rad =
         kinematics_normalize_angle_rad(
             angle_rad
         );
 
-
     angle_deg =
         angle_rad
         *
         KINEMATICS_RAD_TO_DEG_F;
 
-
     scaled_value =
         angle_deg
         /
         ROBOT_JOINT_ANGLE_UNIT_DEG;
-
 
     if (
         scaled_value
@@ -189,7 +168,6 @@ kinematics_angle_rad_to_joint_value(
             );
     }
 
-
     while (
         rounded_value
         >=
@@ -199,7 +177,6 @@ kinematics_angle_rad_to_joint_value(
         rounded_value -=
             ROBOT_JOINT_FULL_TURN_RAW;
     }
-
 
     while (
         rounded_value
@@ -211,16 +188,12 @@ kinematics_angle_rad_to_joint_value(
             ROBOT_JOINT_FULL_TURN_RAW;
     }
 
-
     return
         (int16_t)
         rounded_value;
 }
 
-
-/* =========================================================
- * Solution Helpers
- * ========================================================= */
+/* Solution Helpers */
 
 void
 kinematics_build_joint_solution(
@@ -241,7 +214,6 @@ kinematics_build_joint_solution(
     {
         return;
     }
-
 
     solution->value[0] =
         kinematics_angle_rad_to_joint_value(
@@ -274,7 +246,6 @@ kinematics_build_joint_solution(
         );
 }
 
-
 static uint8_t
 kinematics_joint_solution_equal(
     const robot_joint_angles_t *left,
@@ -283,7 +254,6 @@ kinematics_joint_solution_equal(
 {
     uint32_t
         joint_index;
-
 
     if (
         left
@@ -298,7 +268,6 @@ kinematics_joint_solution_equal(
         return
             0U;
     }
-
 
     for (
         joint_index = 0U;
@@ -321,11 +290,9 @@ kinematics_joint_solution_equal(
         }
     }
 
-
     return
         1U;
 }
-
 
 robot_status_t
 kinematics_add_solution_if_unique(
@@ -335,7 +302,6 @@ kinematics_add_solution_if_unique(
 {
     uint32_t
         solution_index;
-
 
     if (
         solutions
@@ -350,7 +316,6 @@ kinematics_add_solution_if_unique(
         return
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
-
 
     for (
         solution_index = 0U;
@@ -372,7 +337,6 @@ kinematics_add_solution_if_unique(
         }
     }
 
-
     if (
         solutions->count
         >=
@@ -383,24 +347,18 @@ kinematics_add_solution_if_unique(
             ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
-
     solutions->solutions[
         solutions->count
     ] =
         *candidate;
 
-
     solutions->count++;
-
 
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Public Transform -> Standard DH Transform
- * ========================================================= */
+/* Public Transform -> Standard DH Transform */
 
 robot_status_t
 kinematics_public_to_dh_transform(
@@ -412,10 +370,8 @@ kinematics_public_to_dh_transform(
     robot_transform_t
         converted;
 
-
     robot_status_t
         status;
-
 
     if (
         model
@@ -435,14 +391,12 @@ kinematics_public_to_dh_transform(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     status =
         matrix4_multiply(
             &model->base_frame_conversion_inverse,
             public_transform,
             &converted
         );
-
 
     if (
         status
@@ -453,7 +407,6 @@ kinematics_public_to_dh_transform(
         return
             status;
     }
-
 
     return
         matrix4_multiply(

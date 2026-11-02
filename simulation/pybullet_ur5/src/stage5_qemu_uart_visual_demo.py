@@ -39,10 +39,7 @@ from stage4_dynamic_closed_loop import (
 )
 
 
-# ============================================================
 # Demonstration-only fixtures and thresholds
-# ============================================================
-
 # Centidegrees, in the canonical six-joint order from the shared model.
 # These are motion *requests*, not robot limits or PID parameters.
 SCENARIOS: dict[str, tuple[tuple[int, ...], ...]] = {

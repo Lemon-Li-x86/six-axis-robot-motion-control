@@ -1,3 +1,8 @@
+/**
+ * @file potential_field.c
+ * @brief C APF 单步避障规划。
+ */
+
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>

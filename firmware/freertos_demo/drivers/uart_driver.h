@@ -1,17 +1,6 @@
-/*
- * 文件：uart_driver.h
- *
- * 用途：
- * 定义 MPS2-AN386 CMSDK APB UART0
- * 驱动公共接口。
- *
- * 当前提供：
- *
- * 1. UART RX / TX Interrupt；
- * 2. RX / TX Ring Buffer；
- * 3. RX Event Callback；
- * 4. RX Drop Counter；
- * 5. TX Busy State。
+/**
+ * @file uart_driver.h
+ * @brief UART 驱动接口。
  */
 
 #ifndef UART_DRIVER_H
@@ -21,10 +10,7 @@
 
 #include "error_code.h"
 
-
-/* =========================================================
- * RX Event Callback
- * ========================================================= */
+/* RX Event Callback */
 
 /**
  * @brief UART RX 事件回调类型。
@@ -35,10 +21,7 @@
  */
 typedef void (*uart_driver_rx_event_callback_t)(void);
 
-
-/* =========================================================
- * Driver Initialization
- * ========================================================= */
+/* Driver Initialization */
 
 /**
  * @brief 初始化 UART0 Driver。
@@ -51,7 +34,6 @@ typedef void (*uart_driver_rx_event_callback_t)(void);
  * 初始化成功。
  */
 robot_status_t uart_driver_init(void);
-
 
 /**
  * @brief 开启 UART0 RX Interrupt。
@@ -69,7 +51,6 @@ robot_status_t uart_driver_init(void);
  */
 robot_status_t uart_driver_enable_rx_interrupt(void);
 
-
 /**
  * @brief 注册 UART RX ISR 事件回调。
  *
@@ -82,10 +63,7 @@ void uart_driver_set_rx_event_callback(
     uart_driver_rx_event_callback_t callback
 );
 
-
-/* =========================================================
- * TX API
- * ========================================================= */
+/* TX API */
 
 /**
  * @brief 将一段数据加入 UART TX Ring Buffer。
@@ -129,7 +107,6 @@ robot_status_t uart_driver_write(
     uint32_t length
 );
 
-
 /**
  * @brief 查询 UART TX 是否仍在发送。
  *
@@ -142,10 +119,7 @@ robot_status_t uart_driver_write(
  */
 uint8_t uart_driver_is_tx_busy(void);
 
-
-/* =========================================================
- * RX API
- * ========================================================= */
+/* RX API */
 
 /**
  * @brief 从 UART RX Ring Buffer 读取一个字节。
@@ -164,7 +138,6 @@ uint8_t uart_driver_read_byte(
     uint8_t *data
 );
 
-
 /**
  * @brief 获取 RX Ring Buffer 溢出丢失字节数。
  *
@@ -174,21 +147,16 @@ uint8_t uart_driver_read_byte(
  */
 uint32_t uart_driver_get_rx_drop_count(void);
 
-
-/* =========================================================
- * Interrupt Handlers
- * ========================================================= */
+/* Interrupt Handlers */
 
 /**
  * @brief UART0 RX Interrupt Handler。
  */
 void UART0_RX_IRQHandler(void);
 
-
 /**
  * @brief UART0 TX Interrupt Handler。
  */
 void UART0_TX_IRQHandler(void);
-
 
 #endif

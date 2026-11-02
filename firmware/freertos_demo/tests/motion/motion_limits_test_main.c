@@ -1,21 +1,6 @@
-
-/*
- * 文件：motion_limits_test_main.c
- *
- * 用途：
- * 在 Cortex-M4 / QEMU 上验证 Motion Limits：
- *
- * 1. 连续关节位置的边界检查；
- * 2. Canonical Angle 的合法圈数展开；
- * 3. 接近 +/-180° 的跨边界情况；
- * 4. 第三关节的特殊限位；
- * 5. 输入异常和失败时输出不变。
- *
- * QEMU 测试结果通过 GDB 从全局变量读取。
- *
- * 本文件同时支持：
- * - ARM GCC / QEMU
- * - Windows MSVC Host Test
+/**
+ * @file motion_limits_test_main.c
+ * @brief 回归测试或夹具：motion limits。
  */
 
 #include <stddef.h>
@@ -23,13 +8,9 @@
 
 #include "motion_limits.h"
 
-
-/* =========================================================
- * Test Configuration
- * ========================================================= */
+/* Test Configuration */
 
 #define MOTION_LIMITS_TEST_CAPACITY 40U
-
 
 typedef struct
 {
@@ -40,18 +21,12 @@ typedef struct
 
 } motion_limits_test_report_t;
 
-
-/* =========================================================
- * GDB Test Report
- * ========================================================= */
+/* GDB Test Report */
 
 volatile motion_limits_test_report_t g_motion_limits_test_report;
 volatile uint32_t g_motion_limits_finished = 0U;
 
-
-/* =========================================================
- * Test Helpers
- * ========================================================= */
+/* Test Helpers */
 
 static void record_test_result(uint32_t passed)
 {
@@ -80,7 +55,6 @@ static void record_test_result(uint32_t passed)
     }
 }
 
-
 /*
  * 在给定关节赋值，其余关节保持零位，
  * 验证六轴位置检查结果。
@@ -100,7 +74,6 @@ static uint32_t test_one_position(
         == expected_status
     ) ? 1U : 0U;
 }
-
 
 /*
  * 只改变指定关节，
@@ -148,10 +121,7 @@ static uint32_t test_one_unwrap(
     return 1U;
 }
 
-
-/* =========================================================
- * Boundary and Error Tests
- * ========================================================= */
+/* Boundary and Error Tests */
 
 static void run_check_tests(void)
 {
@@ -215,7 +185,6 @@ static void run_check_tests(void)
         )
     );
 }
-
 
 static void run_unwrap_tests(void)
 {
@@ -413,10 +382,7 @@ static void run_unwrap_tests(void)
     }
 }
 
-
-/* =========================================================
- * GDB Completion Breakpoint
- * ========================================================= */
+/* GDB Completion Breakpoint */
 
 /*
  * GCC 专用 noinline 属性只在 ARM 测试中使用。
@@ -442,10 +408,7 @@ void qemu_motion_limits_done(void)
 #endif
 }
 
-
-/* =========================================================
- * Main
- * ========================================================= */
+/* Main */
 
 int main(void)
 {

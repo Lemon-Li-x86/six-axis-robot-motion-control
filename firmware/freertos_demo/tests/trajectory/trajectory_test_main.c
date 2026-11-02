@@ -1,6 +1,6 @@
-/*
- * Stage 4 host-only regression for standalone trajectory algorithms.
- * No UR5 constants, FreeRTOS, QEMU or motor driver needed.
+/**
+ * @file trajectory_test_main.c
+ * @brief 回归测试或夹具：trajectory。
  */
 #include <math.h>
 #include <stdint.h>

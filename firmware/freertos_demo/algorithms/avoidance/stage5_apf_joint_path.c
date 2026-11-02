@@ -1,3 +1,8 @@
+/**
+ * @file stage5_apf_joint_path.c
+ * @brief APF 航点转 IK 和梯形关节段。
+ */
+
 #include <float.h>
 #include <math.h>
 #include <stddef.h>

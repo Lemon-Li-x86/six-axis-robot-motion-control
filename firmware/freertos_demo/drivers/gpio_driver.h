@@ -1,21 +1,6 @@
-/*
- * 文件：gpio_driver.h
- *
- * 用途：
- * 定义通用 GPIO 输出控制接口。
- *
- * 当前项目运行于：
- *
- * QEMU MPS2-AN386
- *
- * 当前 QEMU 环境没有提供可直接使用的
- * CMSDK AHB GPIO 实际行为，因此驱动支持：
- *
- * 1. CMSDK GPIO MMIO Backend；
- * 2. QEMU Shadow Backend。
- *
- * 上层模块统一使用本文件提供的接口，
- * 不直接访问 GPIO 寄存器。
+/**
+ * @file gpio_driver.h
+ * @brief GPIO 接口。
  */
 
 #ifndef GPIO_DRIVER_H
@@ -25,20 +10,14 @@
 
 #include "error_code.h"
 
-
-/* =========================================================
- * GPIO 基本配置
- * ========================================================= */
+/* GPIO 基本配置 */
 
 /*
  * 当前 GPIO0 按 32 bit GPIO Port 处理。
  */
 #define GPIO_DRIVER_PIN_COUNT 32U
 
-
-/* =========================================================
- * GPIO Level
- * ========================================================= */
+/* GPIO Level */
 
 typedef enum
 {
@@ -48,10 +27,7 @@ typedef enum
 
 } gpio_driver_level_t;
 
-
-/* =========================================================
- * GPIO Driver API
- * ========================================================= */
+/* GPIO Driver API */
 
 /**
  * @brief 初始化 GPIO Driver。
@@ -72,7 +48,6 @@ typedef enum
  * 初始化成功。
  */
 robot_status_t gpio_driver_init(void);
-
 
 /**
  * @brief 将指定 GPIO0 引脚配置为普通输出。
@@ -97,7 +72,6 @@ robot_status_t gpio_driver_init(void);
 robot_status_t gpio_driver_configure_output(
     uint8_t pin
 );
-
 
 /**
  * @brief 设置指定 GPIO 输出引脚电平。
@@ -129,7 +103,6 @@ robot_status_t gpio_driver_write(
     gpio_driver_level_t level
 );
 
-
 /**
  * @brief 翻转指定 GPIO 输出引脚电平。
  *
@@ -153,7 +126,6 @@ robot_status_t gpio_driver_write(
 robot_status_t gpio_driver_toggle(
     uint8_t pin
 );
-
 
 /**
  * @brief 获取当前 GPIO 输出锁存状态。
@@ -193,7 +165,6 @@ robot_status_t gpio_driver_get_output_level(
     gpio_driver_level_t *level
 );
 
-
 /**
  * @brief 判断当前是否使用真实 GPIO MMIO Backend。
  *
@@ -206,6 +177,5 @@ robot_status_t gpio_driver_get_output_level(
  * 使用 QEMU Shadow Backend。
  */
 uint8_t gpio_driver_is_mmio_backend(void);
-
 
 #endif

@@ -1,13 +1,16 @@
+/**
+ * @file uart_driver.c
+ * @brief UART MMIO、ISR 和字节收发。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
 #include "uart_driver.h"
+#include "board.h"
 #include "ring_buffer.h"
 
-
-/* =========================================================
- * UART / NVIC Configuration
- * ========================================================= */
+/* UART / NVIC Configuration */
 
 /*
  * MPS2-AN386:
@@ -24,35 +27,25 @@
 #define UART0_TX_IRQ_MASK \
     (1UL << UART0_TX_IRQ_NUMBER)
 
-#define UART_IRQ_PRIORITY_VALUE 0x80U
+#define UART_IRQ_PRIORITY_VALUE BOARD_UART_IRQ_PRIORITY
 
-
-/* =========================================================
- * UART CTRL
- * ========================================================= */
+/* UART CTRL */
 
 #define UART_CTRL_TX_ENABLE             (1UL << 0)
 #define UART_CTRL_RX_ENABLE             (1UL << 1)
 #define UART_CTRL_TX_INTERRUPT_ENABLE   (1UL << 2)
 #define UART_CTRL_RX_INTERRUPT_ENABLE   (1UL << 3)
 
-
-/* =========================================================
- * UART Interrupt Status
- * ========================================================= */
+/* UART Interrupt Status */
 
 #define UART_INTERRUPT_TX (1UL << 0)
 #define UART_INTERRUPT_RX (1UL << 1)
 
-
-/* =========================================================
- * Register Backend
- * ========================================================= */
+/* Register Backend */
 
 #ifdef UART_DRIVER_HOST_TEST
 
 #include "uart_driver_test_backend.h"
-
 
 #define UART0_DATA \
     uart_driver_test_uart0_data
@@ -69,7 +62,6 @@
 #define UART0_BAUDDIV \
     uart_driver_test_uart0_bauddiv
 
-
 #define NVIC_ISER0 \
     uart_driver_test_nvic_iser0
 
@@ -79,16 +71,13 @@
 #define NVIC_ICPR0 \
     uart_driver_test_nvic_icpr0
 
-
 #define UART0_RX_IRQ_PRIORITY \
     uart_driver_test_nvic_ipr[UART0_RX_IRQ_NUMBER]
 
 #define UART0_TX_IRQ_PRIORITY \
     uart_driver_test_nvic_ipr[UART0_TX_IRQ_NUMBER]
 
-
 #else
-
 
 #define UART0_BASE 0x40004000UL
 
@@ -107,7 +96,6 @@
 #define UART0_BAUDDIV \
     (*(volatile uint32_t *)(UART0_BASE + 0x010UL))
 
-
 #define NVIC_ISER0 \
     (*(volatile uint32_t *)0xE000E100UL)
 
@@ -119,7 +107,6 @@
 
 #define NVIC_IPR_BASE 0xE000E400UL
 
-
 #define UART0_RX_IRQ_PRIORITY \
     (*(volatile uint8_t *)( \
         NVIC_IPR_BASE + UART0_RX_IRQ_NUMBER \
@@ -130,12 +117,9 @@
         NVIC_IPR_BASE + UART0_TX_IRQ_NUMBER \
     ))
 
-
 #endif
 
-/* =========================================================
- * Driver State
- * ========================================================= */
+/* Driver State */
 
 static ring_buffer_t uart_rx_buffer;
 static ring_buffer_t uart_tx_buffer;
@@ -148,10 +132,7 @@ static uint8_t uart_driver_initialized = 0U;
 static uart_driver_rx_event_callback_t
     uart_rx_event_callback = NULL;
 
-
-/* =========================================================
- * Internal Helpers
- * ========================================================= */
+/* Internal Helpers */
 
 static uint32_t uart_driver_ring_buffer_used(
     const ring_buffer_t *buffer
@@ -172,7 +153,6 @@ static uint32_t uart_driver_ring_buffer_used(
     );
 }
 
-
 static uint32_t uart_driver_tx_free_space(void)
 {
     uint32_t used =
@@ -190,10 +170,7 @@ static uint32_t uart_driver_tx_free_space(void)
     );
 }
 
-
-/* =========================================================
- * Initialization
- * ========================================================= */
+/* Initialization */
 
 robot_status_t uart_driver_init(void)
 {
@@ -249,10 +226,7 @@ robot_status_t uart_driver_init(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * RX Callback
- * ========================================================= */
+/* RX Callback */
 
 void uart_driver_set_rx_event_callback(
     uart_driver_rx_event_callback_t callback
@@ -261,10 +235,7 @@ void uart_driver_set_rx_event_callback(
     uart_rx_event_callback = callback;
 }
 
-
-/* =========================================================
- * Enable RX Interrupt
- * ========================================================= */
+/* Enable RX Interrupt */
 
 robot_status_t uart_driver_enable_rx_interrupt(void)
 {
@@ -291,10 +262,7 @@ robot_status_t uart_driver_enable_rx_interrupt(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Interrupt Driven TX
- * ========================================================= */
+/* Interrupt Driven TX */
 
 robot_status_t uart_driver_write(
     const uint8_t *data,
@@ -427,10 +395,7 @@ robot_status_t uart_driver_write(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * RX Ring Buffer
- * ========================================================= */
+/* RX Ring Buffer */
 
 uint8_t uart_driver_read_byte(
     uint8_t *data
@@ -448,26 +413,19 @@ uint8_t uart_driver_read_byte(
     );
 }
 
-
 uint32_t uart_driver_get_rx_drop_count(void)
 {
     return uart_rx_drop_count;
 }
 
-
-/* =========================================================
- * TX State
- * ========================================================= */
+/* TX State */
 
 uint8_t uart_driver_is_tx_busy(void)
 {
     return uart_tx_active;
 }
 
-
-/* =========================================================
- * UART0 RX IRQ
- * ========================================================= */
+/* UART0 RX IRQ */
 
 void UART0_RX_IRQHandler(void)
 {
@@ -500,10 +458,7 @@ void UART0_RX_IRQHandler(void)
     }
 }
 
-
-/* =========================================================
- * UART0 TX IRQ
- * ========================================================= */
+/* UART0 TX IRQ */
 
 void UART0_TX_IRQHandler(void)
 {

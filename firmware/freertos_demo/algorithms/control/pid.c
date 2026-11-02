@@ -1,3 +1,8 @@
+/**
+ * @file pid.c
+ * @brief 增量式 PID 与抗饱和处理。
+ */
+
 #include <math.h>
 #include <float.h>
 #include <stddef.h>

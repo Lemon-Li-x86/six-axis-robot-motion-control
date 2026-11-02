@@ -1,22 +1,6 @@
-
-/*
- * File: ik_solution_selector.h
- *
- * Stage 3: IK Candidate Selection
- *
- * Responsibilities:
- * 1. Filter candidates using robot joint limits.
- * 2. Convert canonical angles to continuous positions.
- * 3. Evaluate joint travel.
- * 4. Penalize proximity to joint limits.
- * 5. Detect selected elbow and wrist singularity risks.
- * 6. Return the preferred continuous joint target.
- *
- * This module does NOT:
- * - Generate a trajectory;
- * - Control motors;
- * - Access FreeRTOS;
- * - Perform collision detection.
+/**
+ * @file ik_solution_selector.h
+ * @brief IK 选解接口。
  */
 
 #ifndef IK_SOLUTION_SELECTOR_H
@@ -27,7 +11,6 @@
 #include "kinematics.h"
 #include "robot_types.h"
 #include "error_code.h"
-
 
 typedef struct
 {
@@ -65,7 +48,6 @@ typedef struct
     robot_real_t score;
 
 } ik_selection_result_t;
-
 
 /*
  * Select the preferred IK solution.

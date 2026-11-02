@@ -1,15 +1,6 @@
-/*
- * 文件：performance_monitor.c
- *
- * 用途：
- * 实现固件内部性能基线统计。
- *
- * 当前包括：
- *
- * 1. Protocol Parser 单帧执行时间；
- * 2. UART RX ISR -> ProtocolRX Task 唤醒时间。
- *
- * 测量结果统一使用 QEMU CMSDK APB Timer0 Tick。
+/**
+ * @file performance_monitor.c
+ * @brief 任务与协议运行性能监测。
  */
 
 #include <stddef.h>
@@ -19,26 +10,19 @@
 #include "timer_driver.h"
 #include "protocol.h"
 
-
-/* =========================================================
- * Parser Benchmark Statistics
- * ========================================================= */
+/* Parser Benchmark Statistics */
 
 static uint32_t parser_sample_count = 0U;
 static uint32_t parser_min_ticks = 0U;
 static uint32_t parser_max_ticks = 0U;
 static uint64_t parser_total_ticks = 0U;
 
-
-/* =========================================================
- * Task Wakeup Statistics
- * ========================================================= */
+/* Task Wakeup Statistics */
 
 static uint32_t task_wakeup_sample_count = 0U;
 static uint32_t task_wakeup_min_ticks = 0U;
 static uint32_t task_wakeup_max_ticks = 0U;
 static uint64_t task_wakeup_total_ticks = 0U;
-
 
 /*
  * 由 ProtocolRX Task 在进入阻塞等待前置 1。
@@ -48,23 +32,18 @@ static uint64_t task_wakeup_total_ticks = 0U;
  */
 static volatile uint8_t task_wakeup_measurement_armed = 0U;
 
-
 /*
  * 表示已经记录 ISR 起始时间，
  * 正在等待 ProtocolRX Task 被唤醒。
  */
 static volatile uint8_t task_wakeup_measurement_pending = 0U;
 
-
 /*
  * UART RX ISR 记录的 Timer0 Counter。
  */
 static volatile uint32_t task_wakeup_start_counter = 0U;
 
-
-/* =========================================================
- * Statistics Helper
- * ========================================================= */
+/* Statistics Helper */
 
 static void performance_monitor_update_statistics(
     uint32_t sample_ticks,
@@ -100,10 +79,7 @@ static void performance_monitor_update_statistics(
     *total_ticks += (uint64_t)sample_ticks;
 }
 
-
-/* =========================================================
- * Initialization
- * ========================================================= */
+/* Initialization */
 
 void performance_monitor_init(void)
 {
@@ -122,10 +98,7 @@ void performance_monitor_init(void)
     task_wakeup_start_counter = 0U;
 }
 
-
-/* =========================================================
- * Parser Benchmark
- * ========================================================= */
+/* Parser Benchmark */
 
 robot_status_t performance_monitor_run_parser_benchmark(
     uint32_t sample_count
@@ -253,10 +226,7 @@ robot_status_t performance_monitor_run_parser_benchmark(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * UART ISR -> ProtocolRX Task Wakeup Measurement
- * ========================================================= */
+/* UART ISR -> ProtocolRX Task Wakeup Measurement */
 
 void performance_monitor_arm_task_wakeup(void)
 {
@@ -269,7 +239,6 @@ void performance_monitor_arm_task_wakeup(void)
         task_wakeup_measurement_armed = 1U;
     }
 }
-
 
 void performance_monitor_mark_rx_isr(void)
 {
@@ -291,7 +260,6 @@ void performance_monitor_mark_rx_isr(void)
         task_wakeup_measurement_armed = 0U;
     }
 }
-
 
 void performance_monitor_record_task_wakeup(void)
 {
@@ -327,10 +295,7 @@ void performance_monitor_record_task_wakeup(void)
     }
 }
 
-
-/* =========================================================
- * Metrics Query
- * ========================================================= */
+/* Metrics Query */
 
 robot_status_t performance_monitor_get_metrics(
     performance_metrics_t *metrics

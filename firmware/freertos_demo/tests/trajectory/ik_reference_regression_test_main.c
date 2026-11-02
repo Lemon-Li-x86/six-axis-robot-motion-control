@@ -1,10 +1,6 @@
-/*
- * Stage3 near-singular IK regression, executed on the host.
- * Reproduce the real QEMU J3=0, J5=+/-0.01 degree branch-loss pair.
- *
- * This tests a real joint reference, not a hidden oracle in production:
- * the reference is explicitly provided by the caller. It must never
- * loosen cosine geometry tolerance or bypass the motion selector.
+/**
+ * @file ik_reference_regression_test_main.c
+ * @brief 回归测试或夹具：ik reference regression。
  */
 #include <math.h>
 #include <stdio.h>

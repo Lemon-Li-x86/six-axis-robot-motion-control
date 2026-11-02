@@ -1,22 +1,11 @@
-"""
-文件：uart_receiver.py
-
-用途：
-通过 TCP 连接 QEMU UART0，
-接收并解析 Cortex-M4 发出的六轴目标角协议帧。
-
-本脚本主要用于早期 UART 通信链路人工验证。
-"""
+"""仿真脚本：uart receiver。"""
 
 import socket
 import struct
 import time
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 # QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
 PORT = 5555
@@ -28,10 +17,7 @@ RECONNECT_DELAY_S = 0.5
 SOCKET_RECV_SIZE = 1024
 
 
-# ==========================================================
 # Protocol Constants
-# ==========================================================
-
 HEADER = b"\xAA\x55"
 
 CMD_SET_JOINT_TARGETS = 0x01
@@ -49,10 +35,7 @@ PROTOCOL_MIN_FRAME_LEN = 5
 JOINT_ANGLE_SCALE = 100.0
 
 
-# ==========================================================
 # Frame Parser
-# ==========================================================
-
 def parse_frame(frame: bytes) -> None:
     """
     校验并打印一个完整 UART 协议帧。
@@ -113,10 +96,7 @@ def parse_frame(frame: bytes) -> None:
         )
 
 
-# ==========================================================
 # TCP Receiver
-# ==========================================================
-
 def main() -> None:
     """
     连接 QEMU UART TCP Server 并持续接收协议帧。

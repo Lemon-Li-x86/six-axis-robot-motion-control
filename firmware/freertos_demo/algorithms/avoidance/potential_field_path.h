@@ -1,18 +1,26 @@
-/* Bounded multi-step Cartesian APF path. Pure C, never actuates motors.
- * Output contains intermediate end-effector points, NOT a robot-safe plan.
- * Each swept point segment is checked by robot_apf_step against AABBs.
- * ALL robot links, IK, timing and joint constraints remain caller gates.
+/**
+ * @file potential_field_path.h
+ * @brief APF 路线接口。
  */
 #ifndef ROBOT_POTENTIAL_FIELD_PATH_H
 #define ROBOT_POTENTIAL_FIELD_PATH_H
 #include "potential_field.h"
 
-/* On success, points[0..*count-1] are successive waypoints from start.
- * *count=0 is legal when start is already inside goal tolerance.
- * On error, *count=0 and points are unchanged (two-pass preflight).
- * No allocation, no global state. Capacity must be >0.
- * Finite capacity is the mandatory escape from APF local minima/cycles.
+/**
+ * @brief 在固定容量缓冲区生成连续 APF 航点。
+ * @param[in] start 起点，mm。
+ * @param[in] goal 终点，mm。
+ * @param[in] obstacles 静态障碍数组。
+ * @param[in] obstacle_count 障碍数量。
+ * @param[in] config APF 策略配置。
+ * @param[out] points 逐步航点，失败时保持不变。
+ * @param[in] capacity 航点缓冲容量。
+ * @param[out] count 输出航点数量；已到目标时为 0，失败时为 0。
+ * @return ROBOT_STATUS_OK 或相应错误码。
+ *
+ * @note 有界循环检测局部停滞；使用两阶段检查保持输出原子性。
  */
+
 robot_status_t robot_apf_plan_path(
     const robot_apf_point_t *start,
     const robot_apf_point_t *goal,
@@ -23,19 +31,22 @@ robot_status_t robot_apf_plan_path(
     size_t capacity,
     size_t *count);
 
-/* Deterministic, allocation-free AABB bypass candidates.
- * This is a geometric proposal generator, NOT a second potential-field law.
- * The application must run each proposed via through production C APF,
- * C IK, the complete PyBullet swept-link preflight and runtime clearance.
- *
- * The current bounded version supports one static AABB intersecting the
- * direct segment. Other obstacle sets are rejected rather than ignored.
- * Generated candidates depend only on observed geometry and the caller's
- * existing APF clearance/step policy: no hidden robot/scene defaults.
- */
+/* 单个相交 AABB 的确定性绕行候选；应用层负责 IK 和全连杆校验。 */
 #define ROBOT_APF_BYPASS_MAX_CANDIDATES 12U
-/* Host ctypes asks C for the authoritative maximum; no mirrored literal. */
+/** @brief 查询生产 C 绕行候选缓冲区容量。 */
 size_t robot_apf_bypass_capacity(void);
+/**
+ * @brief 生成受静态 AABB 约束的笛卡尔绕行候选点。
+ * @param[in] start 当前点，mm。
+ * @param[in] goal 目标点，mm。
+ * @param[in] obstacle 静态障碍。
+ * @param[in] obstacle_count 当前支持的障碍数量。
+ * @param[in] config APF 余量与步长策略。
+ * @param[out] via_candidates 候选航点缓冲。
+ * @param[in] capacity 缓冲区容量。
+ * @param[out] out_count 实际生成的候选数量。
+ * @return ROBOT_STATUS_OK 或相应错误码。
+ */
 robot_status_t robot_apf_generate_bypass_vias(
     const robot_apf_point_t *start,
     const robot_apf_point_t *goal,

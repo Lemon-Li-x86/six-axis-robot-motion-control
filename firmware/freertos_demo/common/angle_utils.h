@@ -1,5 +1,6 @@
-/* One canonicalization utility for continuous->wire/kinematics angles.
- * Not a model or configuration file. Units are defined only in robot_types.
+/**
+ * @file angle_utils.h
+ * @brief 角度转换接口。
  */
 #ifndef ROBOT_ANGLE_UTILS_H
 #define ROBOT_ANGLE_UTILS_H

@@ -1,8 +1,7 @@
-"""Run Stage5 using an existing CPython and another environment's packages.
+"""Run Stage5 with an existing CPython interpreter and package directory.
 
-This only prepends an existing site-packages directory to sys.path in this
-Python process. No pip, venv creation, persistent environment variables or
-on-disk package modifications. Explicit opt-in only.
+The selected site-packages path is added to this process's import search path.
+The user's installed environments remain unchanged.
 """
 from __future__ import annotations
 

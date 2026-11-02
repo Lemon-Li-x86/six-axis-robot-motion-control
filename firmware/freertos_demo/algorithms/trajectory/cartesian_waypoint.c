@@ -1,3 +1,8 @@
+/**
+ * @file cartesian_waypoint.c
+ * @brief 笛卡尔航点与 IK 转换。
+ */
+
 #include <stddef.h>
 #include "cartesian_trajectory.h"
 #include "kinematics.h"

@@ -1,21 +1,6 @@
-/*
- * 文件：kinematics_ik_test.c
- *
- * 用途：
- * 验证 Public kinematics_inverse() 行为。
- *
- * 当前覆盖：
- *
- * 1. NULL Pointer Contract；
- * 2. 8-Solution Assembly；
- * 3. Canonical Angle；
- * 4. Duplicate-Free Output；
- * 5. True Duplicate Collapse；
- * 6. Original Configuration Presence；
- * 7. 多组普通 Pose 的 IK -> FK Round-Trip；
- * 8. 明确不可达目标；
- * 9. Public Singularity；
- * 10. Near-Wrist-Singularity 可解边界。
+/**
+ * @file kinematics_ik_test.c
+ * @brief 回归测试或夹具：kinematics ik。
  */
 
 #include <stddef.h>
@@ -26,10 +11,7 @@
 #include "kinematics.h"
 #include "kinematics_test_support.h"
 
-
-/* =========================================================
- * Additional Round-Trip Fixtures
- * ========================================================= */
+/* Additional Round-Trip Fixtures */
 
 /*
  * 额外普通非奇异姿态。
@@ -80,7 +62,6 @@ static const robot_joint_angles_t
     }
 };
 
-
 /*
  * Public Singularity Validation Pose。
  *
@@ -116,8 +97,6 @@ static const robot_joint_angles_t
         -15000
     }
 };
-
-
 
 /*
  * Near-Wrist-Singularity Validation Pose。
@@ -170,10 +149,7 @@ static const robot_joint_angles_t
     }
 };
 
-
-/* =========================================================
- * Public API Contract
- * ========================================================= */
+/* Public API Contract */
 
 static robot_status_t run_inverse_null_pointer_test(void)
 {
@@ -238,10 +214,7 @@ static robot_status_t run_inverse_null_pointer_test(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Public IK Solution Assembly
- * ========================================================= */
+/* Public IK Solution Assembly */
 
 static robot_status_t run_inverse_solution_assembly_test(
     const robot_joint_angles_t *original_joints
@@ -374,10 +347,7 @@ static robot_status_t run_inverse_solution_assembly_test(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * IK -> FK Round-Trip
- * ========================================================= */
+/* IK -> FK Round-Trip */
 
 static robot_status_t run_inverse_round_trip_test(
     const robot_joint_angles_t *original_joints
@@ -471,7 +441,6 @@ static robot_status_t run_inverse_round_trip_test(
     return ROBOT_STATUS_OK;
 }
 
-
 static robot_status_t run_additional_round_trip_tests(void)
 {
     uint32_t test_index;
@@ -504,10 +473,7 @@ static robot_status_t run_additional_round_trip_tests(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Unreachable Target
- * ========================================================= */
+/* Unreachable Target */
 
 static robot_status_t run_inverse_unreachable_target_test(void)
 {
@@ -584,10 +550,7 @@ static robot_status_t run_inverse_unreachable_target_test(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Public Singularity
- * ========================================================= */
+/* Public Singularity */
 
 static robot_status_t run_inverse_public_singularity_test(void)
 {
@@ -642,8 +605,6 @@ static robot_status_t run_inverse_public_singularity_test(void)
 
     return ROBOT_STATUS_OK;
 }
-
-
 
 /*
  * =========================================================
@@ -822,10 +783,7 @@ run_inverse_near_wrist_singularity_test(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Complete Public IK Test Suite
- * ========================================================= */
+/* Complete Public IK Test Suite */
 
 robot_status_t kinematics_ik_test_run(void)
 {

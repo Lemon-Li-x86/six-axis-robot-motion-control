@@ -1,31 +1,4 @@
-"""
-文件：communication_soak_test.py
-
-用途：
-对当前 QEMU Cortex-M4 + FreeRTOS UART 通信链路
-执行长时间稳定性 Soak Test。
-
-默认测试条件：
-
-持续时间：
-30 min
-
-目标发送频率：
-100 Hz
-
-理论发送 Frame 数：
-约 180,000
-
-测试内容：
-
-1. 周期发送合法 JOINT_STATE；
-2. 等待对应 JOINT_STATE_ACK；
-3. 统计成功 ACK；
-4. 统计 ACK Timeout；
-5. 查询测试前后 UART RX Drop Count；
-6. 统计实际运行时长和平均发送频率；
-7. 将最终结果保存为 JSON。
-"""
+"""仿真脚本：communication soak。"""
 
 import argparse
 import json
@@ -48,10 +21,7 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # Default Configuration
-# ==========================================================
-
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5555
 
@@ -80,10 +50,7 @@ DEFAULT_ACK_TIMEOUT_S = 0.05
 DEFAULT_PROGRESS_INTERVAL_S = 60.0
 
 
-# ==========================================================
 # Test Payload Builder
-# ==========================================================
-
 def build_joint_state_frame(
     sequence: int,
 ) -> tuple[bytes, bytes]:
@@ -147,10 +114,7 @@ def build_joint_state_frame(
     return frame, payload
 
 
-# ==========================================================
 # Socket Settle
-# ==========================================================
-
 def settle_socket(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -208,10 +172,7 @@ def settle_socket(
         )
 
 
-# ==========================================================
 # Diagnostics
-# ==========================================================
-
 def query_rx_drop_count(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -311,10 +272,7 @@ def query_rx_drop_count(
     )
 
 
-# ==========================================================
 # ACK Wait
-# ==========================================================
-
 def wait_for_matching_ack(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -406,10 +364,7 @@ def wait_for_matching_ack(
     return False
 
 
-# ==========================================================
 # Result Output
-# ==========================================================
-
 def save_result(
     result: dict,
 ) -> Path:
@@ -476,10 +431,7 @@ def save_result(
     return output_path
 
 
-# ==========================================================
 # Soak Test
-# ==========================================================
-
 def run_soak_test(
     host: str,
     port: int,
@@ -877,10 +829,7 @@ def run_soak_test(
         sock.close()
 
 
-# ==========================================================
 # Arguments
-# ==========================================================
-
 def parse_arguments():
     """
     解析 Soak Test 命令行参数。
@@ -951,10 +900,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     解析参数并启动 Communication Soak Test。

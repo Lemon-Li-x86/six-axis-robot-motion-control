@@ -1,3 +1,8 @@
+/**
+ * @file motor_state.h
+ * @brief 共享电机状态访问接口。
+ */
+
 #ifndef MOTOR_STATE_H
 #define MOTOR_STATE_H
 

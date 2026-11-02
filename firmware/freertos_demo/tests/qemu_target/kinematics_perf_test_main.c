@@ -1,15 +1,6 @@
-
-/*
- * Stage 3: Cortex-M4 / QEMU kinematics performance diagnostic.
- *
- * Measures FK, analytic IK, and IK selection separately, on the same
- * deterministic 128-pose dataset as qemu_ik_batch.
- *
- * Timer: CMSDK APB Timer0 on MPS2-AN386, nominally 25 MHz.
- * Ticks in QEMU are EMULATED TIMER ticks, not real MCU CPU cycles.
- *
- * Results: inspect g_kin_perf_report and g_kin_perf_samples with GDB.
- * This executable runs without FreeRTOS, UART or printf.
+/**
+ * @file kinematics_perf_test_main.c
+ * @brief 回归测试或夹具：kinematics perf。
  */
 #include <stdint.h>
 #include <limits.h>

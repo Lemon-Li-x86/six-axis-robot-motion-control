@@ -1,11 +1,6 @@
-
-/*
- * 文件：kinematics_dedup_test.h
- *
- * 用途：
- * 声明 IK Solution Deduplication 单元测试。
- *
- * 本模块属于测试层，不属于正式运动控制 API。
+/**
+ * @file kinematics_dedup_test.h
+ * @brief 测试共享声明/夹具：kinematics dedup。
  */
 
 #ifndef KINEMATICS_DEDUP_TEST_H

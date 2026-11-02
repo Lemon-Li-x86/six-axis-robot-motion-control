@@ -1,5 +1,6 @@
-/*
- * Stage 4 request adapter. A narrow, testable application boundary.
+/**
+ * @file trajectory_request_adapter.c
+ * @brief 运动请求到轨迹参数适配。
  */
 #include <stddef.h>
 

@@ -1,11 +1,6 @@
-/*
- * 文件：matrix4.h
- *
- * 用途：
- * 提供 Algorithm Layer 共用的
- * 4 × 4 矩阵基础运算。
- *
- * 当前主要用于齐次变换矩阵。
+/**
+ * @file matrix4.h
+ * @brief 矩阵运算接口。
  */
 
 #ifndef MATRIX4_H
@@ -13,7 +8,6 @@
 
 #include "robot_types.h"
 #include "error_code.h"
-
 
 /**
  * @brief 构造 4 × 4 单位矩阵。
@@ -31,7 +25,6 @@
 robot_status_t matrix4_identity(
     robot_transform_t *matrix
 );
-
 
 /**
  * @brief 计算两个 4 × 4 矩阵的乘积。
@@ -63,6 +56,5 @@ robot_status_t matrix4_multiply(
     const robot_transform_t *right,
     robot_transform_t *result
 );
-
 
 #endif

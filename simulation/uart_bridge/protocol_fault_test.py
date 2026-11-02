@@ -1,19 +1,4 @@
-"""
-文件：protocol_fault_test.py
-
-用途：
-验证 Cortex-M4 UART Protocol Byte Stream FSM
-面对异常输入时的恢复能力。
-
-测试内容：
-
-1. 正常 JOINT_STATE；
-2. Garbage Byte + 正常 Frame；
-3. 错误 Checksum；
-4. 非法 JOINT_STATE Payload Length + 正常 Frame；
-5. 错误 Checksum Frame + 正常 Frame；
-6. Unknown Command + 正常 Frame。
-"""
+"""仿真脚本：protocol fault。"""
 
 import select
 import socket
@@ -21,18 +6,12 @@ import struct
 import time
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 HOST = "127.0.0.1"
 PORT = 5555
 
 
-# ==========================================================
 # Protocol Configuration
-# ==========================================================
-
 HEADER = b"\xAA\x55"
 
 # Cortex-M4 -> Python。
@@ -50,10 +29,7 @@ JOINT_COUNT = 6
 JOINT_PAYLOAD_LEN = 12
 
 
-# ==========================================================
 # Protocol Helpers
-# ==========================================================
-
 def build_frame(
     command: int,
     payload: bytes,
@@ -267,10 +243,7 @@ def parse_frame(
     return command, payload
 
 
-# ==========================================================
 # TCP Receiver
-# ==========================================================
-
 class UARTReceiver:
     """
     管理跨 Test Case 持续存在的 TCP RX Buffer。
@@ -375,10 +348,7 @@ class UARTReceiver:
         )
 
 
-# ==========================================================
 # ACK Matching
-# ==========================================================
-
 def has_matching_ack(
     frames: list[bytes],
     expected_payload: bytes,
@@ -420,10 +390,7 @@ def has_matching_ack(
     return False
 
 
-# ==========================================================
 # Debug Output
-# ==========================================================
-
 def print_received_frames(
     frames: list[bytes],
 ) -> None:
@@ -474,10 +441,7 @@ def print_result(
     )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     顺序执行六个 Protocol Fault Recovery Test。

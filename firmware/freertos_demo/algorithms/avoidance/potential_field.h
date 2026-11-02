@@ -1,11 +1,6 @@
-/*
- * Stage5 experimental Cartesian potential-field step for static AABBs.
- *
- * Pure C11: no FreeRTOS, PyBullet, UART, globals or memory allocation.
- * All positions and AABB bounds are in the public base_link frame, mm.
- * This controls only the END-EFFECTOR POINT. It is not a full-link
- * collision checker and is never safe to drive a real robot without
- * full-robot collision checking, IK and trajectory rate validation.
+/**
+ * @file potential_field.h
+ * @brief APF 基础配置/障碍输入接口。
  */
 #ifndef ROBOT_POTENTIAL_FIELD_H
 #define ROBOT_POTENTIAL_FIELD_H
@@ -39,17 +34,21 @@ typedef struct {
     unsigned int reached_goal;
 } robot_apf_step_info_t;
 
-/*
- * Return a bounded next waypoint outside every expanded obstacle.
- * A current/goal point inside any expanded AABB is rejected.
- * The SEGMENT from current to next is tested against expanded AABBs.
+/**
+ * @brief 计算避开静态 AABB 的下一段笛卡尔航点。
+ * @param[in] current 当前末端点，base_link 坐标系，mm。
+ * @param[in] goal 目标末端点，mm。
+ * @param[in] obstacles 障碍 AABB 数组。
+ * @param[in] obstacle_count 障碍数量。
+ * @param[in] config 调用者提供的 APF 增益、余量、步长和容差。
+ * @param[out] next 输出航点，失败时保持原值。
+ * @param[out] details 步长与到达标记，失败时保持原值。
+ * @return ROBOT_STATUS_OK 或相应参数、碰撞、无解状态码。
  *
- * If potential-field direction stagnates or the segment crosses a box,
- * return NO_SOLUTION; do not silently move through the obstacle.
- * Parameters belong to the caller; this module has NO default gains.
- *
- * No partial output writes on failure, including in-place next==current.
+ * @note 检查当前点、目标点和扫掠线段；这是末端点级规划，
+ *       完整连杆碰撞检查在后续门禁执行。
  */
+
 robot_status_t robot_apf_step(
     const robot_apf_point_t *current,
     const robot_apf_point_t *goal,
@@ -59,13 +58,17 @@ robot_status_t robot_apf_step(
     robot_apf_point_t *next,
     robot_apf_step_info_t *details);
 
-/* Test a complete Cartesian line segment against expanded static AABBs.
- * Reuses the exact swept-segment geometry used by robot_apf_step.
- * Returns blocked=1 when the segment touches any inflated box.
- * No APF force tuning, side effects, sampling or Python-only geometry.
- * Both endpoints and AABBs are base_link millimetres.
- * On validation failure, *blocked is unchanged.
+/**
+ * @brief 检测一段笛卡尔直线与膨胀后的静态 AABB 是否相交。
+ * @param[in] start 起点，base_link 坐标系，mm。
+ * @param[in] goal 终点，base_link 坐标系，mm。
+ * @param[in] obstacles 障碍 AABB 数组。
+ * @param[in] obstacle_count 障碍数量。
+ * @param[in] clearance_mm 额外碰撞余量，mm。
+ * @param[out] blocked 相交返回 1，否则为 0；失败时不修改。
+ * @return ROBOT_STATUS_OK 或相应参数状态码。
  */
+
 robot_status_t robot_apf_segment_blocked(
     const robot_apf_point_t *start,
     const robot_apf_point_t *goal,

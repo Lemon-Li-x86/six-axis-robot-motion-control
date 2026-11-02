@@ -1,12 +1,6 @@
-
-/*
- * File: protocol_commands.c
- *
- * Application-level protocol command handling.
- *
- * This module does not create FreeRTOS tasks or
- * receive UART bytes. It processes complete frames
- * supplied by the protocol receiving task.
+/**
+ * @file protocol_commands.c
+ * @brief 协议业务命令分发与回复。
  */
 
 #include <stddef.h>
@@ -35,10 +29,7 @@
 #include "potential_field.h"
 #endif
 
-
-/* =========================================================
- * Command Context
- * ========================================================= */
+/* Command Context */
 
 void protocol_commands_init(
     protocol_command_context_t *context
@@ -53,10 +44,7 @@ void protocol_commands_init(
     context->feedback_time_valid = 0U;
 }
 
-
-/* =========================================================
- * Joint State
- * ========================================================= */
+/* Joint State */
 
 static void handle_joint_state(
     const protocol_frame_t *frame,
@@ -167,10 +155,7 @@ static void handle_joint_state(
     );
 }
 
-
-/* =========================================================
- * Runtime Parameter Configuration
- * ========================================================= */
+/* Runtime Parameter Configuration */
 
 static void handle_set_parameter(
     const protocol_frame_t *frame
@@ -246,10 +231,7 @@ static void handle_set_parameter(
     );
 }
 
-
-/* =========================================================
- * Diagnostics Value Lookup
- * ========================================================= */
+/* Diagnostics Value Lookup */
 
 static robot_status_t get_diagnostics_value(
     uint8_t selector,
@@ -433,10 +415,7 @@ static robot_status_t get_diagnostics_value(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Diagnostics Request
- * ========================================================= */
+/* Diagnostics Request */
 
 static void handle_diagnostics(
     const protocol_frame_t *frame
@@ -488,11 +467,9 @@ static void handle_diagnostics(
     );
 }
 
-
 #if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
-/* QEMU simulation ONLY. The existing target frame is firmware->PyBullet;
- * this separate command is PyBullet->firmware and its ACK only confirms
- * queue admission, never physical path completion. No actuation on startup. */
+/* QEMU 仿真中的反向关节运动请求；ACK 仅表示进入队列，
+ * 实际到位由后续 PyBullet 测量反馈验证。 */
 static void handle_simulated_joint_move(
     const protocol_frame_t *frame,
     uint32_t now_tick,
@@ -535,10 +512,8 @@ static void handle_simulated_joint_move(
        ==ROBOT_STATUS_OK)
         (void)uart_tx_manager_send_frame(ack,PROTOCOL_MOVE_ACK_FRAME_LEN);
 }
-/* Explicit QEMU-only APF step executed by the ARM firmware, not a Python
- * potential-field replica. No motor command, queue admission or implicit
- * path execution. The host MUST still validate C IK and actual full links
- * before a separate CMD_REQUEST_JOINT_MOVE may be sent. */
+/* ARM 固件计算 APF 航点预览，主机完成 IK 与全连杆检查后
+ * 再通过独立关节运动请求进入执行流程。 */
 static void handle_simulated_apf_step(
     const protocol_frame_t *frame, uint32_t now_tick, uint32_t tick_rate_hz)
 {
@@ -613,11 +588,8 @@ static void handle_simulated_apf_step(
         (void)uart_tx_manager_send_frame(
             response,PROTOCOL_APF_STEP_RESPONSE_FRAME_LEN);
 }
-/* APF joint proposal is intentionally asynchronous. ProtocolRX only
- * validates bytes and queues work; the low-priority Trajectory task runs
- * APF/FK/IK and sends the actual response, avoiding an expensive IK call on
- * the small UART parser stack. A proposal is NEVER motor permission.
- */
+/* APF/IK 在 Trajectory Task 异步执行，ProtocolRX 只解析并入队。
+ * 规划结果作为提案返回，运动授权由独立命令处理。 */
 static void handle_simulated_apf_joint_proposal(const protocol_frame_t *frame)
 {
     protocol_apf_step_request_t request={0};
@@ -636,9 +608,7 @@ static void handle_simulated_apf_joint_proposal(const protocol_frame_t *frame)
 }
 #endif
 
-/* =========================================================
- * Public Command Dispatcher
- * ========================================================= */
+/* Public Command Dispatcher */
 
 void protocol_commands_dispatch_frame(
     const protocol_frame_t *frame,

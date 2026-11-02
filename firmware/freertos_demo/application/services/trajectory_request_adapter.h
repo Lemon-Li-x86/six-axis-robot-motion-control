@@ -1,9 +1,6 @@
-/*
- * Stage 4 application boundary: selected IK result -> joint trajectory.
- * The adapter consumes a COPY of current continuous joint positions.
- * A future Control/Trajectory Task must first obtain synchronized,
- * fresh feedback through motor_state_get_feedback().
- * No direct motor-driver, UART or FreeRTOS calls here.
+/**
+ * @file trajectory_request_adapter.h
+ * @brief 轨迹请求适配接口。
  */
 #ifndef TRAJECTORY_REQUEST_ADAPTER_H
 #define TRAJECTORY_REQUEST_ADAPTER_H

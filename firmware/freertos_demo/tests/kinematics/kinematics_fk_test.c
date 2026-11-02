@@ -1,14 +1,6 @@
-/*
- * 文件：kinematics_fk_test.c
- *
- * 用途：
- * 验证 Public Forward Kinematics：
- *
- * 1. NULL Pointer Contract；
- * 2. Zero Configuration；
- * 3. q1 = +60°；
- * 4. q2 = -90°；
- * 5. 与已知参考 Transform 一致。
+/**
+ * @file kinematics_fk_test.c
+ * @brief 回归测试或夹具：kinematics fk。
  */
 
 #include <stddef.h>
@@ -18,10 +10,7 @@
 #include "kinematics.h"
 #include "kinematics_test_support.h"
 
-
-/* =========================================================
- * Test Helpers
- * ========================================================= */
+/* Test Helpers */
 
 static robot_status_t run_fk_test_case(
     const robot_joint_angles_t *joints,
@@ -54,10 +43,7 @@ static robot_status_t run_fk_test_case(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Public API Contract
- * ========================================================= */
+/* Public API Contract */
 
 static robot_status_t run_fk_null_pointer_test(void)
 {
@@ -101,10 +87,7 @@ static robot_status_t run_fk_null_pointer_test(void)
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Complete FK Test Suite
- * ========================================================= */
+/* Complete FK Test Suite */
 
 robot_status_t kinematics_fk_test_run(void)
 {

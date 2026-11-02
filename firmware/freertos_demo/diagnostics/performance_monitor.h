@@ -1,15 +1,6 @@
-/*
- * 文件：performance_monitor.h
- *
- * 用途：
- * 定义固件内部性能基线测量接口。
- *
- * 当前测量：
- *
- * 1. 单个完整协议帧的 Parser 执行时间；
- * 2. UART RX ISR 到 ProtocolRX Task 被唤醒的时间。
- *
- * 所有时间结果均以 Timer Tick 保存。
+/**
+ * @file performance_monitor.h
+ * @brief 性能采样接口。
  */
 
 #ifndef PERFORMANCE_MONITOR_H
@@ -18,7 +9,6 @@
 #include <stdint.h>
 
 #include "error_code.h"
-
 
 typedef struct
 {
@@ -30,7 +20,6 @@ typedef struct
 
     uint32_t parser_max_ticks;
 
-
     uint32_t task_wakeup_sample_count;
 
     uint32_t task_wakeup_min_ticks;
@@ -41,12 +30,10 @@ typedef struct
 
 } performance_metrics_t;
 
-
 /**
  * @brief 初始化性能监测模块。
  */
 void performance_monitor_init(void);
-
 
 /**
  * @brief 执行 Protocol Parser 内部性能基准测试。
@@ -68,7 +55,6 @@ robot_status_t performance_monitor_run_parser_benchmark(
     uint32_t sample_count
 );
 
-
 /**
  * @brief 准备测量下一次 UART ISR -> Task 唤醒时间。
  *
@@ -77,14 +63,12 @@ robot_status_t performance_monitor_run_parser_benchmark(
  */
 void performance_monitor_arm_task_wakeup(void);
 
-
 /**
  * @brief 记录 UART ISR 通知 Task 之前的时间点。
  *
  * 本函数在 UART ISR 上下文中调用。
  */
 void performance_monitor_mark_rx_isr(void);
-
 
 /**
  * @brief 记录 ProtocolRX Task 被唤醒后的时间点。
@@ -93,7 +77,6 @@ void performance_monitor_mark_rx_isr(void);
  * 则生成一个 Task Wakeup Latency Sample。
  */
 void performance_monitor_record_task_wakeup(void);
-
 
 /**
  * @brief 获取当前性能统计结果。
@@ -111,6 +94,5 @@ void performance_monitor_record_task_wakeup(void);
 robot_status_t performance_monitor_get_metrics(
     performance_metrics_t *metrics
 );
-
 
 #endif

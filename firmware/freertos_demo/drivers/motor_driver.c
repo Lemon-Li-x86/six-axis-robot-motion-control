@@ -1,22 +1,6 @@
-/*
- * 文件：motor_driver.c
- *
- * 用途：
- * 实现六轴机器人关节电机驱动抽象层。
- *
- * 当前实现属于 Simulation Backend：
- *
- * 1. 保存规范化目标关节位置；
- * 2. 保存规范化位置反馈；
- * 3. 重建连续关节位置；
- * 4. 正确处理 ±180° Angle Wrap；
- * 5. 根据连续位置差计算关节速度；
- * 6. 向上层提供统一 Motor API。
- *
- * 本模块不依赖 UART、Protocol 或 FreeRTOS。
- *
- * 因此将来切换到真实 Servo / Encoder Backend 时，
- * 上层 Algorithm / Control 模块仍可以使用相同接口。
+/**
+ * @file motor_driver.c
+ * @brief 虚拟电机目标/反馈、角度状态底层管理。
  */
 
 #include <stddef.h>
@@ -26,21 +10,16 @@
 #include "motor_driver.h"
 #include "angle_utils.h"
 
-
-/* =========================================================
- * Driver 内部状态
- * ========================================================= */
+/* Driver 内部状态 */
 
 static uint8_t
     motor_driver_initialized = 0U;
-
 
 /*
  * 标记是否已经收到过至少一组有效 Feedback。
  */
 static uint8_t
     motor_feedback_valid = 0U;
-
 
 /*
  * 当前目标关节位置。
@@ -52,7 +31,6 @@ static uint8_t
 static robot_joint_angles_t
     motor_target_positions;
 
-
 /*
  * 最近一次规范化关节位置反馈。
  *
@@ -63,7 +41,6 @@ static robot_joint_angles_t
 static robot_joint_angles_t
     motor_feedback_positions;
 
-
 /*
  * 连续关节位置。
  *
@@ -71,7 +48,6 @@ static robot_joint_angles_t
  */
 static robot_joint_positions_t
     motor_feedback_unwrapped_positions;
-
 
 /*
  * 根据连续位置变化计算得到的关节速度。
@@ -85,10 +61,7 @@ static robot_joint_velocities_t
 /* Increments only when a complete feedback sample is committed. */
 static uint32_t motor_feedback_sample_sequence = 0U;
 
-
-/* =========================================================
- * Angle Normalize
- * ========================================================= */
+/* Angle Normalize */
 
 /*
  * 将任意 0.01° 整数角规范化到：
@@ -105,10 +78,7 @@ static robot_joint_angle_t motor_driver_normalize_angle_raw(int32_t raw_angle)
     return robot_joint_angle_normalize_raw(raw_angle);
 }
 
-
-/* =========================================================
- * Shortest Angular Delta
- * ========================================================= */
+/* Shortest Angular Delta */
 
 /*
  * 计算两个 Canonical Angle 之间的
@@ -139,12 +109,10 @@ motor_driver_shortest_delta_raw(
 {
     int32_t delta;
 
-
     delta =
         (int32_t)current
         -
         (int32_t)previous;
-
 
     delta =
         (int32_t)
@@ -152,20 +120,15 @@ motor_driver_shortest_delta_raw(
             delta
         );
 
-
     return
         delta;
 }
 
-
-/* =========================================================
- * Motor Driver 初始化
- * ========================================================= */
+/* Motor Driver 初始化 */
 
 robot_status_t motor_driver_init(void)
 {
     uint32_t i;
-
 
     for (
         i = 0U;
@@ -176,44 +139,34 @@ robot_status_t motor_driver_init(void)
         motor_target_positions.value[i] =
             0;
 
-
         motor_feedback_positions.value[i] =
             0;
 
-
         motor_feedback_unwrapped_positions.value[i] =
             0;
-
 
         motor_feedback_velocities.value[i] =
             0.0F;
     }
 
-
     motor_feedback_valid =
         0U;
     motor_feedback_sample_sequence = 0U;
 
-
     motor_driver_initialized =
         1U;
-
 
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 设置 Target Position
- * ========================================================= */
+/* 设置 Target Position */
 
 robot_status_t motor_driver_set_target_positions(
     const robot_joint_angles_t *targets
 )
 {
     uint32_t i;
-
 
     if (
         targets == NULL
@@ -223,7 +176,6 @@ robot_status_t motor_driver_set_target_positions(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !motor_driver_initialized
     )
@@ -231,7 +183,6 @@ robot_status_t motor_driver_set_target_positions(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     for (
         i = 0U;
@@ -245,22 +196,17 @@ robot_status_t motor_driver_set_target_positions(
             );
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 获取 Target Position
- * ========================================================= */
+/* 获取 Target Position */
 
 robot_status_t motor_driver_get_target_positions(
     robot_joint_angles_t *targets
 )
 {
     uint32_t i;
-
 
     if (
         targets == NULL
@@ -270,7 +216,6 @@ robot_status_t motor_driver_get_target_positions(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !motor_driver_initialized
     )
@@ -278,7 +223,6 @@ robot_status_t motor_driver_get_target_positions(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     for (
         i = 0U;
@@ -290,15 +234,11 @@ robot_status_t motor_driver_get_target_positions(
             motor_target_positions.value[i];
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 更新 Position Feedback
- * ========================================================= */
+/* 更新 Position Feedback */
 
 robot_status_t motor_driver_update_feedback(
     const robot_joint_angles_t *feedback,
@@ -378,17 +318,13 @@ robot_status_t motor_driver_update_feedback(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 获取 Canonical Position Feedback
- * ========================================================= */
+/* 获取 Canonical Position Feedback */
 
 robot_status_t motor_driver_get_positions(
     robot_joint_angles_t *positions
 )
 {
     uint32_t i;
-
 
     if (
         positions == NULL
@@ -398,7 +334,6 @@ robot_status_t motor_driver_get_positions(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !motor_driver_initialized
     )
@@ -407,7 +342,6 @@ robot_status_t motor_driver_get_positions(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     if (
         !motor_feedback_valid
     )
@@ -415,7 +349,6 @@ robot_status_t motor_driver_get_positions(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     for (
         i = 0U;
@@ -427,22 +360,17 @@ robot_status_t motor_driver_get_positions(
             motor_feedback_positions.value[i];
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 获取 Continuous Position Feedback
- * ========================================================= */
+/* 获取 Continuous Position Feedback */
 
 robot_status_t motor_driver_get_unwrapped_positions(
     robot_joint_positions_t *positions
 )
 {
     uint32_t i;
-
 
     if (
         positions == NULL
@@ -452,7 +380,6 @@ robot_status_t motor_driver_get_unwrapped_positions(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !motor_driver_initialized
     )
@@ -461,7 +388,6 @@ robot_status_t motor_driver_get_unwrapped_positions(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     if (
         !motor_feedback_valid
     )
@@ -469,7 +395,6 @@ robot_status_t motor_driver_get_unwrapped_positions(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     for (
         i = 0U;
@@ -481,22 +406,17 @@ robot_status_t motor_driver_get_unwrapped_positions(
             motor_feedback_unwrapped_positions.value[i];
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * 获取 Velocity Feedback
- * ========================================================= */
+/* 获取 Velocity Feedback */
 
 robot_status_t motor_driver_get_velocities(
     robot_joint_velocities_t *velocities
 )
 {
     uint32_t i;
-
 
     if (
         velocities == NULL
@@ -506,7 +426,6 @@ robot_status_t motor_driver_get_velocities(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     if (
         !motor_driver_initialized
     )
@@ -515,7 +434,6 @@ robot_status_t motor_driver_get_velocities(
             ROBOT_STATUS_ERROR_NOT_READY;
     }
 
-
     if (
         !motor_feedback_valid
     )
@@ -523,7 +441,6 @@ robot_status_t motor_driver_get_velocities(
         return
             ROBOT_STATUS_ERROR_NOT_READY;
     }
-
 
     for (
         i = 0U;
@@ -535,15 +452,11 @@ robot_status_t motor_driver_get_velocities(
             motor_feedback_velocities.value[i];
     }
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Read complete logical feedback sample
- * ========================================================= */
+/* Read complete logical feedback sample */
 
 robot_status_t motor_driver_get_feedback_snapshot(
     motor_feedback_snapshot_t *snapshot
@@ -574,10 +487,7 @@ robot_status_t motor_driver_get_feedback_snapshot(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Feedback 状态查询
- * ========================================================= */
+/* Feedback 状态查询 */
 
 uint8_t motor_driver_has_feedback(void)
 {
@@ -587,7 +497,6 @@ uint8_t motor_driver_has_feedback(void)
     {
         return 0U;
     }
-
 
     return
         motor_feedback_valid;

@@ -1,7 +1,6 @@
-/*
- * Headless native bridge smoke test. Does not require Python or PyBullet.
- * Ensures the shared C boundary invokes the actual trajectory, PID
- * and command limiter and rejects invalid calls atomically.
+/**
+ * @file stage4_sim_bridge_smoke.c
+ * @brief 回归测试或夹具：stage4 sim bridge smoke。
  */
 #include <stdint.h>
 #include <stdio.h>

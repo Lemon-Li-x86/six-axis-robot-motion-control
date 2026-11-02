@@ -1,16 +1,6 @@
-/*
- * 文件：motion_limits.h
- *
- * 用途：
- * 定义关节连续位置限位检查与角度展开接口。
- *
- * 本模块属于 Motion Algorithm Layer：
- *
- * 1. 从 Robot Model 读取静态关节限位；
- * 2. 判断六轴连续位置是否合法；
- * 3. 将 Canonical Angle 展开为最近的合法连续位置。
- *
- * 本模块不执行电机驱动，也不修改当前机器人状态。
+/**
+ * @file motion_limits.h
+ * @brief 运动限位接口。
  */
 
 #ifndef MOTION_LIMITS_H
@@ -18,7 +8,6 @@
 
 #include "robot_types.h"
 #include "error_code.h"
-
 
 /**
  * @brief 检查六轴连续位置是否位于当前模型限位内。
@@ -35,7 +24,6 @@
 robot_status_t motion_limits_check_positions(
     const robot_joint_positions_t *positions
 );
-
 
 /**
  * @brief 将六轴规范化角度展开为最近的合法连续位置。
@@ -73,6 +61,5 @@ robot_status_t motion_limits_unwrap_nearest(
     const robot_joint_positions_t *current_positions,
     robot_joint_positions_t *target_positions
 );
-
 
 #endif

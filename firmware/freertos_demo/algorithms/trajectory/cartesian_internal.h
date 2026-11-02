@@ -1,5 +1,6 @@
-/* Private reusable SO(3), input-validation and fixed-time helpers.
- * Only Cartesian modules include this header; one implementation owns math.
+/**
+ * @file cartesian_internal.h
+ * @brief 笛卡尔轨迹私有接口。
  */
 #ifndef ROBOT_CARTESIAN_INTERNAL_H
 #define ROBOT_CARTESIAN_INTERNAL_H

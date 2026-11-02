@@ -1,5 +1,6 @@
-/* Stage 4 monitor: no UART traffic and no motor commands.
- * Periodic diagnostics + high-water marks for real stack validation.
+/**
+ * @file monitor_task.c
+ * @brief FreeRTOS 监测任务。
  */
 #include "FreeRTOS.h"
 #include "task.h"

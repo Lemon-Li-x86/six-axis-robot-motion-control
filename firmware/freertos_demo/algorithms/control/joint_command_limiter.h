@@ -1,13 +1,6 @@
-/*
- * Joint command velocity/acceleration limiter.
- *
- * Pure algorithm: six-axis continuous position commands, no RTOS, no UART.
- * Command positions use centidegrees; correction in degrees; dt in seconds.
- * Fractional command positions are preserved across ticks to prevent a
- * 0.01 degree integer quantization deadlock at small dt / acceleration.
- *
- * Configuration and physical joint limits come from callers; nothing in
- * this module redefines UR5 geometry or global Stage4 defaults.
+/**
+ * @file joint_command_limiter.h
+ * @brief 关节命令限幅接口。
  */
 #ifndef ROBOT_JOINT_COMMAND_LIMITER_H
 #define ROBOT_JOINT_COMMAND_LIMITER_H

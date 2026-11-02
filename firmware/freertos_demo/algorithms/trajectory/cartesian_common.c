@@ -1,3 +1,8 @@
+/**
+ * @file cartesian_common.c
+ * @brief 笛卡尔轨迹公共运算。
+ */
+
 #include <math.h>
 #include <float.h>
 #include <limits.h>

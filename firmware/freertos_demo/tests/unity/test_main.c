@@ -1,9 +1,11 @@
+/**
+ * @file test_main.c
+ * @brief 回归测试或夹具：test main。
+ */
+
 #include "unity.h"
 
-
-/* =========================================================
- * Protocol Tests
- * ========================================================= */
+/* Protocol Tests */
 
 void test_protocol_parser_accepts_valid_frame(void);
 void test_protocol_parser_rejects_bad_checksum_and_recovers(void);
@@ -15,10 +17,7 @@ void test_protocol_build_parameter_ack(void);
 void test_protocol_parse_diagnostics_default_selector(void);
 void test_protocol_parse_joint_state_signed_values(void);
 
-
-/* =========================================================
- * Motor Driver Tests
- * ========================================================= */
+/* Motor Driver Tests */
 
 void test_motor_init_sets_zero_targets(void);
 void test_motor_target_normalization(void);
@@ -27,20 +26,14 @@ void test_motor_wrap_forward(void);
 void test_motor_wrap_backward(void);
 void test_motor_null_pointer_errors(void);
 
-
-/* =========================================================
- * Ring Buffer Tests
- * ========================================================= */
+/* Ring Buffer Tests */
 
 void test_ring_buffer_initially_empty(void);
 void test_ring_buffer_preserves_fifo_order(void);
 void test_ring_buffer_capacity_boundary(void);
 void test_ring_buffer_wraparound(void);
 
-
-/* =========================================================
- * UART Driver Tests
- * ========================================================= */
+/* UART Driver Tests */
 
 void test_uart_init_configures_hardware(void);
 void test_uart_write_rejects_invalid_arguments(void);
@@ -49,33 +42,23 @@ void test_uart_tx_rejects_frame_larger_than_buffer(void);
 void test_uart_rx_interrupt_receives_byte(void);
 void test_uart_rx_overflow_increments_drop_count(void);
 
-
-/* =========================================================
- * Unity Hooks
- * ========================================================= */
+/* Unity Hooks */
 
 void setUp(void)
 {
 }
 
-
 void tearDown(void)
 {
 }
 
-
-/* =========================================================
- * Test Entry
- * ========================================================= */
+/* Test Entry */
 
 int main(void)
 {
     UNITY_BEGIN();
 
-
-    /* =====================================================
-     * Protocol
-     * ===================================================== */
+    /* Protocol */
 
     RUN_TEST(
         test_protocol_parser_accepts_valid_frame
@@ -113,10 +96,7 @@ int main(void)
         test_protocol_parse_joint_state_signed_values
     );
 
-
-    /* =====================================================
-     * Motor Driver
-     * ===================================================== */
+    /* Motor Driver */
 
     RUN_TEST(
         test_motor_init_sets_zero_targets
@@ -142,10 +122,7 @@ int main(void)
         test_motor_null_pointer_errors
     );
 
-
-    /* =====================================================
-     * Ring Buffer
-     * ===================================================== */
+    /* Ring Buffer */
 
     RUN_TEST(
         test_ring_buffer_initially_empty
@@ -163,10 +140,7 @@ int main(void)
         test_ring_buffer_wraparound
     );
 
-
-    /* =====================================================
-     * UART Driver
-     * ===================================================== */
+    /* UART Driver */
 
     RUN_TEST(
         test_uart_init_configures_hardware
@@ -191,7 +165,6 @@ int main(void)
     RUN_TEST(
         test_uart_rx_overflow_increments_drop_count
     );
-
 
     return UNITY_END();
 }

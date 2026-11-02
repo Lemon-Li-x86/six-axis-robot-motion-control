@@ -1,19 +1,6 @@
-/*
- * 文件：ur5_analytic_ik.c
- *
- * 用途：
- * 实现 UR5 Analytic IK 的各阶段数学求解器。
- *
- * 本文件只负责：
- *
- * q1
- * q5
- * q6
- * q3
- * q2
- * q4
- *
- * 不负责最终 Branch Assembly。
+/**
+ * @file ur5_analytic_ik.c
+ * @brief UR5 解析逆解分支算法。
  */
 
 #include <stddef.h>
@@ -23,7 +10,6 @@
 #include "kinematics_internal.h"
 
 #include "robot_model.h"
-
 
 #define KINEMATICS_GEOMETRY_EPSILON_MM_SQUARED \
     0.01F
@@ -37,10 +23,7 @@
 #define KINEMATICS_ORIENTATION_EPSILON_SQUARED \
     0.00000001F
 
-
-/* =========================================================
- * Shared UR5 IK Geometry
- * ========================================================= */
+/* Shared UR5 IK Geometry */
 
 /*
  * Calculate p13 with double intermediates.  The public pose still uses
@@ -129,9 +112,7 @@ robot_status_t ur5_analytic_ik_trace_elbow_cosine(
 }
 #endif
 
-/* =========================================================
- * q1 Shoulder
- * ========================================================= */
+/* q1 Shoulder */
 
 robot_status_t
 ur5_analytic_ik_solve_q1_candidates(
@@ -182,7 +163,6 @@ ur5_analytic_ik_solve_q1_candidates(
     robot_real_t
         alpha;
 
-
     if (
         model
         ==
@@ -201,7 +181,6 @@ ur5_analytic_ik_solve_q1_candidates(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     p6_x =
         dh_transform->matrix[0][3];
 
@@ -214,13 +193,11 @@ ur5_analytic_ik_solve_q1_candidates(
     z6_y =
         dh_transform->matrix[1][2];
 
-
     d4 =
         model->dh_d_mm[3];
 
     d6 =
         model->dh_d_mm[5];
-
 
     wrist_x =
         p6_x
@@ -236,7 +213,6 @@ ur5_analytic_ik_solve_q1_candidates(
         *
         z6_y;
 
-
     radius_squared =
         wrist_x
         *
@@ -246,12 +222,10 @@ ur5_analytic_ik_solve_q1_candidates(
         *
         wrist_y;
 
-
     d4_squared =
         d4
         *
         d4;
-
 
     if (
         radius_squared
@@ -265,12 +239,10 @@ ur5_analytic_ik_solve_q1_candidates(
             ROBOT_STATUS_ERROR_NO_SOLUTION;
     }
 
-
     radial_component_squared =
         radius_squared
         -
         d4_squared;
-
 
     if (
         radial_component_squared
@@ -282,12 +254,10 @@ ur5_analytic_ik_solve_q1_candidates(
             0.0F;
     }
 
-
     radial_component =
         kinematics_sqrt_nonnegative(
             radial_component_squared
         );
-
 
     phi =
         atan2f(
@@ -295,13 +265,11 @@ ur5_analytic_ik_solve_q1_candidates(
             wrist_x
         );
 
-
     alpha =
         atan2f(
             d4,
             radial_component
         );
-
 
     q1_candidates_rad[0] =
         kinematics_normalize_angle_rad(
@@ -309,7 +277,6 @@ ur5_analytic_ik_solve_q1_candidates(
             +
             alpha
         );
-
 
     q1_candidates_rad[1] =
         kinematics_normalize_angle_rad(
@@ -320,15 +287,11 @@ ur5_analytic_ik_solve_q1_candidates(
             alpha
         );
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * q5 Wrist
- * ========================================================= */
+/* q5 Wrist */
 
 robot_status_t ur5_analytic_ik_solve_q5_candidates(
     const robot_model_t *model,
@@ -463,10 +426,7 @@ robot_status_t ur5_analytic_ik_solve_q5_candidates(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * q6 Wrist
- * ========================================================= */
+/* q6 Wrist */
 
 robot_status_t
 ur5_analytic_ik_solve_q6(
@@ -514,9 +474,7 @@ ur5_analytic_ik_solve_q6(
     return ROBOT_STATUS_OK;
 }
 
-/* =========================================================
- * q3 Elbow
- * ========================================================= */
+/* q3 Elbow */
 
 robot_status_t
 ur5_analytic_ik_solve_q3_candidates(
@@ -571,9 +529,7 @@ ur5_analytic_ik_solve_q3_candidates(
     return ROBOT_STATUS_OK;
 }
 
-/* =========================================================
- * q2 Shoulder Lift
- * ========================================================= */
+/* q2 Shoulder Lift */
 
 robot_status_t
 ur5_analytic_ik_solve_q2(
@@ -616,13 +572,10 @@ ur5_analytic_ik_solve_q2(
     robot_real_t
         radius_squared;
 
-
     robot_status_t
         status;
 
-
     (void)q5_rad;
-
 
     if (
         model
@@ -642,7 +595,6 @@ ur5_analytic_ik_solve_q2(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     status =
         ur5_analytic_ik_compute_p13(
             model,
@@ -652,7 +604,6 @@ ur5_analytic_ik_solve_q2(
             &p13_x,
             &p13_y
         );
-
 
     if (
         status
@@ -664,7 +615,6 @@ ur5_analytic_ik_solve_q2(
             status;
     }
 
-
     radius_squared =
         p13_x
         *
@@ -673,7 +623,6 @@ ur5_analytic_ik_solve_q2(
         p13_y
         *
         p13_y;
-
 
     if (
         radius_squared
@@ -685,13 +634,11 @@ ur5_analytic_ik_solve_q2(
             ROBOT_STATUS_ERROR_SINGULAR;
     }
 
-
     a2 =
         model->dh_a_mm[1];
 
     a3 =
         model->dh_a_mm[2];
-
 
     cos_q3 =
         cosf(
@@ -703,7 +650,6 @@ ur5_analytic_ik_solve_q2(
             q3_rad
         );
 
-
     coefficient_a =
         a2
         +
@@ -711,12 +657,10 @@ ur5_analytic_ik_solve_q2(
         *
         cos_q3;
 
-
     coefficient_b =
         a3
         *
         sin_q3;
-
 
     atan_y =
         coefficient_a
@@ -727,7 +671,6 @@ ur5_analytic_ik_solve_q2(
         *
         p13_x;
 
-
     atan_x =
         coefficient_a
         *
@@ -737,7 +680,6 @@ ur5_analytic_ik_solve_q2(
         *
         p13_y;
 
-
     *q2_rad =
         kinematics_normalize_angle_rad(
             atan2f(
@@ -746,15 +688,11 @@ ur5_analytic_ik_solve_q2(
             )
         );
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * q4 Wrist 1
- * ========================================================= */
+/* q4 Wrist 1 */
 
 robot_status_t
 ur5_analytic_ik_solve_q4(
@@ -810,9 +748,7 @@ ur5_analytic_ik_solve_q4(
     robot_real_t
         orientation_squared;
 
-
     (void)model;
-
 
     if (
         dh_transform
@@ -827,7 +763,6 @@ ur5_analytic_ik_solve_q4(
         return
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
-
 
     sin_q1 =
         sinf(
@@ -858,7 +793,6 @@ ur5_analytic_ik_solve_q4(
         cosf(
             q6_rad
         );
-
 
     x04_x =
         -sin_q5
@@ -901,7 +835,6 @@ ur5_analytic_ik_solve_q4(
             )
         );
 
-
     x04_y =
         cos_q5
         *
@@ -919,7 +852,6 @@ ur5_analytic_ik_solve_q4(
         *
         sin_q5;
 
-
     orientation_squared =
         x04_x
         *
@@ -928,7 +860,6 @@ ur5_analytic_ik_solve_q4(
         x04_y
         *
         x04_y;
-
 
     if (
         orientation_squared
@@ -940,12 +871,10 @@ ur5_analytic_ik_solve_q4(
             ROBOT_STATUS_ERROR_SINGULAR;
     }
 
-
     q23_rad =
         q2_rad
         +
         q3_rad;
-
 
     sin_q23 =
         sinf(
@@ -957,7 +886,6 @@ ur5_analytic_ik_solve_q4(
             q23_rad
         );
 
-
     atan_y =
         cos_q23
         *
@@ -966,7 +894,6 @@ ur5_analytic_ik_solve_q4(
         sin_q23
         *
         x04_x;
-
 
     atan_x =
         x04_x
@@ -977,7 +904,6 @@ ur5_analytic_ik_solve_q4(
         *
         sin_q23;
 
-
     *q4_rad =
         kinematics_normalize_angle_rad(
             atan2f(
@@ -986,15 +912,11 @@ ur5_analytic_ik_solve_q4(
             )
         );
 
-
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Internal Validation Wrappers
- * ========================================================= */
+/* Internal Validation Wrappers */
 
 robot_status_t
 kinematics_internal_solve_q1_candidates(
@@ -1005,14 +927,11 @@ kinematics_internal_solve_q1_candidates(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1028,10 +947,8 @@ kinematics_internal_solve_q1_candidates(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1039,7 +956,6 @@ kinematics_internal_solve_q1_candidates(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1051,7 +967,6 @@ kinematics_internal_solve_q1_candidates(
             status;
     }
 
-
     return
         ur5_analytic_ik_solve_q1_candidates(
             model,
@@ -1059,7 +974,6 @@ kinematics_internal_solve_q1_candidates(
             q1_candidates_rad
         );
 }
-
 
 robot_status_t
 kinematics_internal_solve_q5_candidates(
@@ -1071,14 +985,11 @@ kinematics_internal_solve_q5_candidates(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1094,10 +1005,8 @@ kinematics_internal_solve_q5_candidates(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1105,7 +1014,6 @@ kinematics_internal_solve_q5_candidates(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1117,7 +1025,6 @@ kinematics_internal_solve_q5_candidates(
             status;
     }
 
-
     return
         ur5_analytic_ik_solve_q5_candidates(
             model,
@@ -1126,7 +1033,6 @@ kinematics_internal_solve_q5_candidates(
             q5_candidates_rad
         );
 }
-
 
 robot_status_t
 kinematics_internal_solve_q6(
@@ -1139,14 +1045,11 @@ kinematics_internal_solve_q6(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1162,10 +1065,8 @@ kinematics_internal_solve_q6(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1173,7 +1074,6 @@ kinematics_internal_solve_q6(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1185,7 +1085,6 @@ kinematics_internal_solve_q6(
             status;
     }
 
-
     return
         ur5_analytic_ik_solve_q6(
             model,
@@ -1195,7 +1094,6 @@ kinematics_internal_solve_q6(
             q6_rad
         );
 }
-
 
 robot_status_t
 kinematics_internal_solve_q3_candidates(
@@ -1209,14 +1107,11 @@ kinematics_internal_solve_q3_candidates(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1232,10 +1127,8 @@ kinematics_internal_solve_q3_candidates(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1243,7 +1136,6 @@ kinematics_internal_solve_q3_candidates(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1255,7 +1147,6 @@ kinematics_internal_solve_q3_candidates(
             status;
     }
 
-
     return
         ur5_analytic_ik_solve_q3_candidates(
             model,
@@ -1266,7 +1157,6 @@ kinematics_internal_solve_q3_candidates(
             q3_candidates_rad
         );
 }
-
 
 robot_status_t
 kinematics_internal_solve_q2(
@@ -1281,14 +1171,11 @@ kinematics_internal_solve_q2(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1304,10 +1191,8 @@ kinematics_internal_solve_q2(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1315,7 +1200,6 @@ kinematics_internal_solve_q2(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1326,7 +1210,6 @@ kinematics_internal_solve_q2(
         return
             status;
     }
-
 
     return
         ur5_analytic_ik_solve_q2(
@@ -1339,7 +1222,6 @@ kinematics_internal_solve_q2(
             q2_rad
         );
 }
-
 
 robot_status_t
 kinematics_internal_solve_q4(
@@ -1355,14 +1237,11 @@ kinematics_internal_solve_q4(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_transform;
 
-
     robot_status_t
         status;
-
 
     if (
         transform
@@ -1378,10 +1257,8 @@ kinematics_internal_solve_q4(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         kinematics_public_to_dh_transform(
@@ -1389,7 +1266,6 @@ kinematics_internal_solve_q4(
             transform,
             &dh_transform
         );
-
 
     if (
         status
@@ -1400,7 +1276,6 @@ kinematics_internal_solve_q4(
         return
             status;
     }
-
 
     return
         ur5_analytic_ik_solve_q4(

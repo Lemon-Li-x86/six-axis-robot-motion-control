@@ -1,10 +1,8 @@
-"""Actual ARM FreeRTOS C APF/IK -> UART proposal -> Bullet all-link gate
--> separate ARM C trajectory/PID command -> Bullet feedback. SOFTWARE ONLY.
+"""Test the ARM FreeRTOS APF/IK -> UART -> PyBullet closed-loop route.
 
-This is deliberately NOT the host C APF bridge: the planner's decision
-is observed exclusively in a new firmware UART proposal response. A status
-ACK is never counted as physical movement. Full-link clearance is checked
-before any execution request and on every physical simulation step.
+ARM firmware returns the APF/IK proposal over UART. PyBullet validates
+all-link clearance before a separate move request and measures joint motion
+throughout the simulated execution.
 """
 from __future__ import annotations
 import argparse
@@ -33,7 +31,7 @@ from stage5_avoidance_uart_gate import load_scene  # noqa: E402
 from stage5_collision_validation import validate_joint_path  # noqa: E402
 
 def describe_joint_tracking(candidate_raw, observed_raw, commanded_raw) -> dict:
-    """Read-only centidegree diagnostics; never used for safety decisions."""
+    """Collect centidegree diagnostics independently of movement checks."""
     if any(len(seq) != wire.JOINT_COUNT for seq in
            (candidate_raw, observed_raw, commanded_raw)):
         raise ValueError("tracking diagnostics require six joint samples")
@@ -94,7 +92,7 @@ MOTION_DIAGNOSTIC_SELECTORS = tuple(
 
 
 def summarize_stalled_control_trace(metrics: dict) -> dict | None:
-    """Group six-axis QEMU-only trace selectors; never alter motion outcome."""
+    """Group six-axis diagnostic trace selectors."""
     groups=(
         "reference_raw", "feedback_raw", "pid_correction_millideg",
         "limiter_position_millicentideg", "command_raw",
@@ -127,10 +125,8 @@ def require_runtime_full_link_clearance(
 ) -> int:
     """Check the BASE and EVERY URDF link at the actual simulated pose.
 
-    PyBullet's default linkIndexA=-1 checks the base only. A single
-    getClosestPoints(robot, obstacle, ...) call must never be reported as
-    whole-arm safety evidence. Returns the number of individual link queries.
-    This is still a discrete 10 ms runtime gate, not swept-volume proof.
+    PyBullet linkIndexA=-1 selects only the base. Iterate every link and
+    count the physical clearance queries performed at each simulation tick.
     """
     if not math.isfinite(clearance_m) or clearance_m <= 0.0:
         raise ValueError("runtime full-link clearance must be finite and positive")
@@ -297,7 +293,7 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                     if command==wire.CMD_JOINT_STATE_ACK and len(payload)==12:
                         feedback_acks+=1
                         if feedback_acks>=3 and not proposal_sent:
-                            # This is the ONLY source of the APF/IK waypoint.
+                            # Use the firmware UART APF/IK proposal as the waypoint source.
                             current_ee=p.getLinkState(
                                 arm,p.getNumJoints(arm,physicsClientId=client)-1,
                                 computeForwardKinematics=True,
@@ -359,9 +355,8 @@ def run(elf: Path, output_dir: Path, qemu_bin: str, timeout_s: float,
                                             absolute_goal,box_center)))
                             continue
                         current=tuple(angles_raw(p,arm,joints))
-                        # PyBullet knows the exact robot link shapes. The ARM
-                        # APF is end-effector-only; it may NEVER self-authorize
-                        # a movement past an unvalidated elbow/wrist/forearm.
+                        # APF plans the end-effector point; PyBullet checks
+                        # all moving link geometries before motion approval.
                         safe=validate_joint_path(
                             p,arm,[obstacle],joints,
                             [[math.radians(x/100) for x in current],

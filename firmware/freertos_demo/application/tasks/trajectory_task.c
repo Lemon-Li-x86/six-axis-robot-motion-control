@@ -1,7 +1,6 @@
-/*
- * Periodic trajectory producer; low-level math stays in algorithms/.
- * Consumes one-slot request queue and publishes latest continuous target.
- * Does not call UART/motor driver or change robot runtime configuration.
+/**
+ * @file trajectory_task.c
+ * @brief FreeRTOS 轨迹任务、请求更新与 APF 提案。
  */
 #include <math.h>
 #include <stddef.h>

@@ -1,3 +1,8 @@
+/**
+ * @file joint_controller.c
+ * @brief 六轴关节闭环控制。
+ */
+
 #include <stddef.h>
 #include "joint_controller.h"
 robot_status_t joint_controller_init(joint_controller_t *controller,

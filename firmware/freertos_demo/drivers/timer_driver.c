@@ -1,36 +1,6 @@
-/*
- * 文件：timer_driver.c
- *
- * 用途：
- * 实现 QEMU MPS2-AN386 CMSDK APB Timer Driver。
- *
- * 当前分工：
- *
- * Timer0
- * ---------------------------------------------------------
- * Base Address = 0x40000000
- *
- * 用作自由运行高分辨率计时器。
- *
- * 用于：
- *
- * 1. Protocol Parser 执行时间；
- * 2. UART ISR -> ProtocolRX Task 唤醒时间；
- * 3. 后续性能统计。
- *
- *
- * Timer1
- * ---------------------------------------------------------
- * Base Address = 0x40001000
- * External IRQ = 9
- *
- * 用作周期中断定时器。
- *
- * 用于：
- *
- * 1. 第2阶段 Timer 周期中断验证；
- * 2. 后续周期控制事件；
- * 3. 后续实时任务触发。
+/**
+ * @file timer_driver.c
+ * @brief 定时器驱动。
  */
 
 #include <stdint.h>
@@ -38,38 +8,27 @@
 #include "board.h"
 #include "timer_driver.h"
 
-
-/* =========================================================
- * CMSDK APB Timer Register Layout
- * ========================================================= */
+/* CMSDK APB Timer Register Layout */
 
 #define TIMER_CTRL_OFFSET \
     0x000UL
 
-
 #define TIMER_VALUE_OFFSET \
     0x004UL
-
 
 #define TIMER_RELOAD_OFFSET \
     0x008UL
 
-
 #define TIMER_INTSTATUS_OFFSET \
     0x00CUL
-
 
 #define REG32(address) \
     (*(volatile uint32_t *)(address))
 
-
-/* =========================================================
- * Timer0
- * ========================================================= */
+/* Timer0 */
 
 #define TIMER0_BASE \
     0x40000000UL
-
 
 #define TIMER0_CTRL \
     REG32( \
@@ -78,14 +37,12 @@
         TIMER_CTRL_OFFSET \
     )
 
-
 #define TIMER0_VALUE \
     REG32( \
         TIMER0_BASE \
         + \
         TIMER_VALUE_OFFSET \
     )
-
 
 #define TIMER0_RELOAD \
     REG32( \
@@ -94,7 +51,6 @@
         TIMER_RELOAD_OFFSET \
     )
 
-
 #define TIMER0_INTSTATUS \
     REG32( \
         TIMER0_BASE \
@@ -102,14 +58,10 @@
         TIMER_INTSTATUS_OFFSET \
     )
 
-
-/* =========================================================
- * Timer1
- * ========================================================= */
+/* Timer1 */
 
 #define TIMER1_BASE \
     0x40001000UL
-
 
 #define TIMER1_CTRL \
     REG32( \
@@ -118,14 +70,12 @@
         TIMER_CTRL_OFFSET \
     )
 
-
 #define TIMER1_VALUE \
     REG32( \
         TIMER1_BASE \
         + \
         TIMER_VALUE_OFFSET \
     )
-
 
 #define TIMER1_RELOAD \
     REG32( \
@@ -134,7 +84,6 @@
         TIMER_RELOAD_OFFSET \
     )
 
-
 #define TIMER1_INTSTATUS \
     REG32( \
         TIMER1_BASE \
@@ -142,10 +91,7 @@
         TIMER_INTSTATUS_OFFSET \
     )
 
-
-/* =========================================================
- * Timer CTRL Bits
- * ========================================================= */
+/* Timer CTRL Bits */
 
 /*
  * CTRL Bit 0：
@@ -154,7 +100,6 @@
 #define TIMER_CTRL_ENABLE \
     (1UL << 0)
 
-
 /*
  * CTRL Bit 3：
  * Timer Interrupt Enable。
@@ -162,10 +107,7 @@
 #define TIMER_CTRL_IRQ_ENABLE \
     (1UL << 3)
 
-
-/* =========================================================
- * Timer Interrupt
- * ========================================================= */
+/* Timer Interrupt */
 
 /*
  * INTSTATUS Bit 0：
@@ -175,34 +117,24 @@
 #define TIMER_INTSTATUS_IRQ \
     (1UL << 0)
 
-
-/* =========================================================
- * Timer0 Configuration
- * ========================================================= */
+/* Timer0 Configuration */
 
 #define TIMER0_COUNTER_RELOAD_VALUE \
     0xFFFFFFFFUL
 
-
-/* =========================================================
- * Cortex-M NVIC
- * ========================================================= */
+/* Cortex-M NVIC */
 
 #define NVIC_ISER0 \
     (*(volatile uint32_t *)0xE000E100UL)
 
-
 #define NVIC_ICER0 \
     (*(volatile uint32_t *)0xE000E180UL)
-
 
 #define NVIC_ICPR0 \
     (*(volatile uint32_t *)0xE000E280UL)
 
-
 #define NVIC_IPR_BASE \
     0xE000E400UL
-
 
 /*
  * QEMU MPS2-AN386：
@@ -215,10 +147,8 @@
 #define TIMER1_IRQ_NUMBER \
     9U
 
-
 #define TIMER1_IRQ_MASK \
     (1UL << TIMER1_IRQ_NUMBER)
-
 
 #define TIMER1_IRQ_PRIORITY \
     (*(volatile uint8_t *)( \
@@ -226,7 +156,6 @@
         + \
         TIMER1_IRQ_NUMBER \
     ))
-
 
 /*
  * Timer ISR 后续可能通过 Callback
@@ -239,30 +168,21 @@
 #define TIMER1_IRQ_PRIORITY_VALUE \
     0x80U
 
-
-/* =========================================================
- * Timer1 State
- * ========================================================= */
+/* Timer1 State */
 
 static volatile uint32_t
     timer1_irq_count = 0U;
 
-
 static uint32_t
     timer1_frequency_hz = 0U;
-
 
 static uint8_t
     timer1_running = 0U;
 
-
 static timer_driver_periodic_callback_t
     timer1_callback = 0;
 
-
-/* =========================================================
- * Driver Init
- * ========================================================= */
+/* Driver Init */
 
 void
 timer_driver_init(void)
@@ -279,13 +199,11 @@ timer_driver_init(void)
     TIMER0_CTRL =
         0U;
 
-
     /*
      * 清除可能残留的 Interrupt Status。
      */
     TIMER0_INTSTATUS =
         TIMER_INTSTATUS_IRQ;
-
 
     /*
      * 设置最大 Reload Value。
@@ -296,14 +214,12 @@ timer_driver_init(void)
     TIMER0_RELOAD =
         TIMER0_COUNTER_RELOAD_VALUE;
 
-
     /*
      * Timer0 只开启 Counter，
      * 不开启 IRQ。
      */
     TIMER0_CTRL =
         TIMER_CTRL_ENABLE;
-
 
     /* =====================================================
      * Timer1
@@ -317,13 +233,11 @@ timer_driver_init(void)
     TIMER1_CTRL =
         0U;
 
-
     /*
      * 清除可能残留的 Timer1 IRQ。
      */
     TIMER1_INTSTATUS =
         TIMER_INTSTATUS_IRQ;
-
 
     /*
      * Reload 初始设为 0。
@@ -333,13 +247,11 @@ timer_driver_init(void)
     TIMER1_RELOAD =
         0U;
 
-
     /*
      * 关闭 NVIC Timer1 IRQ。
      */
     NVIC_ICER0 =
         TIMER1_IRQ_MASK;
-
 
     /*
      * 清除 NVIC Pending。
@@ -347,27 +259,20 @@ timer_driver_init(void)
     NVIC_ICPR0 =
         TIMER1_IRQ_MASK;
 
-
     timer1_irq_count =
         0U;
-
 
     timer1_frequency_hz =
         0U;
 
-
     timer1_running =
         0U;
-
 
     timer1_callback =
         0;
 }
 
-
-/* =========================================================
- * Timer0 Counter
- * ========================================================= */
+/* Timer0 Counter */
 
 uint32_t
 timer_driver_get_counter(void)
@@ -376,10 +281,7 @@ timer_driver_get_counter(void)
         TIMER0_VALUE;
 }
 
-
-/* =========================================================
- * Timer0 Elapsed Ticks
- * ========================================================= */
+/* Timer0 Elapsed Ticks */
 
 uint32_t
 timer_driver_elapsed_ticks(
@@ -400,10 +302,7 @@ timer_driver_elapsed_ticks(
         end_counter;
 }
 
-
-/* =========================================================
- * Timer Clock Frequency
- * ========================================================= */
+/* Timer Clock Frequency */
 
 uint32_t
 timer_driver_get_frequency_hz(void)
@@ -413,10 +312,7 @@ timer_driver_get_frequency_hz(void)
         BOARD_SYSCLK_HZ;
 }
 
-
-/* =========================================================
- * Start Timer1 Periodic Interrupt
- * ========================================================= */
+/* Start Timer1 Periodic Interrupt */
 
 robot_status_t
 timer_driver_start_periodic(
@@ -427,10 +323,8 @@ timer_driver_start_periodic(
     uint32_t
         ticks_per_period;
 
-
     uint32_t
         reload_value;
-
 
     /*
      * 0 Hz 没有物理意义。
@@ -445,7 +339,6 @@ timer_driver_start_periodic(
             ROBOT_STATUS_ERROR_INVALID_ARGUMENT;
     }
 
-
     /*
      * 要求频率不能高于 Timer Clock。
      */
@@ -459,7 +352,6 @@ timer_driver_start_periodic(
             ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
-
     /*
      * 计算一个周期对应多少个 PCLK Tick。
      */
@@ -469,7 +361,6 @@ timer_driver_start_periodic(
             /
             frequency_hz
         );
-
 
     /*
      * CMSDK Timer 在 Counter 到达 0 后
@@ -492,12 +383,10 @@ timer_driver_start_periodic(
             ROBOT_STATUS_ERROR_OUT_OF_RANGE;
     }
 
-
     reload_value =
         ticks_per_period
         -
         1U;
-
 
     /*
      * 配置期间停止 Timer1。
@@ -505,13 +394,11 @@ timer_driver_start_periodic(
     TIMER1_CTRL =
         0U;
 
-
     /*
      * 暂时关闭 NVIC IRQ。
      */
     NVIC_ICER0 =
         TIMER1_IRQ_MASK;
-
 
     /*
      * 清除 Timer Interrupt Status。
@@ -519,13 +406,11 @@ timer_driver_start_periodic(
     TIMER1_INTSTATUS =
         TIMER_INTSTATUS_IRQ;
 
-
     /*
      * 清除 NVIC Pending。
      */
     NVIC_ICPR0 =
         TIMER1_IRQ_MASK;
-
 
     /*
      * 保存 Callback。
@@ -533,20 +418,17 @@ timer_driver_start_periodic(
     timer1_callback =
         callback;
 
-
     /*
      * IRQ Counter 从 0 重新开始。
      */
     timer1_irq_count =
         0U;
 
-
     /*
      * 保存配置频率。
      */
     timer1_frequency_hz =
         frequency_hz;
-
 
     /*
      * 设置 Timer Reload。
@@ -557,13 +439,11 @@ timer_driver_start_periodic(
     TIMER1_RELOAD =
         reload_value;
 
-
     /*
      * 设置 Timer1 Interrupt Priority。
      */
     TIMER1_IRQ_PRIORITY =
         TIMER1_IRQ_PRIORITY_VALUE;
-
 
     /*
      * 清除最后一次 Pending。
@@ -571,13 +451,11 @@ timer_driver_start_periodic(
     NVIC_ICPR0 =
         TIMER1_IRQ_MASK;
 
-
     /*
      * NVIC 开启 Timer1 IRQ。
      */
     NVIC_ISER0 =
         TIMER1_IRQ_MASK;
-
 
     /*
      * 开启：
@@ -591,19 +469,14 @@ timer_driver_start_periodic(
         |
         TIMER_CTRL_IRQ_ENABLE;
 
-
     timer1_running =
         1U;
-
 
     return
         ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Stop Timer1
- * ========================================================= */
+/* Stop Timer1 */
 
 void
 timer_driver_stop_periodic(void)
@@ -614,13 +487,11 @@ timer_driver_stop_periodic(void)
     TIMER1_CTRL =
         0U;
 
-
     /*
      * 关闭 NVIC IRQ。
      */
     NVIC_ICER0 =
         TIMER1_IRQ_MASK;
-
 
     /*
      * 清除 Timer IRQ。
@@ -628,30 +499,23 @@ timer_driver_stop_periodic(void)
     TIMER1_INTSTATUS =
         TIMER_INTSTATUS_IRQ;
 
-
     /*
      * 清除 NVIC Pending。
      */
     NVIC_ICPR0 =
         TIMER1_IRQ_MASK;
 
-
     timer1_running =
         0U;
 
-
     timer1_frequency_hz =
         0U;
-
 
     timer1_callback =
         0;
 }
 
-
-/* =========================================================
- * Timer1 Frequency
- * ========================================================= */
+/* Timer1 Frequency */
 
 uint32_t
 timer_driver_get_periodic_frequency_hz(void)
@@ -660,10 +524,7 @@ timer_driver_get_periodic_frequency_hz(void)
         timer1_frequency_hz;
 }
 
-
-/* =========================================================
- * Timer1 IRQ Counter
- * ========================================================= */
+/* Timer1 IRQ Counter */
 
 uint32_t
 timer_driver_get_periodic_irq_count(void)
@@ -672,10 +533,7 @@ timer_driver_get_periodic_irq_count(void)
         timer1_irq_count;
 }
 
-
-/* =========================================================
- * Timer1 Running State
- * ========================================================= */
+/* Timer1 Running State */
 
 uint8_t
 timer_driver_is_periodic_running(void)
@@ -684,10 +542,7 @@ timer_driver_is_periodic_running(void)
         timer1_running;
 }
 
-
-/* =========================================================
- * Timer1 Interrupt Handler
- * ========================================================= */
+/* Timer1 Interrupt Handler */
 
 void
 TIMER1_IRQHandler(void)
@@ -711,12 +566,10 @@ TIMER1_IRQHandler(void)
         TIMER1_INTSTATUS =
             TIMER_INTSTATUS_IRQ;
 
-
         /*
          * 记录 IRQ 次数。
          */
         timer1_irq_count++;
-
 
         /*
          * Callback 运行于 ISR Context。

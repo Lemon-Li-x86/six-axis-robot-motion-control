@@ -1,52 +1,22 @@
-# Native motion limits regression test
+# Host C Test Suite
 
-This is a **host-only** CMake project. It compiles the existing
-`tests/motion/motion_limits_test_main.c` and the production
-`algorithms/motion/motion_limits.c` against the same UR5 model used
-by the QEMU firmware. No duplicate test cases or algorithm copy is added.
-
-Run from repository root:
+从仓库根目录运行，使用本机编译器，不依赖 ARM/QEMU/FreeRTOS 或 Unity：
 
 ```powershell
-cmake -S firmware/freertos_demo/tests/host -B build/motion-host
-cmake --build build/motion-host
-ctest --test-dir build/motion-host --output-on-failure
+cmake -S firmware/freertos_demo/tests/host -B build/tests-host
+cmake --build build/tests-host --config Debug
+ctest --test-dir build/tests-host -C Debug --output-on-failure
 ```
 
-The existing test entry point returns a nonzero exit code on failures
-when `MOTION_LIMITS_HOST_TEST` is enabled. It covers null arguments,
-position boundaries, ±180° wrap, J3 limits, tie-breaking and output
-preservation on failure.
+**PASS：** CTest 退出码 0，全部已注册测试 `Passed`（输出 `100% tests passed`）。
 
-This does **not** replace the Cortex-M4/QEMU target or end-to-end
-UART/PyBullet regression. It adds a fast native gate before changing
-motion algorithms.
+| CTest 名称 | 测试功能/夹具 |
+|---|---|
+| `motion_limits_host` | 生产关节范围、连续角边界 |
+| `motor_driver_host` | 虚拟驱动基本操作和异常输入 |
+| `motor_feedback_safety_host` | 反馈跨圈、溢出和失败原子性 |
+| `ik_selector_host` | 候选 IK 解优选与限位 |
+| `protocol_stream_fault_host` | 破损/部分 UART 帧的流解析 |
+| `stage5_apf_wire_host` | Stage5 C APF 协议请求/响应 |
 
-The test does not require Unity. Existing Stage 2 Unity tests are a
-separate build project under `tests/unity`.
-
-If a build fails, do not mark it as passed: capture the compiler output
-and the test report before proceeding.
-
-The test report has a fixed capacity of 40 assertions. Check that the
-recorded total does not exceed this capacity when adding new cases;
-otherwise the report records overflow as a failure.
-
-## Motor driver regression
-
-The same host CMake project also builds `motor_driver_host_test`, reusing
-all 11 QEMU motor boundary cases from `tests/qemu_target/motor_test_main.c`.
-The `MOTOR_DRIVER_HOST_TEST` macro only selects an exit code instead of
-entering the QEMU GDB completion loop; the production motor driver remains
-unchanged. `ctest --test-dir build/motion-host --output-on-failure` runs both
-motion-limits and motor-driver tests.
-
-## Long-running feedback safety
-
-`motor_feedback_safety_host_test` exercises the production Motor Driver
-near both signed 32-bit continuous-position limits. It checks that overflow
-returns `ROBOT_STATUS_ERROR_OUT_OF_RANGE` without partially overwriting
-canonical feedback, unwrapped positions, or velocities. This is a native-only
-stress regression; it does not replace RTOS concurrency or hardware testing.
-
-All three registered native CTest executables run with the command above.
+CTest 名单与源码绑定以 [CMakeLists.txt](CMakeLists.txt) 为准。此测试不证明 FreeRTOS 任务时序、QEMU UART 传输、PyBullet 全连杆门禁或真人 GUI；后续测试入口和文件索引见 [根 README](../../../../README.md)。旧文件所称“只有三个 CTest”已经过期。

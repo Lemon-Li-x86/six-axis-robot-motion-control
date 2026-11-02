@@ -1,5 +1,6 @@
-/* QEMU-only task timing evidence. Not part of deployable firmware.
- * Shared timer source: existing CMSDK Timer0, no duplicated clock value.
+/**
+ * @file stage4_timing_probe.h
+ * @brief 探针接口。
  */
 #ifndef STAGE4_TIMING_PROBE_H
 #define STAGE4_TIMING_PROBE_H

@@ -1,16 +1,6 @@
-/*
- * 文件：test_motor_driver.c
- *
- * 用途：
- * 使用 Unity 验证 Motor Driver 的：
- *
- * 1. 初始化状态；
- * 2. Canonical Angle 规范化；
- * 3. 首次 Feedback；
- * 4. ±180° Wrap Correction；
- * 5. Continuous Position；
- * 6. Velocity；
- * 7. Null Pointer 错误处理。
+/**
+ * @file test_motor_driver.c
+ * @brief 回归测试或夹具：test motor driver。
  */
 
 #include <stdint.h>
@@ -21,10 +11,7 @@
 #include "robot_types.h"
 #include "error_code.h"
 
-
-/* =========================================================
- * Initialization Tests
- * ========================================================= */
+/* Initialization Tests */
 
 /**
  * @brief 验证 Motor Driver 初始化后
@@ -61,10 +48,7 @@ void test_motor_init_sets_zero_targets(void)
     );
 }
 
-
-/* =========================================================
- * Target Position Tests
- * ========================================================= */
+/* Target Position Tests */
 
 /**
  * @brief 验证目标关节角被规范化到
@@ -147,10 +131,7 @@ void test_motor_target_normalization(void)
     );
 }
 
-
-/* =========================================================
- * Feedback Tests
- * ========================================================= */
+/* Feedback Tests */
 
 /**
  * @brief 验证第一组 Feedback 建立位置状态，
@@ -240,10 +221,7 @@ void test_motor_first_feedback_has_zero_velocity(void)
     }
 }
 
-
-/* =========================================================
- * Angle Wrap Tests
- * ========================================================= */
+/* Angle Wrap Tests */
 
 /**
  * @brief 验证 +179° -> -179°
@@ -328,7 +306,6 @@ void test_motor_wrap_forward(void)
     );
 }
 
-
 /**
  * @brief 验证 -179° -> +179°
  *        被识别为反向 -2° 连续运动。
@@ -405,10 +382,7 @@ void test_motor_wrap_backward(void)
     );
 }
 
-
-/* =========================================================
- * Error Handling Tests
- * ========================================================= */
+/* Error Handling Tests */
 
 /**
  * @brief 验证所有主要 Motor Driver API

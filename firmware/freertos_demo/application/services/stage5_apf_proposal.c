@@ -1,9 +1,9 @@
-/* APF + production IK executed INSIDE ARM FreeRTOS Trajectory task.
- * Non-actuating two-phase motion:
- *  (1) C firmware proposes next joint waypoint using fresh physical feedback;
- *  (2) PyBullet checks entire swept robot against actual static obstacles;
- *  (3) separate authorized ordinary C UART joint move request executes it.
- * This protects against end-effector-only APF's unswept link blind spots.
+/**
+ * @file stage5_apf_proposal.c
+ * @brief Compute an APF waypoint and select a feasible joint target.
+ *
+ * Planning uses the measured pose and returns a proposal only.
+ * Swept-link collision validation and motion execution are separate steps.
  */
 #include <float.h>
 #include <math.h>
@@ -72,7 +72,7 @@ robot_status_t stage5_apf_propose_from_feedback(
                                           &proposed.canonical_joint);
         if(status!=ROBOT_STATUS_OK) return status;
     }
-    /* No UART/motor state/queue changes: a proposal is not a move. */
+    /* Validate the Cartesian result before publishing the proposal. */
     for(axis=0U;axis<3U;axis++) {
         if(!isfinite(proposed.cartesian_mm.mm[axis]) ||
            fabs(proposed.cartesian_mm.mm[axis])>(double)FLT_MAX)

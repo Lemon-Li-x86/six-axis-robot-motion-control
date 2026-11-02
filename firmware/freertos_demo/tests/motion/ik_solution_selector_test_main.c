@@ -1,10 +1,6 @@
-
-/*
- * File: ik_solution_selector_test_main.c
- *
- * Native regression tests for IK candidate selection.
- *
- * Compatible with Windows MSVC and GCC.
+/**
+ * @file ik_solution_selector_test_main.c
+ * @brief 回归测试或夹具：ik solution selector。
  */
 
 #include <stdint.h>
@@ -12,7 +8,6 @@
 #include <string.h>
 
 #include "ik_solution_selector.h"
-
 
 #define CHECK(condition)                                  \
     do                                                    \
@@ -28,10 +23,7 @@
         }                                                 \
     } while (0)
 
-
-/* =========================================================
- * Test Data
- * ========================================================= */
+/* Test Data */
 
 static kinematics_ik_solutions_t examples(
     uint8_t count
@@ -60,10 +52,7 @@ static kinematics_ik_solutions_t examples(
     return set;
 }
 
-
-/* =========================================================
- * Main
- * ========================================================= */
+/* Main */
 
 int main(void)
 {
@@ -75,7 +64,6 @@ int main(void)
     ik_selection_result_t saved;
 
     uint32_t checks = 0U;
-
 
     /* -----------------------------------------------------
      * NULL pointer validation
@@ -109,7 +97,6 @@ int main(void)
 
     checks += 3U;
 
-
     /* -----------------------------------------------------
      * Invalid solution counts
      * ----------------------------------------------------- */
@@ -135,7 +122,6 @@ int main(void)
     );
 
     checks += 2U;
-
 
     /* -----------------------------------------------------
      * Invalid current position / canonical input
@@ -166,7 +152,6 @@ int main(void)
     );
 
     checks += 2U;
-
 
     /* -----------------------------------------------------
      * Canonical angle -> continuous position
@@ -204,7 +189,6 @@ int main(void)
 
     checks += 4U;
 
-
     /* -----------------------------------------------------
      * Joint-limit margin
      *
@@ -240,7 +224,6 @@ int main(void)
 
     checks += 2U;
 
-
     /* -----------------------------------------------------
      * Wrist singularity rejection
      *
@@ -269,7 +252,6 @@ int main(void)
     CHECK(output.candidate_index == 1U);
 
     checks += 2U;
-
 
     /* -----------------------------------------------------
      * All candidates singular
@@ -302,7 +284,6 @@ int main(void)
 
     checks += 2U;
 
-
     /* -----------------------------------------------------
      * Stable tie-breaking
      *
@@ -325,7 +306,6 @@ int main(void)
     CHECK(output.candidate_index == 0U);
 
     checks += 2U;
-
 
     /* -----------------------------------------------------
      * Final report

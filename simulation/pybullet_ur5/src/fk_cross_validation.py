@@ -1,10 +1,4 @@
-"""
-文件：fk_cross_validation.py
-
-用途：
-使用 PyBullet UR5 URDF
-交叉验证 Cortex-M4 C 端 Forward Kinematics。
-"""
+"""PyBullet FK 对照。"""
 
 import math
 from pathlib import Path
@@ -12,10 +6,7 @@ from pathlib import Path
 import pybullet as p
 
 
-# ==========================================================
 # UR5 Model Path
-# ==========================================================
-
 current_file = Path(__file__).resolve()
 
 pybullet_ur5_dir = (
@@ -31,10 +22,7 @@ ur5_path = (
 )
 
 
-# ==========================================================
 # Test Configuration
-# ==========================================================
-
 # UR5 六个主动 Revolute Joint，
 # 顺序必须与固件 robot_joint_angles_t 一致。
 UR5_JOINT_NAMES = [
@@ -53,10 +41,7 @@ ROTATION_TOLERANCE = 0.001
 TRANSLATION_TOLERANCE_MM = 0.05
 
 
-# ==========================================================
 # Expected Results
-# ==========================================================
-
 # 与 Cortex-M4 C 端 FK Self Test
 # 使用相同测试姿态和 Expected Result。
 #
@@ -135,10 +120,7 @@ TEST_CASES = [
 ]
 
 
-# ==========================================================
 # PyBullet Setup
-# ==========================================================
-
 # DIRECT Mode：
 #
 # 不创建 GUI，
@@ -169,10 +151,7 @@ robot_id = p.loadURDF(
 )
 
 
-# ==========================================================
 # Joint Map
-# ==========================================================
-
 joint_map = {}
 
 joint_count = p.getNumJoints(
@@ -208,10 +187,7 @@ ee_link_index = joint_map[
 ]
 
 
-# ==========================================================
 # Joint Configuration
-# ==========================================================
-
 def set_joint_configuration(
     joints_deg,
 ) -> None:
@@ -246,10 +222,7 @@ def set_joint_configuration(
         )
 
 
-# ==========================================================
 # PyBullet Forward Kinematics
-# ==========================================================
-
 def get_ee_transform():
     """
     获取 ee_link 相对于 World Frame 的齐次变换矩阵。
@@ -330,10 +303,7 @@ def get_ee_transform():
     return transform
 
 
-# ==========================================================
 # Transform Comparison
-# ==========================================================
-
 def compare_transforms(
     actual,
     expected,
@@ -408,10 +378,7 @@ def compare_transforms(
     )
 
 
-# ==========================================================
 # Matrix Output
-# ==========================================================
-
 def print_matrix(
     matrix,
 ) -> None:
@@ -433,10 +400,7 @@ def print_matrix(
         )
 
 
-# ==========================================================
 # Cross Validation
-# ==========================================================
-
 print()
 print(
     "=============================================="
@@ -535,10 +499,7 @@ for test_case in TEST_CASES:
     print()
 
 
-# ==========================================================
 # Final Result
-# ==========================================================
-
 if all_passed:
     print(
         "FINAL RESULT: ALL FK TESTS PASSED"

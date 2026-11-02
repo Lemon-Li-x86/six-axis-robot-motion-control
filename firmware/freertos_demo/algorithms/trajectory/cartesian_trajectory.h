@@ -1,7 +1,6 @@
-/* Stage 4 Cartesian line/arc sampled trajectory.
- * Transform convention is existing robot_transform_t: base_link -> ee_link,
- * translation mm, rotation matrix. All time is seconds.
- * No FreeRTOS, UART, motor state, global configuration or allocation.
+/**
+ * @file cartesian_trajectory.h
+ * @brief 笛卡尔轨迹公共接口。
  */
 #ifndef ROBOT_CARTESIAN_TRAJECTORY_H
 #define ROBOT_CARTESIAN_TRAJECTORY_H

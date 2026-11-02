@@ -1,3 +1,8 @@
+/**
+ * @file potential_field_path_test_main.c
+ * @brief 回归测试或夹具：potential field path。
+ */
+
 #include <math.h>
 #include <stdio.h>
 #include "potential_field_path.h"

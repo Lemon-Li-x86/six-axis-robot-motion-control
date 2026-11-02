@@ -1,22 +1,7 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-文件：generate_firmware_defaults.py
-
-用途：
-1. 读取 robot_defaults.json。
-2. 检查配置字段是否完整。
-3. 检查各项参数的数据类型与取值范围。
-4. 生成供 Cortex-M4 固件编译使用的 C 头文件。
-
-设计原则：
-- JSON 只在开发计算机上读取。
-- Cortex-M4 固件不需要 JSON 解析器。
-- 不依赖第三方 Python 软件包。
-- 配置非法时停止生成，避免错误参数进入固件。
-"""
+"""JSON 参数校验并生成 C 头文件。"""
 
 import argparse
 import json
@@ -24,10 +9,7 @@ import math
 from pathlib import Path
 
 
-# ==========================================================
 # Configuration Schema
-# ==========================================================
-
 # 当前 FreeRTOSConfig.h 设置：
 # configMAX_PRIORITIES = 5
 # 因此有效任务优先级为 0~4。
@@ -125,10 +107,7 @@ def generate_motion_defaults(motion):
     return lines
 
 
-# ==========================================================
 # Validation Helpers
-# ==========================================================
-
 def validate_integer(value, name, minimum, maximum):
     """
     验证参数必须为整数且处于指定范围。
@@ -189,10 +168,7 @@ def validate_section(
     }
 
 
-# ==========================================================
 # Generate Header
-# ==========================================================
-
 def generate_header(config):
     """
     根据 JSON 参数生成完整 C 头文件。
@@ -374,10 +350,7 @@ def generate_header(config):
     return "\n".join(lines)
 
 
-# ==========================================================
 # Program Entry
-# ==========================================================
-
 def main():
     parser = argparse.ArgumentParser(
         description=(
