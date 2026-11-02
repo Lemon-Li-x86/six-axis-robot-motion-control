@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Turn the QEMU-only FreeRTOS Timer0 GDB report into auditable metrics.
 
 Input is the REAL GDB transcript, not synthesized benchmark figures.

@@ -1,3 +1,4 @@
+"""FK 批量结果对照。"""
 
 from pathlib import Path
 import struct

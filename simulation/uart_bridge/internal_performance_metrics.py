@@ -1,18 +1,4 @@
-"""
-文件：internal_performance_metrics.py
-
-用途：
-读取 Cortex-M4 固件内部 Performance Monitor 指标。
-
-当前读取：
-
-1. Timer Frequency；
-2. Protocol Parser Sample Count；
-3. Protocol Parser Minimum / Average / Maximum Tick；
-4. UART RX ISR -> ProtocolRX Task Wakeup Sample Count；
-5. Task Wakeup Minimum / Average / Maximum Tick。
-
-"""
+"""仿真脚本：internal performance metrics。"""
 
 import select
 import socket
@@ -36,10 +22,7 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 HOST = "127.0.0.1"
 PORT = 5555
 
@@ -53,10 +36,7 @@ SOCKET_POLL_INTERVAL_S = 0.05
 SOCKET_RECV_SIZE = 4096
 
 
-# ==========================================================
 # Diagnostics Query
-# ==========================================================
-
 def query_metric(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -153,10 +133,7 @@ def query_metric(
     )
 
 
-# ==========================================================
 # Time Conversion
-# ==========================================================
-
 def ticks_to_us(
     ticks: int,
     frequency_hz: int,
@@ -186,10 +163,7 @@ def ticks_to_us(
     )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     连接 QEMU UART 并打印全部内部性能指标。

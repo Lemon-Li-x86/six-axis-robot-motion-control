@@ -1,13 +1,4 @@
-"""
-文件：parameter_config_test.py
-
-用途：
-验证 Runtime Parameter Configuration 通信链路。
-
-当前测试参数：
-
-ProtocolTX Period
-"""
+"""仿真脚本：parameter config。"""
 
 import select
 import socket
@@ -25,10 +16,7 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 HOST = "127.0.0.1"
 PORT = 5555
 
@@ -36,10 +24,7 @@ PORT = 5555
 ACK_TIMEOUT_S = 2.0
 
 
-# ==========================================================
 # Test Configuration
-# ==========================================================
-
 # 默认 ProtocolTX Period。
 DEFAULT_PROTOCOL_TX_PERIOD_MS = 1000
 
@@ -50,10 +35,7 @@ FAST_PROTOCOL_TX_PERIOD_MS = 200
 RATIO_TOLERANCE = 0.15
 
 
-# ==========================================================
 # Receive
-# ==========================================================
-
 def receive_frames(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -121,10 +103,7 @@ def receive_frames(
     return frames
 
 
-# ==========================================================
 # Parameter ACK
-# ==========================================================
-
 def wait_for_parameter_ack(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -305,10 +284,7 @@ def set_protocol_tx_period(
     return True
 
 
-# ==========================================================
 # Period Measurement
-# ==========================================================
-
 def measure_protocol_tx_period(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -462,10 +438,7 @@ def print_intervals(
     )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     执行完整 Parameter Configuration Test。

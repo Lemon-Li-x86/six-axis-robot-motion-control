@@ -1,10 +1,4 @@
-"""
-文件：performance_baseline.py
-
-用途：
-测量当前 QEMU Cortex-M4 UART 通信链路
-端到端往返延迟 RTT。
-"""
+"""仿真脚本：performance baseline。"""
 
 import select
 import socket
@@ -13,18 +7,12 @@ import struct
 import time
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 HOST = "127.0.0.1"
 PORT = 5555
 
 
-# ==========================================================
 # Protocol Configuration
-# ==========================================================
-
 HEADER = b"\xAA\x55"
 
 CMD_JOINT_STATE = 0x81
@@ -33,10 +21,7 @@ CMD_JOINT_STATE_ACK = 0x82
 JOINT_COUNT = 6
 
 
-# ==========================================================
 # Benchmark Configuration
-# ==========================================================
-
 # 正式测试前的预热次数。
 #
 # 预热 Sample 不进入最终 RTT Statistics。
@@ -49,10 +34,7 @@ TEST_COUNT = 200
 ACK_TIMEOUT = 1.0
 
 
-# ==========================================================
 # Protocol Helpers
-# ==========================================================
-
 def build_frame(
     command: int,
     payload: bytes,
@@ -256,10 +238,7 @@ def parse_frame(
     return command, payload
 
 
-# ==========================================================
 # ACK Wait
-# ==========================================================
-
 def wait_for_matching_ack(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -344,10 +323,7 @@ def wait_for_matching_ack(
     return False
 
 
-# ==========================================================
 # Statistics
-# ==========================================================
-
 def percentile(
     values: list[float],
     percentage: float,
@@ -404,10 +380,7 @@ def percentile(
     )
 
 
-# ==========================================================
 # RTT Measurement
-# ==========================================================
-
 def measure_once(
     sock: socket.socket,
     rx_buffer: bytearray,
@@ -477,10 +450,7 @@ def measure_once(
     )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     执行 UART RTT Performance Baseline。

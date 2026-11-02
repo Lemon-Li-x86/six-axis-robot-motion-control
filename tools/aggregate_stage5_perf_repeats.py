@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Fail-closed, evidence-only paired A/B analysis of QEMU Stage5 RTOS traces.
 
 Both ELFs must be independently built at the same commit/toolchain/config,

@@ -1,17 +1,4 @@
-"""
-文件：protocol_codec.py
-
-用途：
-统一 Python 仿真与测试侧的 UART 二进制协议编解码。
-
-本模块负责：
-
-1. Generic Frame 构造与解析；
-2. 六轴 Joint Frame 编解码；
-3. Runtime Parameter Frame；
-4. Diagnostics Frame；
-5. TCP Byte Stream Frame 提取。
-"""
+"""Python 协议编解码镜像。"""
 
 import struct
 from typing import Optional
@@ -22,17 +9,11 @@ from angle_utils import (
 )
 
 
-# ==========================================================
 # Protocol Header
-# ==========================================================
-
 HEADER = b"\xAA\x55"
 
 
-# ==========================================================
 # Commands
-# ==========================================================
-
 CMD_SET_JOINT_TARGETS = 0x01
 CMD_SET_PARAMETER = 0x02
 
@@ -43,10 +24,7 @@ CMD_DIAGNOSTICS_RESPONSE = 0x84
 CMD_PARAMETER_ACK = 0x85
 
 
-# ==========================================================
 # Generic Protocol
-# ==========================================================
-
 # 最大 Payload 长度与固件侧 PROTOCOL_MAX_PAYLOAD_LEN 一致。
 PROTOCOL_MAX_PAYLOAD_LEN = 64
 
@@ -54,10 +32,7 @@ PROTOCOL_MAX_PAYLOAD_LEN = 64
 PROTOCOL_MIN_FRAME_LEN = 5
 
 
-# ==========================================================
 # Joint Protocol
-# ==========================================================
-
 JOINT_COUNT = 6
 
 # 每个 Joint 使用 signed int16，共 2 Byte。
@@ -82,10 +57,7 @@ _JOINT_COMMANDS = {
 }
 
 
-# ==========================================================
 # Parameter Protocol
-# ==========================================================
-
 PARAM_PROTOCOL_TX_PERIOD_MS = 0x01
 
 # Parameter ID(uint8) + Value(uint32)。
@@ -102,10 +74,7 @@ _PARAMETER_REQUEST_STRUCT = struct.Struct("<BI")
 _PARAMETER_ACK_STRUCT = struct.Struct("<BbI")
 
 
-# ==========================================================
 # Diagnostics Protocol
-# ==========================================================
-
 DIAGNOSTICS_METRIC_RX_DROP_COUNT = 0
 DIAGNOSTICS_METRIC_TIMER_FREQUENCY_HZ = 1
 
@@ -125,10 +94,7 @@ DIAGNOSTICS_PAYLOAD_LEN = 4
 _DIAGNOSTICS_RESPONSE_STRUCT = struct.Struct("<I")
 
 
-# ==========================================================
 # Generic Frame
-# ==========================================================
-
 def build_frame(
     command: int,
     payload: bytes = b"",
@@ -239,10 +205,7 @@ def parse_frame(
     return command, frame[4:-1]
 
 
-# ==========================================================
 # Joint Protocol
-# ==========================================================
-
 def build_joint_payload(
     angles_deg: list[float],
 ) -> bytes:
@@ -379,10 +342,7 @@ def parse_joint_frame(
     )
 
 
-# ==========================================================
 # Parameter Configuration
-# ==========================================================
-
 def build_set_parameter_frame(
     parameter_id: int,
     value: int,
@@ -487,10 +447,7 @@ def parse_parameter_ack_frame(
     )
 
 
-# ==========================================================
 # Diagnostics
-# ==========================================================
-
 def build_diagnostics_request(
     selector: Optional[int] = None,
 ) -> bytes:
@@ -552,10 +509,7 @@ def parse_diagnostics_response_payload(
     )[0]
 
 
-# ==========================================================
 # Stream Frame Extraction
-# ==========================================================
-
 def extract_frames(
     buffer: bytearray,
 ) -> list[bytes]:

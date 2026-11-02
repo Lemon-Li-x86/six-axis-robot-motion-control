@@ -1,29 +1,4 @@
-"""
-文件：ur5_uart_bridge.py
-
-用途：
-连接：
-
-    QEMU Cortex-M4 / FreeRTOS UART
-    <->
-    Python TCP Bridge
-    <->
-    PyBullet UR5
-
-本模块负责：
-
-1. QEMU UART TCP 连接；
-2. PyBullet UR5 生命周期；
-3. Protocol Frame Application Handling；
-4. 六轴目标位置下发；
-5. PyBullet 实际关节状态读取；
-6. 周期发送 JOINT_STATE。
-
-协议编解码统一由 protocol_codec.py 提供。
-
-角度规范化和连续角恢复统一由
-angle_utils.py 提供。
-"""
+"""通用 UART↔PyBullet 桥接。"""
 
 import math
 import select
@@ -50,10 +25,7 @@ from protocol_codec import (
 )
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 # QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
 PORT = 5555
@@ -62,10 +34,7 @@ PORT = 5555
 SOCKET_RETRY_INTERVAL_S = 0.5
 
 
-# ==========================================================
 # Simulation Timing
-# ==========================================================
-
 # Python -> MCU Joint State 发送周期，单位 second。
 #
 # 0.2 s = 5 Hz。
@@ -78,10 +47,7 @@ STATE_PRINT_INTERVAL_S = 1.0
 SIMULATION_STEP_HZ = 240.0
 
 
-# ==========================================================
 # UR5 Joint Configuration
-# ==========================================================
-
 # 顺序必须与 Cortex-M4 六轴 Joint Array 一致。
 UR5_JOINT_NAMES = [
     "shoulder_pan_joint",
@@ -108,10 +74,7 @@ UR5_JOINT_FORCES = [
 ]
 
 
-# ==========================================================
 # UR5 Path
-# ==========================================================
-
 def get_ur5_path() -> Path:
     """
     获取项目内 UR5 URDF 的绝对路径。
@@ -137,10 +100,7 @@ def get_ur5_path() -> Path:
     )
 
 
-# ==========================================================
 # QEMU Connection
-# ==========================================================
-
 def connect_qemu(
     host: str,
     port: int,
@@ -196,10 +156,7 @@ def connect_qemu(
             )
 
 
-# ==========================================================
 # PyBullet Setup
-# ==========================================================
-
 def start_pybullet(
     ur5_path: Path,
 ):
@@ -335,10 +292,7 @@ def start_pybullet(
     )
 
 
-# ==========================================================
 # UR5 Joint IO
-# ==========================================================
-
 def set_joint_targets(
     robot_id: int,
     controlled_joint_indices: list[int],
@@ -413,10 +367,7 @@ def get_joint_positions_deg(
     return positions_deg
 
 
-# ==========================================================
 # Protocol Application Handling
-# ==========================================================
-
 def handle_received_frame(
     frame: bytes,
     target_positions_deg: list[float],
@@ -495,10 +446,7 @@ def handle_received_frame(
     return target_positions_deg
 
 
-# ==========================================================
 # Main Bridge Loop
-# ==========================================================
-
 def run_bridge(
     sock: socket.socket,
     robot_id: int,
@@ -682,10 +630,7 @@ def run_bridge(
         )
 
 
-# ==========================================================
 # Entry
-# ==========================================================
-
 def main() -> None:
     """
     启动完整 QEMU UART <-> PyBullet Bridge。
