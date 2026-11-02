@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Prevent the legacy Python QEMU UART receiver's wire constants from
 silently diverging from the firmware C protocol and robot type contracts.
 

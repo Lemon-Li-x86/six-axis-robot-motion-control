@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Report link-time FLASH/RAM allocations from a GNU ld Cortex-M4 map.
 
 No device-memory or CPU runtime measurement is implied. Do not include this
