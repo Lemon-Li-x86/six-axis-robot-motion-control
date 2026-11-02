@@ -1,8 +1,6 @@
-/*
- * 文件：kinematics_forward.c
- *
- * 用途：
- * 实现 Forward Kinematics。
+/**
+ * @file kinematics_forward.c
+ * @brief 正运动学 FK。
  */
 
 #include <stddef.h>
@@ -14,7 +12,6 @@
 
 #include "robot_model.h"
 #include "matrix4.h"
-
 
 static robot_status_t
 kinematics_build_dh_transform(
@@ -37,7 +34,6 @@ kinematics_build_dh_transform(
     robot_real_t
         sin_alpha;
 
-
     if (
         transform
         ==
@@ -47,7 +43,6 @@ kinematics_build_dh_transform(
         return
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
-
 
     cos_theta =
         cosf(
@@ -69,7 +64,6 @@ kinematics_build_dh_transform(
             alpha_rad
         );
 
-
     transform->matrix[0][0] =
         cos_theta;
 
@@ -87,7 +81,6 @@ kinematics_build_dh_transform(
         a_mm
         *
         cos_theta;
-
 
     transform->matrix[1][0] =
         sin_theta;
@@ -107,7 +100,6 @@ kinematics_build_dh_transform(
         *
         sin_theta;
 
-
     transform->matrix[2][0] =
         0.0F;
 
@@ -119,7 +111,6 @@ kinematics_build_dh_transform(
 
     transform->matrix[2][3] =
         d_mm;
-
 
     transform->matrix[3][0] =
         0.0F;
@@ -133,11 +124,9 @@ kinematics_build_dh_transform(
     transform->matrix[3][3] =
         1.0F;
 
-
     return
         ROBOT_STATUS_OK;
 }
-
 
 robot_status_t
 kinematics_forward(
@@ -148,7 +137,6 @@ kinematics_forward(
     const robot_model_t
         *model;
 
-
     robot_transform_t
         dh_total;
 
@@ -158,14 +146,11 @@ kinematics_forward(
     robot_transform_t
         converted;
 
-
     robot_status_t
         status;
 
-
     uint32_t
         joint_index;
-
 
     if (
         joints
@@ -181,16 +166,13 @@ kinematics_forward(
             ROBOT_STATUS_ERROR_NULL_POINTER;
     }
 
-
     model =
         robot_model_get_active();
-
 
     status =
         matrix4_identity(
             &dh_total
         );
-
 
     if (
         status
@@ -201,7 +183,6 @@ kinematics_forward(
         return
             status;
     }
-
 
     for (
         joint_index = 0U;
@@ -215,7 +196,6 @@ kinematics_forward(
         robot_real_t
             angle_rad;
 
-
         angle_deg =
             (robot_real_t)
             joints->value[
@@ -224,12 +204,10 @@ kinematics_forward(
             *
             ROBOT_JOINT_ANGLE_UNIT_DEG;
 
-
         angle_rad =
             angle_deg
             *
             KINEMATICS_DEG_TO_RAD_F;
-
 
         status =
             kinematics_build_dh_transform(
@@ -246,7 +224,6 @@ kinematics_forward(
                 &dh_joint
             );
 
-
         if (
             status
             !=
@@ -257,14 +234,12 @@ kinematics_forward(
                 status;
         }
 
-
         status =
             matrix4_multiply(
                 &dh_total,
                 &dh_joint,
                 &dh_total
             );
-
 
         if (
             status
@@ -277,14 +252,12 @@ kinematics_forward(
         }
     }
 
-
     status =
         matrix4_multiply(
             &model->base_frame_conversion,
             &dh_total,
             &converted
         );
-
 
     if (
         status
@@ -295,7 +268,6 @@ kinematics_forward(
         return
             status;
     }
-
 
     return
         matrix4_multiply(

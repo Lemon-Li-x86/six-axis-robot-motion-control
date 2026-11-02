@@ -1,16 +1,12 @@
-/*
- * 文件：matrix4.c
- *
- * 用途：
- * 实现 Algorithm Layer 共用的
- * 4 × 4 矩阵基础运算。
+/**
+ * @file matrix4.c
+ * @brief 4×4 变换矩阵运算。
  */
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include "matrix4.h"
-
 
 robot_status_t matrix4_identity(
     robot_transform_t *matrix
@@ -35,7 +31,6 @@ robot_status_t matrix4_identity(
 
     return ROBOT_STATUS_OK;
 }
-
 
 robot_status_t matrix4_multiply(
     const robot_transform_t *left,

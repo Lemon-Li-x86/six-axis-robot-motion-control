@@ -1,24 +1,6 @@
-/*
- * 文件：kinematics.h
- *
- * 用途：
- * 定义机器人运动学模块的公共接口。
- *
- * Kinematics Layer：
- *
- * 1. 不依赖 UART；
- * 2. 不依赖 Protocol；
- * 3. 不依赖 FreeRTOS；
- * 4. 不依赖 Motor Driver；
- * 5. 不负责 Trajectory；
- * 6. 不负责 Motion Policy；
- * 7. 不负责 Control。
- *
- * 当前使用 Active Robot Model。
- *
- * 当前 Active Model：
- *
- * UR5。
+/**
+ * @file kinematics.h
+ * @brief FK/IK 公共接口和数值验收阈值。
  */
 
 #ifndef KINEMATICS_H
@@ -28,7 +10,6 @@
 
 #include "robot_types.h"
 #include "error_code.h"
-
 
 /*
  * UR5 Analytic IK：
@@ -42,7 +23,6 @@
  * 8。
  */
 #define KINEMATICS_MAX_IK_SOLUTIONS 8U
-
 
 /**
  * @brief 保存一次逆运动学求解得到的候选解集合。
@@ -63,7 +43,6 @@ typedef struct
     ];
 
 } kinematics_ik_solutions_t;
-
 
 /**
  * @brief 计算机器人 Forward Kinematics。
@@ -100,7 +79,6 @@ robot_status_t kinematics_forward(
     const robot_joint_angles_t *joints,
     robot_transform_t *transform
 );
-
 
 /**
  * @brief 计算当前 Active Robot Model 的解析逆运动学。
@@ -148,7 +126,6 @@ robot_status_t kinematics_inverse(
     kinematics_ik_solutions_t *solutions
 );
 
-
 /*
  * Numerical acceptance gate for the optional reference-conditioned IK
  * branch recovery. These are the authoritative IK pose-validation limits.
@@ -183,7 +160,6 @@ robot_status_t kinematics_inverse_with_reference(
     const robot_joint_angles_t *reference,
     kinematics_ik_solutions_t *solutions);
 
-
 /**
  * Compare two public base->ee transforms with explicit independent limits.
  * Translation residual is Euclidean distance in mm; rotation residual is
@@ -202,6 +178,5 @@ robot_status_t kinematics_pose_within_tolerance(
     const robot_transform_t *requested,
     robot_real_t maximum_position_error_mm,
     robot_real_t maximum_rotation_element_error);
-
 
 #endif

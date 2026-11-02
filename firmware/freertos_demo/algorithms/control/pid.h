@@ -1,6 +1,6 @@
-/* Stage 4 incremental (velocity-form) PID.
- * Error/outputs use position degrees; dt seconds; all config is caller-owned.
- * This module is pure calculation, without RTOS or actuator interfaces.
+/**
+ * @file pid.h
+ * @brief PID API。
  */
 #ifndef ROBOT_PID_H
 #define ROBOT_PID_H

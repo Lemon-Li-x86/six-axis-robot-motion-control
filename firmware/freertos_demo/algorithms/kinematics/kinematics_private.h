@@ -1,17 +1,6 @@
-/*
- * 文件：kinematics_private.h
- *
- * 用途：
- * 定义 Kinematics Module 内部共享接口。
- *
- * 本文件只允许：
- *
- * Kinematics Module Implementation
- *
- * 使用。
- *
- * Public Application Code
- * 不应 include 本文件。
+/**
+ * @file kinematics_private.h
+ * @brief 私有运动学辅助声明。
  */
 
 #ifndef KINEMATICS_PRIVATE_H
@@ -23,16 +12,12 @@
 #include "robot_model.h"
 #include "math_constants.h"
 
-
-/* =========================================================
- * Mathematical Constants
- * ========================================================= */
+/* Mathematical Constants */
 
 #define KINEMATICS_PI_F ROBOT_PI_F
 #define KINEMATICS_TWO_PI_F ROBOT_TWO_PI_F
 #define KINEMATICS_DEG_TO_RAD_F ROBOT_DEG_TO_RAD_F
 #define KINEMATICS_RAD_TO_DEG_F ROBOT_RAD_TO_DEG_F
-
 
 /* Near-wrist singularity conditioning policy for OPTIONAL seeded IK.
  * These are numeric-reliability thresholds, not geometry tolerances.
@@ -47,9 +32,7 @@
 #define KINEMATICS_SEEDED_SHOULDER_MAX_ERROR_RAD 0.005F
 #define KINEMATICS_SEEDED_Q6_MAX_ERROR_RAD 0.05F
 
-/* =========================================================
- * Shared Math Helpers
- * ========================================================= */
+/* Shared Math Helpers */
 
 /**
  * @brief 计算单精度浮点数绝对值。
@@ -64,7 +47,6 @@ robot_real_t kinematics_abs_real(
     robot_real_t value
 );
 
-
 /**
  * @brief 将 Radian Angle 规范化到 [-pi, pi)。
  *
@@ -78,7 +60,6 @@ robot_real_t kinematics_abs_real(
 robot_real_t kinematics_normalize_angle_rad(
     robot_real_t angle_rad
 );
-
 
 /**
  * @brief 计算非负输入的平方根。
@@ -99,10 +80,7 @@ robot_real_t kinematics_sqrt_nonnegative(
     robot_real_t value
 );
 
-
-/* =========================================================
- * Solution Helpers
- * ========================================================= */
+/* Solution Helpers */
 
 /**
  * @brief 将六个 Radian Joint Angle
@@ -153,7 +131,6 @@ void kinematics_build_joint_solution(
     robot_joint_angles_t *solution
 );
 
-
 /**
  * @brief 将 Candidate 添加到 IK Solution Set，
  *        并删除量化后完全重复的解。
@@ -181,10 +158,7 @@ robot_status_t kinematics_add_solution_if_unique(
     const robot_joint_angles_t *candidate
 );
 
-
-/* =========================================================
- * Coordinate Conversion
- * ========================================================= */
+/* Coordinate Conversion */
 
 /**
  * @brief 将公共 T_base_ee 转换为
@@ -228,10 +202,7 @@ robot_status_t kinematics_public_to_dh_transform(
     robot_transform_t *dh_transform
 );
 
-
-/* =========================================================
- * UR5 Analytic IK Solver
- * ========================================================= */
+/* UR5 Analytic IK Solver */
 
 /**
  * @brief 求解 Standard DH Transform 对应的
@@ -254,7 +225,6 @@ robot_status_t ur5_analytic_ik_solve_q1_candidates(
     const robot_transform_t *dh_transform,
     robot_real_t q1_candidates_rad[2]
 );
-
 
 /**
  * @brief 在指定 q1 Branch 下求解
@@ -281,7 +251,6 @@ robot_status_t ur5_analytic_ik_solve_q5_candidates(
     robot_real_t q1_rad,
     robot_real_t q5_candidates_rad[2]
 );
-
 
 /**
  * @brief 在指定 q1 / q5 Branch 下求解 q6。
@@ -311,7 +280,6 @@ robot_status_t ur5_analytic_ik_solve_q6(
     robot_real_t q5_rad,
     robot_real_t *q6_rad
 );
-
 
 /**
  * @brief 在指定 Shoulder / Wrist Branch 下
@@ -346,7 +314,6 @@ robot_status_t ur5_analytic_ik_solve_q3_candidates(
     robot_real_t q6_rad,
     robot_real_t q3_candidates_rad[2]
 );
-
 
 /**
  * @brief 在指定 q1 / q5 / q6 / q3 Branch 下求解 q2。
@@ -384,7 +351,6 @@ robot_status_t ur5_analytic_ik_solve_q2(
     robot_real_t q3_rad,
     robot_real_t *q2_rad
 );
-
 
 /**
  * @brief 根据其余已确定 Branch 求解 q4。
@@ -426,6 +392,5 @@ robot_status_t ur5_analytic_ik_solve_q4(
     robot_real_t q6_rad,
     robot_real_t *q4_rad
 );
-
 
 #endif

@@ -1,19 +1,6 @@
-/*
- * 文件：kinematics_internal.h
- *
- * 用途：
- * 暴露 Analytic IK Stage Validation API。
- *
- * 本文件不属于正式 Public API。
- *
- * 主要供：
- *
- * tests/kinematics/
- *
- * 中的 IK Solver Test 使用。
- *
- * Application、Motion、Control 等正式模块
- * 不应 include 本文件。
+/**
+ * @file kinematics_internal.h
+ * @brief IK 内部计算接口。
  */
 
 #ifndef KINEMATICS_INTERNAL_H
@@ -21,7 +8,6 @@
 
 #include "robot_types.h"
 #include "error_code.h"
-
 
 /**
  * @brief 求解 UR5 Analytic IK 的两个 q1 Shoulder Candidate。
@@ -53,7 +39,6 @@ robot_status_t kinematics_internal_solve_q1_candidates(
     robot_real_t q1_candidates_rad[2]
 );
 
-
 /**
  * @brief 在给定 q1 Branch 下求解两个 q5 Wrist Candidate。
  *
@@ -81,7 +66,6 @@ robot_status_t kinematics_internal_solve_q5_candidates(
     robot_real_t q1_rad,
     robot_real_t q5_candidates_rad[2]
 );
-
 
 /**
  * @brief 在给定 q1 和 q5 Branch 下求解 q6。
@@ -115,7 +99,6 @@ robot_status_t kinematics_internal_solve_q6(
     robot_real_t q5_rad,
     robot_real_t *q6_rad
 );
-
 
 /**
  * @brief 在给定 Shoulder / Wrist Branch 下
@@ -153,7 +136,6 @@ robot_status_t kinematics_internal_solve_q3_candidates(
     robot_real_t q6_rad,
     robot_real_t q3_candidates_rad[2]
 );
-
 
 /**
  * @brief 在给定 q1、q5、q6、q3 Branch 下求解 q2。
@@ -194,7 +176,6 @@ robot_status_t kinematics_internal_solve_q2(
     robot_real_t q3_rad,
     robot_real_t *q2_rad
 );
-
 
 /**
  * @brief 根据前五个已确定 Joint Branch 求解 q4。
@@ -239,6 +220,5 @@ robot_status_t kinematics_internal_solve_q4(
     robot_real_t q6_rad,
     robot_real_t *q4_rad
 );
-
 
 #endif
