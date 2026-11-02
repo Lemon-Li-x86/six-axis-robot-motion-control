@@ -1,3 +1,8 @@
+/**
+ * @file cartesian_line.c
+ * @brief 笛卡尔直线插补。
+ */
+
 #include <math.h>
 #include <stddef.h>
 #include "cartesian_internal.h"

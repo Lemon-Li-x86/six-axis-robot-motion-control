@@ -1,10 +1,6 @@
-/*
- * Stage 4: pure joint-space trajectory planning API.
- * No FreeRTOS, UART, motor driver, dynamic allocation or hidden state.
- *
- * Units: positions in continuous centidegrees (0.01 degree);
- * velocities in degree/s; accelerations in degree/s^2; time in seconds.
- * Caller owns model-limit, collision and control-loop checks.
+/**
+ * @file trajectory.h
+ * @brief 关节/多项式/梯形轨迹公共 API。
  */
 #ifndef ROBOT_TRAJECTORY_H
 #define ROBOT_TRAJECTORY_H

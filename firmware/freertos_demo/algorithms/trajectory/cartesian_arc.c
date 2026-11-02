@@ -1,3 +1,8 @@
+/**
+ * @file cartesian_arc.c
+ * @brief 笛卡尔圆弧插补。
+ */
+
 #include <math.h>
 #include <stddef.h>
 #include "cartesian_internal.h"

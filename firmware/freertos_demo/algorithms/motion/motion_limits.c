@@ -1,14 +1,6 @@
-/*
- * 文件：motion_limits.c
- *
- * 用途：
- * 实现关节连续位置限位检查和规范化角度展开。
- *
- * 全部计算使用整数定点格式：
- * 1 unit = 0.01 degree。
- *
- * 使用 int64_t 计算候选圈数和中间结果，
- * 避免连续位置差值计算发生 int32_t 溢出。
+/**
+ * @file motion_limits.c
+ * @brief 连续角展开与关节限位。
  */
 
 #include <stddef.h>
@@ -17,10 +9,7 @@
 #include "motion_limits.h"
 #include "robot_model.h"
 
-
-/* =========================================================
- * Integer Division Helpers
- * ========================================================= */
+/* Integer Division Helpers */
 
 /*
  * 对正除数实现数学意义上的向下取整。
@@ -47,7 +36,6 @@ static int64_t motion_limits_floor_div(
     return quotient;
 }
 
-
 /*
  * 对正除数实现数学意义上的向上取整。
  */
@@ -70,10 +58,7 @@ static int64_t motion_limits_ceil_div(
     return quotient;
 }
 
-
-/* =========================================================
- * Model Limit Validation
- * ========================================================= */
+/* Model Limit Validation */
 
 static robot_status_t motion_limits_validate_model(
     const robot_model_t *model
@@ -100,10 +85,7 @@ static robot_status_t motion_limits_validate_model(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Continuous Position Limit Check
- * ========================================================= */
+/* Continuous Position Limit Check */
 
 robot_status_t motion_limits_check_positions(
     const robot_joint_positions_t *positions
@@ -142,10 +124,7 @@ robot_status_t motion_limits_check_positions(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Canonical Angle Unwrap
- * ========================================================= */
+/* Canonical Angle Unwrap */
 
 robot_status_t motion_limits_unwrap_nearest(
     const robot_joint_angles_t *canonical_angles,
