@@ -47,7 +47,7 @@ class RepositoryArchitectureTests(unittest.TestCase):
         self.assertIn("FW_DEFAULT_STAGE4_PID", stage4)
         self.assertNotRegex(
             stage4,
-            r'^\s*#\s*define\s+FW_DEFAULT_', 
+            r'^\s*#\s*define\s+FW_DEFAULT_',
         )
 
     def test_uart_priority_is_shared_with_freertos(self):
