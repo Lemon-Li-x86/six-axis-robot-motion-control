@@ -1,18 +1,4 @@
-"""
-文件：hello_pybullet.py
-
-用途：
-验证本地 PyBullet GUI 环境可以正常启动，
-并完成最基本的 Physics Simulation。
-
-当前验证内容：
-
-1. PyBullet GUI Connection；
-2. pybullet_data Model Path；
-3. Gravity Configuration；
-4. Plane URDF Loading；
-5. Fixed-Step Simulation Loop。
-"""
+"""PyBullet 环境冒烟测试。"""
 
 import os
 import time
@@ -21,10 +7,7 @@ import pybullet as p
 import pybullet_data
 
 
-# ==========================================================
 # Simulation Configuration
-# ==========================================================
-
 # 地球标准重力加速度，单位 m/s^2。
 GRAVITY_Z_MPS2 = -9.81
 
@@ -37,10 +20,7 @@ SIMULATION_STEP_PERIOD_S = (
 )
 
 
-# ==========================================================
 # PyBullet Initialization
-# ==========================================================
-
 # 启动带可视化窗口的 PyBullet Client。
 physics_client = p.connect(
     p.GUI
@@ -61,10 +41,7 @@ p.setGravity(
 )
 
 
-# ==========================================================
 # Scene
-# ==========================================================
-
 plane_path = os.path.join(
     data_path,
     "plane.urdf"
@@ -86,10 +63,7 @@ print(
 )
 
 
-# ==========================================================
 # Simulation Loop
-# ==========================================================
-
 try:
     while True:
         p.stepSimulation()

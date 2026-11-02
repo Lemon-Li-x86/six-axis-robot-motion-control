@@ -1,24 +1,11 @@
-"""
-文件：qemu_uart_receiver.py
-
-用途：
-通过 TCP 连接 QEMU UART0，
-接收并解析 Cortex-M4 发送的六轴目标角 Frame。
-
-本脚本位于 PyBullet 仿真目录，
-主要用于验证 QEMU UART 输出和
-Python 仿真侧协议解析链路。
-"""
+"""QEMU UART 帧读取与诊断。"""
 
 import socket
 import struct
 import time
 
 
-# ==========================================================
 # TCP Configuration
-# ==========================================================
-
 # QEMU UART0 TCP Endpoint。
 HOST = "127.0.0.1"
 PORT = 5555
@@ -30,10 +17,7 @@ RECONNECT_DELAY_S = 0.5
 SOCKET_RECV_SIZE = 1024
 
 
-# ==========================================================
 # Protocol Definition
-# ==========================================================
-
 FRAME_HEADER = b"\xAA\x55"
 
 CMD_SET_JOINT_TARGETS = 0x01
@@ -91,10 +75,7 @@ MOVE_ACK_PAYLOAD_LEN = 2
 JOINT_ANGLE_SCALE = 100.0
 
 
-# ==========================================================
 # Frame Parser
-# ==========================================================
-
 def parse_frame(frame: bytes) -> None:
     """
     校验并解析一个 SET_JOINT_TARGETS Frame。
@@ -161,10 +142,7 @@ def parse_frame(frame: bytes) -> None:
         )
 
 
-# ==========================================================
 # TCP Receiver
-# ==========================================================
-
 def main() -> None:
     """
     持续连接 QEMU UART TCP Server 并解析数据流。
