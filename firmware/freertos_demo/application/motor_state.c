@@ -1,3 +1,8 @@
+/**
+ * @file motor_state.c
+ * @brief RTOS 互斥保护的测量/目标状态与时间戳。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 #include <limits.h>

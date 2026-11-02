@@ -1,15 +1,12 @@
-/*
- * 文件：protocol_tasks.h
- *
- * 用途：
- * 定义 Protocol Application Tasks 启动接口。
+/**
+ * @file protocol_tasks.h
+ * @brief 协议任务启动接口。
  */
 
 #ifndef PROTOCOL_TASKS_H
 #define PROTOCOL_TASKS_H
 
 #include "error_code.h"
-
 
 /**
  * @brief 创建 ProtocolTX / ProtocolRX Task，
@@ -20,6 +17,5 @@
  * ROBOT_STATUS_ERROR_INTERNAL
  */
 robot_status_t protocol_tasks_start(void);
-
 
 #endif

@@ -1,12 +1,6 @@
-
-/*
- * File: protocol_commands.c
- *
- * Application-level protocol command handling.
- *
- * This module does not create FreeRTOS tasks or
- * receive UART bytes. It processes complete frames
- * supplied by the protocol receiving task.
+/**
+ * @file protocol_commands.c
+ * @brief 协议业务命令分发与回复。
  */
 
 #include <stddef.h>
@@ -35,10 +29,7 @@
 #include "potential_field.h"
 #endif
 
-
-/* =========================================================
- * Command Context
- * ========================================================= */
+/* Command Context */
 
 void protocol_commands_init(
     protocol_command_context_t *context
@@ -53,10 +44,7 @@ void protocol_commands_init(
     context->feedback_time_valid = 0U;
 }
 
-
-/* =========================================================
- * Joint State
- * ========================================================= */
+/* Joint State */
 
 static void handle_joint_state(
     const protocol_frame_t *frame,
@@ -167,10 +155,7 @@ static void handle_joint_state(
     );
 }
 
-
-/* =========================================================
- * Runtime Parameter Configuration
- * ========================================================= */
+/* Runtime Parameter Configuration */
 
 static void handle_set_parameter(
     const protocol_frame_t *frame
@@ -246,10 +231,7 @@ static void handle_set_parameter(
     );
 }
 
-
-/* =========================================================
- * Diagnostics Value Lookup
- * ========================================================= */
+/* Diagnostics Value Lookup */
 
 static robot_status_t get_diagnostics_value(
     uint8_t selector,
@@ -433,10 +415,7 @@ static robot_status_t get_diagnostics_value(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Diagnostics Request
- * ========================================================= */
+/* Diagnostics Request */
 
 static void handle_diagnostics(
     const protocol_frame_t *frame
@@ -487,7 +466,6 @@ static void handle_diagnostics(
         PROTOCOL_DIAGNOSTICS_FRAME_LEN
     );
 }
-
 
 #if ROBOT_ENABLE_STAGE5_QEMU_UART_INTEGRATION
 /* QEMU simulation ONLY. The existing target frame is firmware->PyBullet;
@@ -636,9 +614,7 @@ static void handle_simulated_apf_joint_proposal(const protocol_frame_t *frame)
 }
 #endif
 
-/* =========================================================
- * Public Command Dispatcher
- * ========================================================= */
+/* Public Command Dispatcher */
 
 void protocol_commands_dispatch_frame(
     const protocol_frame_t *frame,

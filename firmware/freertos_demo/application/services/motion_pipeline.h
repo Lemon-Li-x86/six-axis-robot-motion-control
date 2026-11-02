@@ -1,6 +1,6 @@
-/*
- * Stage 4 application motion request/diagnostics service.
- * Motion algorithms are independent of this RTOS-facing boundary.
+/**
+ * @file motion_pipeline.h
+ * @brief 运动服务对外请求/配置接口。
  */
 #ifndef ROBOT_MOTION_PIPELINE_H
 #define ROBOT_MOTION_PIPELINE_H

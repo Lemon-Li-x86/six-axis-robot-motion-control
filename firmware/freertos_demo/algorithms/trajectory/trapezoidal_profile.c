@@ -1,7 +1,6 @@
-/*
- * Synchronized rest-to-rest joint-space trapezoid.
- * One dimensionless progress s(t) makes all six axes finish together.
- * Plan and sample functions are pure, stateless and heap-free.
+/**
+ * @file trapezoidal_profile.c
+ * @brief 梯形速度轨迹规划。
  */
 #include <float.h>
 #include <limits.h>

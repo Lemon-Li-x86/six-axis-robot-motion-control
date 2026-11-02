@@ -1,3 +1,7 @@
+/**
+ * @file protocol_commands.h
+ * @brief 协议命令服务接口。
+ */
 
 #ifndef PROTOCOL_COMMANDS_H
 #define PROTOCOL_COMMANDS_H
@@ -34,7 +38,6 @@ typedef struct
 
 } protocol_command_context_t;
 
-
 /*
  * Initialize command-handling state.
  *
@@ -43,7 +46,6 @@ typedef struct
 void protocol_commands_init(
     protocol_command_context_t *context
 );
-
 
 /*
  * Dispatch a complete parsed protocol frame.

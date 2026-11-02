@@ -1,18 +1,6 @@
-
-/*
- * File: protocol_tasks.c
- *
- * FreeRTOS protocol task management.
- *
- * Responsibilities:
- * 1. Create ProtocolRX and ProtocolTX tasks.
- * 2. Connect UART RX interrupts to task notifications.
- * 3. Receive and parse UART byte streams.
- * 4. Dispatch complete frames to application services.
- * 5. Periodically transmit joint targets.
- *
- * Application command handling is implemented in:
- * application/services/protocol_commands.c
+/**
+ * @file protocol_tasks.c
+ * @brief ProtocolRX/ProtocolTX 任务与通知。
  */
 
 #include <stddef.h>
@@ -40,17 +28,11 @@
 #include "motion_pipeline.h"
 #endif
 
-
-/* =========================================================
- * Task State
- * ========================================================= */
+/* Task State */
 
 static TaskHandle_t protocol_rx_task_handle = NULL;
 
-
-/* =========================================================
- * UART RX ISR Callback
- * ========================================================= */
+/* UART RX ISR Callback */
 
 static void uart_rx_event_from_isr(void)
 {
@@ -74,10 +56,7 @@ static void uart_rx_event_from_isr(void)
     portYIELD_FROM_ISR(higher_priority_task_woken);
 }
 
-
-/* =========================================================
- * Protocol TX Task
- * ========================================================= */
+/* Protocol TX Task */
 
 static void task_protocol_tx(void *parameters)
 {
@@ -127,10 +106,7 @@ static void task_protocol_tx(void *parameters)
     }
 }
 
-
-/* =========================================================
- * Protocol RX Task
- * ========================================================= */
+/* Protocol RX Task */
 
 static void task_protocol_rx(void *parameters)
 {
@@ -244,10 +220,7 @@ static void task_protocol_rx(void *parameters)
     }
 }
 
-
-/* =========================================================
- * Public API
- * ========================================================= */
+/* Public API */
 
 robot_status_t protocol_tasks_start(void)
 {
