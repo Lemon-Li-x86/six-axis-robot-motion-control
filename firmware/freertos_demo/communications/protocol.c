@@ -1,3 +1,8 @@
+/**
+ * @file protocol.c
+ * @brief C UART 协议编解码、状态机和校验。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -5,10 +10,7 @@
 
 #include "protocol.h"
 
-
-/* =========================================================
- * Internal Helpers
- * ========================================================= */
+/* Internal Helpers */
 
 void protocol_parser_reset(
     protocol_parser_t *parser
@@ -21,7 +23,6 @@ void protocol_parser_reset(
     parser->frame.command = 0U;
     parser->frame.length = 0U;
 }
-
 
 uint8_t protocol_parser_expire_partial_frame(
     protocol_parser_t *parser,
@@ -39,7 +40,6 @@ uint8_t protocol_parser_expire_partial_frame(
     protocol_parser_reset(parser);
     return 1U;
 }
-
 
 static robot_status_t protocol_build_frame(
     uint8_t command,
@@ -87,10 +87,7 @@ static robot_status_t protocol_build_frame(
     return ROBOT_STATUS_OK;
 }
 
-
-/* =========================================================
- * Parser
- * ========================================================= */
+/* Parser */
 
 void protocol_parser_init(
     protocol_parser_t *parser
@@ -103,7 +100,6 @@ void protocol_parser_init(
 
     protocol_parser_reset(parser);
 }
-
 
 uint8_t protocol_parser_process_byte(
     protocol_parser_t *parser,
@@ -251,10 +247,7 @@ uint8_t protocol_parser_process_byte(
     return 0U;
 }
 
-
-/* =========================================================
- * Joint Protocol
- * ========================================================= */
+/* Joint Protocol */
 
 static robot_status_t protocol_build_joint_frame(
     uint8_t command,
@@ -290,7 +283,6 @@ static robot_status_t protocol_build_joint_frame(
     );
 }
 
-
 robot_status_t protocol_build_joint_target_frame(
     const robot_joint_angles_t *joints,
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
@@ -303,7 +295,6 @@ robot_status_t protocol_build_joint_target_frame(
     );
 }
 
-
 robot_status_t protocol_build_joint_state_ack_frame(
     const robot_joint_angles_t *joints,
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
@@ -315,7 +306,6 @@ robot_status_t protocol_build_joint_state_ack_frame(
         frame
     );
 }
-
 
 /* One raw six-axis payload decoder for UART feedback and Stage5 request.
  * Out-of-range canonical angles are rejected before modifying outputs.
@@ -352,7 +342,6 @@ robot_status_t protocol_parse_joint_state(
         return ROBOT_STATUS_ERROR_INVALID_LENGTH;
     return decode_joint_payload(frame->payload,joints);
 }
-
 
 /* Stage5 simulation move requests are never decoded as feedback. Only
  * canonical signed six-axis values use the existing 0.01-degree encoding.
@@ -504,9 +493,7 @@ robot_status_t protocol_build_apf_joint_proposal_response(
         PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN,frame);
 }
 
-/* =========================================================
- * Parameter Protocol
- * ========================================================= */
+/* Parameter Protocol */
 
 robot_status_t protocol_parse_set_parameter(
     const protocol_frame_t *frame,
@@ -545,7 +532,6 @@ robot_status_t protocol_parse_set_parameter(
 
     return ROBOT_STATUS_OK;
 }
-
 
 robot_status_t protocol_build_parameter_ack_frame(
     uint8_t parameter_id,
@@ -586,10 +572,7 @@ robot_status_t protocol_build_parameter_ack_frame(
     );
 }
 
-
-/* =========================================================
- * Diagnostics
- * ========================================================= */
+/* Diagnostics */
 
 robot_status_t protocol_parse_diagnostics_request(
     const protocol_frame_t *frame,
@@ -629,7 +612,6 @@ robot_status_t protocol_parse_diagnostics_request(
     return ROBOT_STATUS_OK;
 }
 
-
 uint8_t protocol_is_diagnostics_request(
     const protocol_frame_t *frame
 )
@@ -643,7 +625,6 @@ uint8_t protocol_is_diagnostics_request(
         ) == ROBOT_STATUS_OK
     ) ? 1U : 0U;
 }
-
 
 robot_status_t protocol_build_diagnostics_response_frame(
     uint32_t value,

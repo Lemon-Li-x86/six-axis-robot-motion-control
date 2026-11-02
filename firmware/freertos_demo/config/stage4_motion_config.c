@@ -1,3 +1,8 @@
+/**
+ * @file stage4_motion_config.c
+ * @brief 生成默认值与派生运动配置的适配。
+ */
+
 #include "stage4_motion_config.h"
 #include "task_config.h"
 #include "kinematics.h"

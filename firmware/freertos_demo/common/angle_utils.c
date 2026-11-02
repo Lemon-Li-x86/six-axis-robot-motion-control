@@ -1,3 +1,8 @@
+/**
+ * @file angle_utils.c
+ * @brief 角度规范化/连续角转换实现。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 #include "angle_utils.h"

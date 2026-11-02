@@ -1,18 +1,6 @@
-/*
- * 文件：protocol.h
- *
- * 用途：
- * 定义 Cortex-M4 与 Python 仿真端之间的
- * 二进制通信协议公共接口。
- *
- * 当前协议支持：
- *
- * 1. 可变长度 Payload；
- * 2. Byte Stream Parser；
- * 3. Checksum；
- * 4. 六轴关节目标与状态；
- * 5. Runtime Parameter；
- * 6. Diagnostics。
+/**
+ * @file protocol.h
+ * @brief 协议帧/指令/字段接口。
  */
 
 #ifndef PROTOCOL_H
@@ -23,18 +11,12 @@
 #include "robot_types.h"
 #include "error_code.h"
 
-
-/* =========================================================
- * Protocol Header
- * ========================================================= */
+/* Protocol Header */
 
 #define PROTOCOL_HEADER_0 0xAAU
 #define PROTOCOL_HEADER_1 0x55U
 
-
-/* =========================================================
- * Commands
- * ========================================================= */
+/* Commands */
 
 #define CMD_SET_JOINT_TARGETS        0x01U
 #define CMD_SET_PARAMETER            0x02U
@@ -55,10 +37,7 @@
 #define CMD_APF_STEP_RESPONSE        0x87U
 #define CMD_APF_JOINT_PROPOSAL_RESPONSE 0x88U
 
-
-/* =========================================================
- * Joint Protocol
- * ========================================================= */
+/* Joint Protocol */
 
 #define PROTOCOL_JOINT_PAYLOAD_LEN \
     (ROBOT_JOINT_COUNT * 2U)
@@ -88,10 +67,7 @@
 #define PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN (2U + 3U*4U + ROBOT_JOINT_COUNT*2U + 1U)
 #define PROTOCOL_APF_JOINT_PROPOSAL_FRAME_LEN (2U+1U+1U+PROTOCOL_APF_JOINT_PROPOSAL_PAYLOAD_LEN+1U)
 
-
-/* =========================================================
- * Parameter Protocol
- * ========================================================= */
+/* Parameter Protocol */
 
 #define PROTOCOL_PARAMETER_PROTOCOL_TX_PERIOD_MS 0x01U
 
@@ -105,10 +81,7 @@
 #define PROTOCOL_PARAMETER_ACK_FRAME_LEN \
     (2U + 1U + 1U + PROTOCOL_PARAMETER_ACK_PAYLOAD_LEN + 1U)
 
-
-/* =========================================================
- * Diagnostics
- * ========================================================= */
+/* Diagnostics */
 
 #define PROTOCOL_DIAGNOSTICS_PAYLOAD_LEN 4U
 
@@ -155,13 +128,9 @@
     DIAGNOSTICS_METRIC_TASK_WAKEUP_MAX_TICKS
 #endif
 
-
-/* =========================================================
- * Generic Protocol
- * ========================================================= */
+/* Generic Protocol */
 
 #define PROTOCOL_MAX_PAYLOAD_LEN 64U
-
 
 typedef struct
 {
@@ -174,7 +143,6 @@ typedef struct
     ];
 
 } protocol_frame_t;
-
 
 typedef enum
 {
@@ -192,7 +160,6 @@ typedef enum
 
 } protocol_parser_state_t;
 
-
 typedef struct
 {
     protocol_parser_state_t state;
@@ -205,10 +172,7 @@ typedef struct
 
 } protocol_parser_t;
 
-
-/* =========================================================
- * Parser API
- * ========================================================= */
+/* Parser API */
 
 /**
  * @brief 初始化 Protocol Byte Stream Parser。
@@ -246,7 +210,6 @@ uint8_t protocol_parser_expire_partial_frame(
     uint32_t timeout_ticks
 );
 
-
 /**
  * @brief 向 Parser 输入一个 Byte。
  *
@@ -274,10 +237,7 @@ uint8_t protocol_parser_process_byte(
     protocol_frame_t *output_frame
 );
 
-
-/* =========================================================
- * Joint API
- * ========================================================= */
+/* Joint API */
 
 /**
  * @brief 构造 SET_JOINT_TARGETS Frame。
@@ -303,7 +263,6 @@ robot_status_t protocol_build_joint_target_frame(
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 );
 
-
 /**
  * @brief 构造 JOINT_STATE_ACK Frame。
  *
@@ -327,7 +286,6 @@ robot_status_t protocol_build_joint_state_ack_frame(
     const robot_joint_angles_t *joints,
     uint8_t frame[PROTOCOL_JOINT_FRAME_LEN]
 );
-
 
 /**
  * @brief 解析 JOINT_STATE Frame。
@@ -359,10 +317,7 @@ robot_status_t protocol_parse_joint_state(
     robot_joint_angles_t *joints
 );
 
-
-/* =========================================================
- * Parameter API
- * ========================================================= */
+/* Parameter API */
 
 /**
  * @brief 解析 SET_PARAMETER Frame。
@@ -395,7 +350,6 @@ robot_status_t protocol_parse_set_parameter(
     uint32_t *value
 );
 
-
 /**
  * @brief 构造 PARAMETER_ACK Frame。
  *
@@ -425,10 +379,7 @@ robot_status_t protocol_build_parameter_ack_frame(
     uint8_t frame[PROTOCOL_PARAMETER_ACK_FRAME_LEN]
 );
 
-
-/* =========================================================
- * Diagnostics API
- * ========================================================= */
+/* Diagnostics API */
 
 /**
  * @brief 解析 GET_DIAGNOSTICS Frame。
@@ -464,7 +415,6 @@ robot_status_t protocol_parse_diagnostics_request(
     uint8_t *selector
 );
 
-
 /**
  * @brief 判断 Frame 是否为合法 Diagnostics Request。
  *
@@ -481,7 +431,6 @@ robot_status_t protocol_parse_diagnostics_request(
 uint8_t protocol_is_diagnostics_request(
     const protocol_frame_t *frame
 );
-
 
 /**
  * @brief 构造 DIAGNOSTICS_RESPONSE Frame。

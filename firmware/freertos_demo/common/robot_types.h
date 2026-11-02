@@ -1,21 +1,6 @@
-/*
- * 文件：robot_types.h
- *
- * 用途：
- * 定义六轴机器人各模块共同使用的核心数据类型。
- *
- * 本文件统一：
- *
- * 1. 关节数量；
- * 2. 关节角数据格式、单位与规范范围；
- * 3. 连续关节位置数据格式；
- * 4. 关节速度数据格式；
- * 5. 笛卡尔位姿数据格式；
- * 6. 公共坐标系约定；
- * 7. 4 × 4 齐次变换矩阵格式。
- *
- * Driver、Communication、Algorithm、Control 等模块
- * 应优先使用这里定义的公共类型。
+/**
+ * @file robot_types.h
+ * @brief 关节/姿态/变换矩阵公用类型及单位。
  */
 
 #ifndef ROBOT_TYPES_H
@@ -23,17 +8,11 @@
 
 #include <stdint.h>
 
-
-/* =========================================================
- * 六轴机器人基本配置
- * ========================================================= */
+/* 六轴机器人基本配置 */
 
 #define ROBOT_JOINT_COUNT 6U
 
-
-/* =========================================================
- * 通用计算标量
- * ========================================================= */
+/* 通用计算标量 */
 
 /*
  * 运动学、轨迹规划和 PID 内部计算
@@ -41,10 +20,7 @@
  */
 typedef float robot_real_t;
 
-
-/* =========================================================
- * 关节角公共表示
- * ========================================================= */
+/* 关节角公共表示 */
 
 /*
  * 外部关节角统一采用 int16_t 定点表示：
@@ -81,7 +57,6 @@ typedef float robot_real_t;
  */
 typedef int16_t robot_joint_angle_t;
 
-
 typedef struct
 {
     robot_joint_angle_t value[
@@ -90,7 +65,6 @@ typedef struct
 
 } robot_joint_angles_t;
 
-
 /*
  * 原始关节角转 degree：
  *
@@ -98,7 +72,6 @@ typedef struct
  * raw × ROBOT_JOINT_ANGLE_UNIT_DEG
  */
 #define ROBOT_JOINT_ANGLE_UNIT_DEG 0.01F
-
 
 /*
  * Canonical Angle 的整数范围。
@@ -116,10 +89,7 @@ typedef struct
 #define ROBOT_JOINT_ANGLE_MAX_RAW \
     (ROBOT_JOINT_HALF_TURN_RAW - 1L)
 
-
-/* =========================================================
- * 连续关节位置
- * ========================================================= */
+/* 连续关节位置 */
 
 /*
  * 连续关节位置使用 int32_t。
@@ -164,7 +134,6 @@ typedef struct
  */
 typedef int32_t robot_joint_position_t;
 
-
 typedef struct
 {
     robot_joint_position_t value[
@@ -173,10 +142,7 @@ typedef struct
 
 } robot_joint_positions_t;
 
-
-/* =========================================================
- * 关节速度
- * ========================================================= */
+/* 关节速度 */
 
 /*
  * 单位：
@@ -184,7 +150,6 @@ typedef struct
  * degree / second
  */
 typedef robot_real_t robot_joint_velocity_t;
-
 
 typedef struct
 {
@@ -194,10 +159,7 @@ typedef struct
 
 } robot_joint_velocities_t;
 
-
-/* =========================================================
- * 笛卡尔位姿
- * ========================================================= */
+/* 笛卡尔位姿 */
 
 /*
  * 公共笛卡尔坐标系约定：
@@ -264,7 +226,6 @@ typedef struct
 
     robot_real_t z_mm;
 
-
     robot_real_t rx_deg;
 
     robot_real_t ry_deg;
@@ -273,10 +234,7 @@ typedef struct
 
 } robot_pose_t;
 
-
-/* =========================================================
- * 齐次变换矩阵
- * ========================================================= */
+/* 齐次变换矩阵 */
 
 /*
  * 4 × 4 Homogeneous Transform。
@@ -332,6 +290,5 @@ typedef struct
     robot_real_t matrix[4][4];
 
 } robot_transform_t;
-
 
 #endif

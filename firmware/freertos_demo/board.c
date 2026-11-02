@@ -1,9 +1,11 @@
+/**
+ * @file board.c
+ * @brief 板级外设初始化。
+ */
+
 #include "board.h"
 
-
-/* =========================================================
- * CMSDK AHB GPIO
- * ========================================================= */
+/* CMSDK AHB GPIO */
 
 /*
  * MPS2-AN386 GPIO0 基地址。
@@ -15,7 +17,6 @@
  * 当前 QEMU 构建默认不执行实际 MMIO 配置。
  */
 #define CMSDK_GPIO0_BASE       0x40010000UL
-
 
 /*
  * CMSDK AHB GPIO 寄存器偏移
@@ -33,10 +34,8 @@
 #define GPIO_OUTENSET_OFFSET       0x010UL
 #define GPIO_ALTFUNCCLR_OFFSET     0x01CUL
 
-
 #define REG32(address) \
     (*(volatile uint32_t *)(address))
-
 
 #define GPIO0_DATAOUT \
     REG32(CMSDK_GPIO0_BASE + GPIO_DATAOUT_OFFSET)
@@ -47,14 +46,12 @@
 #define GPIO0_ALTFUNCCLR \
     REG32(CMSDK_GPIO0_BASE + GPIO_ALTFUNCCLR_OFFSET)
 
-
 /*
  * 示例 GPIO：
  *
  * GPIO0 pin 0
  */
 #define BOARD_GPIO_TEST_PIN    (1UL << 0)
-
 
 /*
  * 当前设为 0。
@@ -68,10 +65,7 @@
  */
 #define BOARD_ENABLE_GPIO_MMIO    0
 
-
-/* =========================================================
- * Clock 初始化
- * ========================================================= */
+/* Clock 初始化 */
 
 void board_clock_init(void)
 {
@@ -91,10 +85,7 @@ void board_clock_init(void)
      */
 }
 
-
-/* =========================================================
- * GPIO 初始化
- * ========================================================= */
+/* GPIO 初始化 */
 
 void board_gpio_init(void)
 {
@@ -107,13 +98,11 @@ void board_gpio_init(void)
     GPIO0_ALTFUNCCLR =
         BOARD_GPIO_TEST_PIN;
 
-
     /*
      * 将 pin 0 设置为输出。
      */
     GPIO0_OUTENSET =
         BOARD_GPIO_TEST_PIN;
-
 
     /*
      * 初始输出低电平。
