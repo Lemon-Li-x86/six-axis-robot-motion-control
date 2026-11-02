@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "uart_driver.h"
+#include "board.h"
 #include "ring_buffer.h"
 
 
@@ -24,7 +25,7 @@
 #define UART0_TX_IRQ_MASK \
     (1UL << UART0_TX_IRQ_NUMBER)
 
-#define UART_IRQ_PRIORITY_VALUE 0x80U
+#define UART_IRQ_PRIORITY_VALUE BOARD_UART_IRQ_PRIORITY
 
 
 /* =========================================================
