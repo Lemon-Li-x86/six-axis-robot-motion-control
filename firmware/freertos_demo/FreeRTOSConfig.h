@@ -214,10 +214,10 @@
  *
  * 当前：
  *
- * 128 = 0x80。
+ * 与 board.h 的 UART NVIC 优先级共用同一值（0x80）。
  */
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY \
-    128U
+    BOARD_UART_IRQ_PRIORITY
 
 
 #define configKERNEL_INTERRUPT_PRIORITY \
