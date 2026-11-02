@@ -1,6 +1,9 @@
-/* Simulation-only on-firmware APF planning: C waypoint + C IK, NO actuation.
- * Physical all-link collision approval is REQUIRED before a separate
- * CMD_REQUEST_JOINT_MOVE. Never use this proposal alone on real hardware.
+/**
+ * @file stage5_apf_proposal.h
+ * @brief FreeRTOS APF waypoint proposal interface.
+ *
+ * A proposal computes a joint target without commanding motion.
+ * The caller validates swept-link clearance before issuing a separate move.
  */
 #ifndef STAGE5_APF_PROPOSAL_H
 #define STAGE5_APF_PROPOSAL_H
@@ -14,9 +17,15 @@ typedef struct {
     uint8_t goal_reached;
 } stage5_apf_proposal_t;
 
-/* Called from FreeRTOS Trajectory task, not from 256-word ProtocolRX stack.
- * Reads no mutable globals and writes *out only after all safety checks.
- * Caller supplies fresh observed continuous joint state and validated limits.
+/**
+ * @brief Compute one APF waypoint from measured joint positions.
+ * @param measured Latest continuous joint positions.
+ * @param request APF goal, obstacle and tuning parameters.
+ * @param limits Joint motion constraints.
+ * @param out Proposal, written only on success.
+ * @return Robot status code.
+ *
+ * Called by the trajectory task; does not modify motor state.
  */
 robot_status_t stage5_apf_propose_from_feedback(
     const robot_joint_positions_t *measured,
