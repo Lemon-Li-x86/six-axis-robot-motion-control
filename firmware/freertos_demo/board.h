@@ -1,14 +1,11 @@
-/*
- * 文件：board.h
+/**
+ * @file board.h
+ * @brief MPS2-AN386 platform clock, NVIC priority and init interfaces.
  *
- * 用途：
- * 定义当前目标平台的 Board Support Package 公共接口。
- *
- * 当前目标：
- *
- * QEMU MPS2-AN386
- * ARM Cortex-M4
+ * Hardware-level settings live here; application PID/task defaults live
+ * in config/robot_defaults.json.
  */
+
 
 #ifndef BOARD_H
 #define BOARD_H
@@ -16,38 +13,20 @@
 #include <stdint.h>
 
 
-/*
- * 当前 QEMU MPS2-AN386
- * 系统时钟固定为：
- *
- * 25 MHz。
- *
- * 后续迁移到真实 MCU 时，
- * 可以替换为实际 RCC / PLL 配置结果。
- */
+
 #define BOARD_SYSCLK_HZ 25000000UL
 
+/* UART RX/TX use the FreeRTOS FromISR syscall priority boundary (8 NVIC bits). */
+#define BOARD_UART_IRQ_PRIORITY 0x80U
 
-/**
- * @brief 初始化系统时钟。
- *
- * 当前 QEMU 平台的 SYSCLK
- * 由 Machine Model 固定提供，
- * 因此当前实现不执行实际寄存器配置。
- *
- * 保留该接口用于后续迁移真实 MCU。
- */
+
+
+/** @brief Initialize the board clock (fixed by QEMU machine model). */
 void board_clock_init(void);
 
 
-/**
- * @brief 初始化 Board GPIO。
- *
- * 当前 QEMU MPS2-AN386 环境
- * 默认不执行实际 GPIO MMIO 配置。
- *
- * 保留该接口用于后续真实硬件实现。
- */
+
+/** @brief Initialize GPIO for the active board backend. */
 void board_gpio_init(void);
 
 
