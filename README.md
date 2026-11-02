@@ -63,6 +63,7 @@ Linux CI 采用 `apt` 安装 QEMU/构建工具，并在各作业安装 NumPy/PyB
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_firmware_defaults.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_readme_links.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_repository_architecture.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_comment_style.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_live_gui.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_gui_safe_jog.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_embedded_apf_runtime.py" -v
@@ -442,7 +443,7 @@ Monitor Task -> performance diagnostics
 | `simulation/uart_bridge/uart_receiver.py` | 仿真脚本：uart receiver |
 | `simulation/uart_bridge/ur5_uart_bridge.py` | 通用 UART↔PyBullet 桥接 |
 
-### 测试/构建/诊断脚本（53 文件）
+### 测试/构建/诊断脚本（54 文件）
 
 | 相对路径 | 职责/测试内容 |
 |---|---|
@@ -478,6 +479,7 @@ Monitor Task -> performance diagnostics
 | `tools/tests/run_stage5_first_leg_native_bullet.py` | 首段原生 C/Bullet 对照测试 |
 | `tools/tests/test_firmware_defaults.py` | 回归测试或夹具：test firmware defaults |
 | `tools/tests/test_readme_links.py` | 回归测试或夹具：test readme links |
+| `tools/tests/test_comment_style.py` | 静态回归：C/H 与 Python 注释格式和模块说明 |
 | `tools/tests/test_repository_architecture.py` | 静态回归：算法层依赖方向、生成配置和 UART/FreeRTOS 共享 NVIC 优先级 |
 | `tools/tests/test_stage4_pid_gain_sweep.py` | 回归测试或夹具：test stage4 pid gain sweep |
 | `tools/tests/test_stage4_pid_study.py` | 回归测试或夹具：test stage4 pid study |
@@ -500,11 +502,12 @@ Monitor Task -> performance diagnostics
 | `tools/tests/test_stage5_trace_replay.py` | 回归测试或夹具：test stage5 trace replay |
 | `tools/tests/test_stage5_visual_demo.py` | 回归测试或夹具：test stage5 visual demo |
 
-### 设计说明、阶段报告与历史验收证据（62 文件）
+### 设计说明、阶段报告与历史验收证据（63 文件）
 
 | 相对路径 | 职责/测试内容 |
 |---|---|
 | `docs/architecture.md` | 设计/实验/验收文档：architecture |
+| `docs/coding_style.md` | 固件与 Python 的注释风格、接口文档和静态检查规范 |
 | `docs/cortex_m4_notes.md` | 设计/实验/验收文档：cortex m4 notes |
 | `docs/development.md` | 设计/实验/验收文档：development |
 | `docs/part1/01_system_design.md` | 设计/实验/验收文档：01 system design |
@@ -569,7 +572,7 @@ Monitor Task -> performance diagnostics
 
 ## 9. 贡献与审查约定
 
-1. 先检查 `git status`、当前分支、HEAD 和 [参数登记](docs/part5/01_parameter_register.md)；在工作分支做小提交，不覆盖历史验收或备份。
+1. 先检查 `git status`、当前分支、HEAD 和 [注释规范](docs/coding_style.md)、[参数登记](docs/part5/01_parameter_register.md)；在工作分支做小提交，不覆盖历史验收或备份。
 2. 新功能先判断数据归属：**模型固有数据 / 算法中间量 / 运行时反馈 / 应用策略**。禁止重新定义同义参数；测试数据不得回写生产默认值。
 3. 新公开接口在 `.h` 写 Doxygen `@brief/@param/@return/@note`、单位和调用语境；`.c` 注释解释非显而易见的算法、边界、RTOS 并发原因。删重复的“安全宣言”，不删真正的校验逻辑。
 4. 控制、状态、UART、FreeRTOS 的调用方向不得倒置；禁止算法层直接读写硬件或全局电机运行态。
