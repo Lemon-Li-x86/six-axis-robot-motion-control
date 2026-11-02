@@ -1,16 +1,6 @@
-/*
- * 文件：test_uart_driver.c
- *
- * 用途：
- * 使用 Unity 和 Host Register Backend
- * 验证 UART Driver 的：
- *
- * 1. 初始化；
- * 2. 参数检查；
- * 3. Interrupt Driven TX；
- * 4. TX Buffer 容量边界；
- * 5. RX Interrupt；
- * 6. RX Drop Counter。
+/**
+ * @file test_uart_driver.c
+ * @brief 回归测试或夹具：test uart driver。
  */
 
 #include <stdint.h>
@@ -21,10 +11,7 @@
 #include "uart_driver_test_backend.h"
 #include "error_code.h"
 
-
-/* =========================================================
- * Test Register Bit Definitions
- * ========================================================= */
+/* Test Register Bit Definitions */
 
 /*
  * 以下 Bit 与 uart_driver.c 中的
@@ -52,17 +39,11 @@
 #define TEST_UART_INTERRUPT_RX \
     (1UL << 1)
 
-
-/* =========================================================
- * Test State
- * ========================================================= */
+/* Test State */
 
 static uint32_t rx_callback_count = 0U;
 
-
-/* =========================================================
- * Test Helpers
- * ========================================================= */
+/* Test Helpers */
 
 /**
  * @brief 模拟 UART RX Event Callback。
@@ -74,7 +55,6 @@ static void test_rx_callback(void)
 {
     rx_callback_count++;
 }
-
 
 /**
  * @brief 为每个 UART Unit Test
@@ -92,10 +72,7 @@ static void initialize_uart(void)
     );
 }
 
-
-/* =========================================================
- * Initialization Tests
- * ========================================================= */
+/* Initialization Tests */
 
 /**
  * @brief 验证 UART Driver 初始化后的
@@ -153,10 +130,7 @@ void test_uart_init_configures_hardware(void)
     );
 }
 
-
-/* =========================================================
- * Argument Validation Tests
- * ========================================================= */
+/* Argument Validation Tests */
 
 /**
  * @brief 验证 uart_driver_write()
@@ -185,10 +159,7 @@ void test_uart_write_rejects_invalid_arguments(void)
     );
 }
 
-
-/* =========================================================
- * TX Tests
- * ========================================================= */
+/* TX Tests */
 
 /**
  * @brief 验证 TX IRQ 可以依次发送
@@ -295,7 +266,6 @@ void test_uart_tx_interrupt_drains_buffer(void)
     );
 }
 
-
 /**
  * @brief 验证超过 TX Ring Buffer
  *        可用容量的数据被整包拒绝。
@@ -335,10 +305,7 @@ void test_uart_tx_rejects_frame_larger_than_buffer(void)
     );
 }
 
-
-/* =========================================================
- * RX Tests
- * ========================================================= */
+/* RX Tests */
 
 /**
  * @brief 验证 RX Interrupt 可以接收一个 Byte、
@@ -413,7 +380,6 @@ void test_uart_rx_interrupt_receives_byte(void)
         )
     );
 }
-
 
 /**
  * @brief 验证 RX Ring Buffer 满后
