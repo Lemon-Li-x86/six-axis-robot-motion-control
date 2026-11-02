@@ -1,8 +1,8 @@
-# PyBullet simulation
+# Runtime dependencies for the validated Stage5 QEMU / PyBullet simulation.
+# Use CPython 3.11; native CMake, ARM GCC, QEMU and FreeRTOS are NOT pip packages.
+# Windows CI validated these exact versions in workflow stage5-live-gui.yml.
+numpy==2.4.6
 pybullet==3.2.7
 
-# FK/IK numerical validation
-numpy<2
-scipy
-roboticstoolbox-python
-spatialmath-python
+# Optional FK/IK batch analysis needs a separate environment:
+#   python -m pip install -r requirements-analysis.txt
