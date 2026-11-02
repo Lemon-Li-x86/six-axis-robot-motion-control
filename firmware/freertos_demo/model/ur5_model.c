@@ -6,22 +6,12 @@
  * centidegrees and correspond to the bundled URDF, not a hardware datasheet.
  */
 
-
-
 #include "robot_model.h"
 #include "math_constants.h"
 
-
-
-
-
-
-
-
-
 static const robot_model_t ur5_model =
 {
-    
+
     .dh_a_mm =
     {
         0.0F,
@@ -32,8 +22,6 @@ static const robot_model_t ur5_model =
         0.0F
     },
 
-
-    
     .dh_d_mm =
     {
         89.159F,
@@ -44,8 +32,6 @@ static const robot_model_t ur5_model =
         82.3F
     },
 
-
-    
     .dh_alpha_rad =
     {
         ROBOT_PI_F / 2.0F,
@@ -59,8 +45,6 @@ static const robot_model_t ur5_model =
      * The explicit inverse keeps model replacement independent of symmetry.
      */
 
-
-    
     .base_frame_conversion =
     {
         .matrix =
@@ -95,8 +79,6 @@ static const robot_model_t ur5_model =
         }
     },
 
-
-    
     .base_frame_conversion_inverse =
     {
         .matrix =
@@ -132,8 +114,6 @@ static const robot_model_t ur5_model =
     },
     /* Map the DH tool frame to the public URDF ee_link frame. */
 
-
-    
     .tool_frame_conversion =
     {
         .matrix =
@@ -168,8 +148,6 @@ static const robot_model_t ur5_model =
         }
     },
 
-
-    
     .tool_frame_conversion_inverse =
     {
         .matrix =
@@ -205,10 +183,6 @@ static const robot_model_t ur5_model =
     },
     /* Continuous J3 range is +/-180 degrees; other joints +/-360 degrees. */
 
-
-    
-
-    
     .joint_min_positions =
     {
         .value =
@@ -235,9 +209,6 @@ static const robot_model_t ur5_model =
         }
     }
 };
-
-
-
 
 const robot_model_t *robot_model_get_active(void)
 {

@@ -1,19 +1,9 @@
-/*
- * 文件：memory.c
- *
- * 用途：
- * 为 freestanding 固件提供最小内存操作实现。
- *
- * 当前固件使用 -nostdlib，
- * 因此需要自行提供 FreeRTOS Kernel
- * 所依赖的基础内存函数：
- *
- * 1. memset()；
- * 2. memcpy()。
+/**
+ * @file memory.c
+ * @brief 无标准库运行环境内存例程。
  */
 
 #include <stddef.h>
-
 
 /**
  * @brief 将指定内存区域设置为同一字节值。
@@ -53,7 +43,6 @@ void *memset(
 
     return ptr;
 }
-
 
 /**
  * @brief 将指定数量的字节复制到目标内存。

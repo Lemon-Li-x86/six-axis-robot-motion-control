@@ -1,22 +1,6 @@
-
-/*
- * 文件：main.c
- *
- * 用途：
- * Cortex-M4 / FreeRTOS 六轴机器人固件入口。
- *
- * 职责：
- * 1. 初始化板级环境和驱动；
- * 2. 初始化运行时配置与通信服务；
- * 3. 初始化性能监测；
- * 4. 按构建选项执行启动诊断；
- * 5. 初始化 Motor Driver 和关节目标；
- * 6. 创建任务并启动 FreeRTOS。
- *
- * 固件默认参数由 CMake 在构建时根据
- * config/robot_defaults.json 生成。
- *
- * 此文件不解析 JSON，也不实现具体运动算法。
+/**
+ * @file main.c
+ * @brief 板级初始化、任务创建及启动调度器。
  */
 
 #include "FreeRTOS.h"
@@ -69,10 +53,7 @@ BaseType_t stage4_rtos_selftest_start(void);
  */
 #include "firmware_defaults_generated.h"
 
-
-/* =========================================================
- * Firmware Entry
- * ========================================================= */
+/* Firmware Entry */
 
 int main(void)
 {
@@ -102,19 +83,13 @@ int main(void)
         }
     };
 
-
-    /* =====================================================
-     * 1. Board Initialization
-     * ===================================================== */
+    /* 1. Board Initialization */
 
     board_clock_init();
 
     board_gpio_init();
 
-
-    /* =====================================================
-     * 2. Driver Initialization
-     * ===================================================== */
+    /* 2. Driver Initialization */
 
     /*
      * 初始化 UART。
@@ -141,10 +116,7 @@ int main(void)
         }
     }
 
-
-    /* =====================================================
-     * 3. Timer Periodic Interrupt
-     * ===================================================== */
+    /* 3. Timer Periodic Interrupt */
 
     /*
      * Timer 频率由生成配置指定。
@@ -165,10 +137,7 @@ int main(void)
         }
     }
 
-
-    /* =====================================================
-     * 4. Runtime Configuration
-     * ===================================================== */
+    /* 4. Runtime Configuration */
 
     /*
      * 初始化可动态调整的运行参数。
@@ -183,10 +152,7 @@ int main(void)
         }
     }
 
-
-    /* =====================================================
-     * 5. UART TX Manager
-     * ===================================================== */
+    /* 5. UART TX Manager */
 
     /*
      * 保证多个业务 Task 发送协议帧时，
@@ -199,10 +165,7 @@ int main(void)
         }
     }
 
-
-    /* =====================================================
-     * 6. Performance Monitor
-     * ===================================================== */
+    /* 6. Performance Monitor */
 
     /*
      * 性能监测模块始终初始化。
@@ -213,10 +176,7 @@ int main(void)
      */
     performance_monitor_init();
 
-
-    /* =====================================================
-     * 7. Optional Parser Benchmark
-     * ===================================================== */
+    /* 7. Optional Parser Benchmark */
 
 #if ROBOT_ENABLE_PARSER_BENCHMARK
 
@@ -242,10 +202,7 @@ int main(void)
 
 #endif
 
-
-    /* =====================================================
-     * 8. Optional Kinematics Self-Test
-     * ===================================================== */
+    /* 8. Optional Kinematics Self-Test */
 
 #if ROBOT_ENABLE_KINEMATICS_SELF_TEST
 
@@ -276,10 +233,7 @@ int main(void)
 
 #endif
 
-
-    /* =====================================================
-     * 9. Motor Driver Initialization
-     * ===================================================== */
+    /* 9. Motor Driver Initialization */
 
     if (motor_driver_init() != ROBOT_STATUS_OK)
     {
@@ -288,10 +242,7 @@ int main(void)
         }
     }
 
-
-    /* =====================================================
-     * 10. Initial Joint Targets
-     * ===================================================== */
+    /* 10. Initial Joint Targets */
 
     /*
      * 设置由 JSON 生成的初始关节目标。
@@ -313,7 +264,6 @@ int main(void)
         }
     }
 
-
     /*
      * Initialize the shared Motor Driver access mutex before tasks start.
      */
@@ -324,9 +274,7 @@ int main(void)
         }
     }
 
-    /* =====================================================
-     * 11. Application Tasks
-     * ===================================================== */
+    /* 11. Application Tasks */
 
     /*
      * 当前实际创建：
@@ -346,7 +294,6 @@ int main(void)
         {
         }
     }
-
 
 #if ROBOT_ENABLE_STAGE4_TASKS
     /*
@@ -376,12 +323,9 @@ int main(void)
     }
 #endif
 
-    /* =====================================================
-     * 12. FreeRTOS Scheduler
-     * ===================================================== */
+    /* 12. FreeRTOS Scheduler */
 
     vTaskStartScheduler();
-
 
     /*
      * 正常情况下 Scheduler 不应返回。
