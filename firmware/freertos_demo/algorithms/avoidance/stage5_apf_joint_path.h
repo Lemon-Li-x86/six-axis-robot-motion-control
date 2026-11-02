@@ -17,18 +17,24 @@ typedef struct {
     double segment_duration_s;
 } stage5_apf_joint_segment_t;
 
-/* The constant orientation is taken from FK(start_joints). Every APF point
- * is in base_link millimetres, NOT PyBullet world-frame metres.
- * Uses existing robot model joint limits and IK solution selection.
- * Rejects every failed FK residual, IK singularity, unreachable point or
- * invalid velocity/acceleration configuration (all provided by caller).
+/**
+ * @brief 将笛卡尔 APF 航点转换为关节目标和梯形速度段。
+ * @param[in] start_joints 初始连续关节位置，0.01°。
+ * @param[in] cartesian_points 航点数组，base_link 坐标系，mm。
+ * @param[in] point_count 航点数量，允许为 0。
+ * @param[in] max_velocity_deg_s 六轴最大角速度，°/s。
+ * @param[in] max_acceleration_deg_s2 六轴最大角加速度，°/s²。
+ * @param[in] max_fk_position_error_mm FK 位置残差上限，mm。
+ * @param[in] max_fk_rotation_element_error 旋转矩阵元素残差上限。
+ * @param[out] segments 输出关节段，失败时保持原值。
+ * @param[in] capacity 输出缓冲容量。
+ * @param[out] out_count 已生成关节段数量，失败时为 0。
+ * @return ROBOT_STATUS_OK 或 FK/IK、限位、容量等状态码。
  *
- * Transactional result: on rejection, *out_count=0; segments are untouched.
- * Two-pass preflight requires immutable, non-overlapping inputs throughout
- * the call. This function does not guarantee collision-free swept links.
- * A caller must provide non-NULL segments and capacity>=point_count.
- * Empty point_count is valid: no actuation requested.
+ * @note 航点姿态采用起点 FK；两阶段转换保证输出原子性。
+ *       关节段执行前仍由调用层完成全连杆扫掠检查。
  */
+
 robot_status_t stage5_apf_points_to_joint_route(
     const robot_joint_positions_t *start_joints,
     const robot_apf_point_t *cartesian_points,
@@ -40,10 +46,13 @@ robot_status_t stage5_apf_points_to_joint_route(
     stage5_apf_joint_segment_t *segments,
     size_t capacity,
     size_t *out_count);
-/* Expose the canonical C IK pose acceptance ceilings to host simulation
- * adapters. They are owned by kinematics.h, not by Python scene JSON.
- * A caller may pass a stricter tolerance to the route function.
+/**
+ * @brief 读取生产 IK 的位置和旋转残差验收上限。
+ * @param[out] maximum_position_error_mm 最大位置残差，mm。
+ * @param[out] maximum_rotation_element_error 最大旋转矩阵元素差。
+ * @return ROBOT_STATUS_OK 或参数状态码。
  */
+
 robot_status_t stage5_apf_joint_pose_limits(
     robot_real_t *maximum_position_error_mm,
     robot_real_t *maximum_rotation_element_error);

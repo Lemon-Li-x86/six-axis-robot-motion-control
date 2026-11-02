@@ -11,10 +11,10 @@
 
 #include "robot_types.h"
 
-/** @brief Static robot model with standard DH parameters and frame mappings. */
+/** @brief UR5 静态几何、坐标变换和连续关节位置限位。 */
 typedef struct
 {
-    /* Standard DH dimensions in mm; alpha angles are in radians. */
+    /* DH: a/d 单位 mm，alpha 单位 rad。 */
 
     robot_real_t dh_a_mm[
         ROBOT_JOINT_COUNT
@@ -27,21 +27,24 @@ typedef struct
     robot_real_t dh_alpha_rad[
         ROBOT_JOINT_COUNT
     ];
-    /* Public base frame <-> DH frame; inverse stored independently. */
+
+    /* 公共基座与 DH 基座坐标变换及其逆矩阵。 */
 
     robot_transform_t
         base_frame_conversion;
 
     robot_transform_t
         base_frame_conversion_inverse;
-    /* DH tool frame <-> public end-effector frame. */
+
+    /* DH 工具坐标系与公开末端坐标系之间的变换。 */
 
     robot_transform_t
         tool_frame_conversion;
 
     robot_transform_t
         tool_frame_conversion_inverse;
-    /* Inclusive continuous joint limits in 0.01 degrees (not canonical angles). */
+
+    /* 连续关节角上下限，单位 0.01°，端点包含。 */
 
     robot_joint_positions_t
         joint_min_positions;
@@ -52,8 +55,8 @@ typedef struct
 } robot_model_t;
 
 /**
- * @brief Return the active immutable model (currently UR5).
- * @return Pointer to the shared model; never modify its data.
+ * @brief 获取当前启用的机器人静态模型（UR5）。
+ * @return 模型只读指针。
  */
 const robot_model_t *
 robot_model_get_active(void);
