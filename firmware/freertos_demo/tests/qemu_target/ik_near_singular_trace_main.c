@@ -1,15 +1,6 @@
-/*
- * Focused Stage3 branch-loss diagnosis on real Cortex-M4/QEMU.
- *
- * Test-only trace of the six wrist/elbow near-singularity cases observed
- * in qemu_kinematics_perf: indices 8,9,10,27,28,29.
- *
- * We do not assert "eight solutions required": true singularities merge
- * branches and the 0.01 degree public IK quantization removes exact copies.
- *
- * This executable does NOT change production IK or motor outputs.
- * GDB: break qemu_ik_trace_done; p g_ik_trace_done;
- *      p g_ik_trace[0] ... p g_ik_trace[5]
+/**
+ * @file ik_near_singular_trace_main.c
+ * @brief 回归测试或夹具：ik near singular trace main。
  */
 #include <stddef.h>
 #include <stdint.h>

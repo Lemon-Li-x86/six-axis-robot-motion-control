@@ -1,3 +1,7 @@
+/**
+ * @file fk_batch_test_main.c
+ * @brief 回归测试或夹具：fk batch。
+ */
 
 #include <stdint.h>
 

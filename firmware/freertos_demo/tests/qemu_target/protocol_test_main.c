@@ -1,24 +1,12 @@
-
-/*
- * 文件：protocol_test_main.c
- *
- * 用途：
- * 在 QEMU Cortex-M4 上执行协议与 Ring Buffer 测试。
- *
- * 不依赖：
- * - Host Unity
- * - Windows/Linux C Runtime
- * - FreeRTOS Scheduler
- * - UART 输出
- *
- * 使用 GDB 读取最终测试结果。
+/**
+ * @file protocol_test_main.c
+ * @brief 回归测试或夹具：protocol。
  */
 
 #include <stdint.h>
 
 #include "protocol.h"
 #include "ring_buffer.h"
-
 
 #define TARGET_TEST_COUNT 8U
 #define TARGET_TEST_MAGIC 0x51454D55UL
@@ -42,10 +30,7 @@ typedef struct
 volatile target_test_report_t
     g_qemu_target_test_report;
 
-
-/* =========================================================
- * Helper: Feed Protocol Bytes
- * ========================================================= */
+/* Helper: Feed Protocol Bytes */
 
 /*
  * 将完整字节流逐个送入真实协议解析器。
@@ -79,10 +64,7 @@ static uint32_t feed_bytes(
     return complete_count;
 }
 
-
-/* =========================================================
- * Test 1: Ring Buffer Initial State
- * ========================================================= */
+/* Test 1: Ring Buffer Initial State */
 
 static uint32_t test_ring_initial_state(void)
 {
@@ -109,10 +91,7 @@ static uint32_t test_ring_initial_state(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 2: Ring Buffer Capacity Boundary
- * ========================================================= */
+/* Test 2: Ring Buffer Capacity Boundary */
 
 static uint32_t test_ring_capacity(void)
 {
@@ -177,10 +156,7 @@ static uint32_t test_ring_capacity(void)
     return ring_buffer_is_empty(&buffer);
 }
 
-
-/* =========================================================
- * Test 3: Ring Buffer Wraparound
- * ========================================================= */
+/* Test 3: Ring Buffer Wraparound */
 
 static uint32_t test_ring_wraparound(void)
 {
@@ -238,10 +214,7 @@ static uint32_t test_ring_wraparound(void)
     return ring_buffer_is_empty(&buffer);
 }
 
-
-/* =========================================================
- * Test 4: Protocol Joint Frame
- * ========================================================= */
+/* Test 4: Protocol Joint Frame */
 
 static uint32_t test_protocol_joint_frame(void)
 {
@@ -319,10 +292,7 @@ static uint32_t test_protocol_joint_frame(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 5: Checksum Error Recovery
- * ========================================================= */
+/* Test 5: Checksum Error Recovery */
 
 static uint32_t test_protocol_checksum_recovery(void)
 {
@@ -388,10 +358,7 @@ static uint32_t test_protocol_checksum_recovery(void)
     );
 }
 
-
-/* =========================================================
- * Test 6: Oversized Payload Recovery
- * ========================================================= */
+/* Test 6: Oversized Payload Recovery */
 
 static uint32_t test_protocol_length_boundary(void)
 {
@@ -483,10 +450,7 @@ static uint32_t test_protocol_partial_frame_timeout(void)
         == 1U;
 }
 
-
-/* =========================================================
- * Test 7: Parameter Little Endian
- * ========================================================= */
+/* Test 7: Parameter Little Endian */
 
 static uint32_t test_parameter_little_endian(void)
 {
@@ -528,10 +492,7 @@ static uint32_t test_parameter_little_endian(void)
     return (value == 0x12345678UL);
 }
 
-
-/* =========================================================
- * Test Completion
- * ========================================================= */
+/* Test Completion */
 
 /*
  * GDB 断点位置。
@@ -550,10 +511,7 @@ void qemu_target_test_done(void)
     }
 }
 
-
-/* =========================================================
- * Test Entry
- * ========================================================= */
+/* Test Entry */
 
 int main(void)
 {

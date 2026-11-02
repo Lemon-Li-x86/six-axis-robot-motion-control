@@ -1,12 +1,6 @@
-
-/*
- * gpio_shadow_test_main.c
- *
- * Cortex-M4 / QEMU GPIO Shadow Backend Tests
- *
- * 使用真实生产 gpio_driver.c。
- * 仅验证软件 GPIO 驱动逻辑，
- * 不代表真实 GPIO MMIO 或物理引脚测试。
+/**
+ * @file gpio_shadow_test_main.c
+ * @brief 回归测试或夹具：gpio shadow。
  */
 
 #include <stddef.h>
@@ -37,7 +31,6 @@ typedef struct
 
 volatile gpio_test_report_t g_gpio_test_report;
 
-
 /* 0. 未初始化时拒绝操作 */
 static uint32_t test_before_init(void)
 {
@@ -66,14 +59,12 @@ static uint32_t test_before_init(void)
     return 1U;
 }
 
-
 /* 1. 确认当前为 Shadow Backend */
 static uint32_t test_shadow_backend(void)
 {
     CHECK(gpio_driver_is_mmio_backend() == 0U);
     return 1U;
 }
-
 
 /* 2. 初始化后，引脚默认未配置 */
 static uint32_t test_initial_state(void)
@@ -89,7 +80,6 @@ static uint32_t test_initial_state(void)
 
     return 1U;
 }
-
 
 /* 3. 最小有效引脚 Pin 0 */
 static uint32_t test_pin_zero(void)
@@ -112,7 +102,6 @@ static uint32_t test_pin_zero(void)
 
     return 1U;
 }
-
 
 /* 4. 最大有效引脚 Pin 31 */
 static uint32_t test_pin_31(void)
@@ -140,7 +129,6 @@ static uint32_t test_pin_31(void)
 
     return 1U;
 }
-
 
 /* 5. 非法引脚 32、255 */
 static uint32_t test_invalid_pins(void)
@@ -177,7 +165,6 @@ static uint32_t test_invalid_pins(void)
     return 1U;
 }
 
-
 /* 6. 未配置输出的引脚不能使用 */
 static uint32_t test_unconfigured_pin(void)
 {
@@ -202,7 +189,6 @@ static uint32_t test_unconfigured_pin(void)
 
     return 1U;
 }
-
 
 /* 7. 拒绝非法电平枚举值 */
 static uint32_t test_invalid_level(void)
@@ -229,7 +215,6 @@ static uint32_t test_invalid_level(void)
 
     return 1U;
 }
-
 
 /* 8. 高低电平写入与读回 */
 static uint32_t test_write_readback(void)
@@ -266,7 +251,6 @@ static uint32_t test_write_readback(void)
     return 1U;
 }
 
-
 /* 9. 连续两次 Toggle */
 static uint32_t test_toggle_twice(void)
 {
@@ -295,7 +279,6 @@ static uint32_t test_toggle_twice(void)
 
     return 1U;
 }
-
 
 /* 10. 不同引脚的状态互不干扰 */
 static uint32_t test_pin_isolation(void)
@@ -343,7 +326,6 @@ static uint32_t test_pin_isolation(void)
     return 1U;
 }
 
-
 /* 11. 重新初始化清除配置和输出状态 */
 static uint32_t test_reinitialization(void)
 {
@@ -376,7 +358,6 @@ static uint32_t test_reinitialization(void)
     return 1U;
 }
 
-
 /* 12. NULL 指针防护 */
 static uint32_t test_null_pointer(void)
 {
@@ -390,7 +371,6 @@ static uint32_t test_null_pointer(void)
 
     return 1U;
 }
-
 
 /* 记录单项结果 */
 static void record_result(
@@ -410,7 +390,6 @@ static void record_result(
     }
 }
 
-
 /* GDB 测试完成断点 */
 __attribute__((noinline))
 void qemu_gpio_test_done(void)
@@ -420,7 +399,6 @@ void qemu_gpio_test_done(void)
         __asm volatile ("nop");
     }
 }
-
 
 int main(void)
 {

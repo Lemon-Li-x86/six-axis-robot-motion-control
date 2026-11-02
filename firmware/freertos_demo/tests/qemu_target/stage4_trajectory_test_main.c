@@ -1,6 +1,6 @@
-/* Standalone ARM Cortex-M4 / QEMU Stage4 smoke regression.
- * GDB: break qemu_stage4_test_done; p g_stage4_test_report.
- * Not a runtime PID tuning or FreeRTOS scheduling benchmark.
+/**
+ * @file stage4_trajectory_test_main.c
+ * @brief 回归测试或夹具：stage4 trajectory。
  */
 #include <stdint.h>
 #include <math.h>

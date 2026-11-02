@@ -1,35 +1,6 @@
-
-/*
- * File: ik_batch_test_main.c
- *
- * Cortex-M4 / QEMU
- * UR5 Inverse Kinematics Batch Diagnostic
- *
- * Test design:
- *
- * Group A: 19 poses
- *   J3 = +60 degrees
- *   J5 sweeps from -5 to +5 degrees
- *
- * Group B: 19 poses
- *   J3 = 0 degrees
- *   J5 uses the same sweep values
- *
- * Group C: 90 deterministic random poses
- *
- * Total: 128 poses
- *
- * For each pose:
- *   1. Generate input joint angles
- *   2. Compute Forward Kinematics
- *   3. Compute Analytic Inverse Kinematics
- *   4. Store return codes and candidate joints
- *
- * Results are exported through GDB.
- *
- * Important:
- * This program diagnoses IK behavior.
- * It does not reject singular cases automatically.
+/**
+ * @file ik_batch_test_main.c
+ * @brief 回归测试或夹具：ik batch。
  */
 
 #include <stdint.h>
@@ -38,10 +9,7 @@
 #include "robot_types.h"
 #include "error_code.h"
 
-
-/* =========================================================
- * Test Configuration
- * ========================================================= */
+/* Test Configuration */
 
 #define IK_SAMPLE_COUNT 128U
 
@@ -49,7 +17,6 @@
 
 #define CONTROLLED_SAMPLE_COUNT \
     (2U * WRIST_SWEEP_COUNT)
-
 
 /*
  * J5 test values.
@@ -89,10 +56,7 @@ static const int16_t wrist_sweep_raw[
     500
 };
 
-
-/* =========================================================
- * Binary Result Record
- * ========================================================= */
+/* Binary Result Record */
 
 /*
  * Binary layout:
@@ -139,16 +103,12 @@ typedef struct
 
 } ik_sample_t;
 
-
 _Static_assert(
     sizeof(ik_sample_t) == 120U,
     "Unexpected IK record layout"
 );
 
-
-/* =========================================================
- * Global Test Results
- * ========================================================= */
+/* Global Test Results */
 
 /*
  * Volatile:
@@ -162,10 +122,7 @@ volatile ik_sample_t g_ik_samples[
 
 volatile uint32_t g_ik_finished = 0U;
 
-
-/* =========================================================
- * Deterministic Random Generator
- * ========================================================= */
+/* Deterministic Random Generator */
 
 /*
  * Linear Congruential Generator.
@@ -184,10 +141,7 @@ static uint32_t next_random(
     return *state;
 }
 
-
-/* =========================================================
- * Generate Controlled Test Pose
- * ========================================================= */
+/* Generate Controlled Test Pose */
 
 /*
  * Index 0..18:
@@ -253,10 +207,7 @@ static void generate_controlled_pose(
     input->value[5] = -1000;
 }
 
-
-/* =========================================================
- * Generate Random Test Pose
- * ========================================================= */
+/* Generate Random Test Pose */
 
 /*
  * Each joint:
@@ -300,10 +251,7 @@ static void generate_random_pose(
     }
 }
 
-
-/* =========================================================
- * Generate Input Pose
- * ========================================================= */
+/* Generate Input Pose */
 
 static void generate_test_pose(
     uint32_t index,
@@ -329,10 +277,7 @@ static void generate_test_pose(
     }
 }
 
-
-/* =========================================================
- * Save Input Joint Angles
- * ========================================================= */
+/* Save Input Joint Angles */
 
 static void save_input_joints(
     uint32_t sample_index,
@@ -358,10 +303,7 @@ static void save_input_joints(
     }
 }
 
-
-/* =========================================================
- * Save IK Candidate Solutions
- * ========================================================= */
+/* Save IK Candidate Solutions */
 
 static void save_ik_solutions(
     uint32_t sample_index,
@@ -427,10 +369,7 @@ static void save_ik_solutions(
     }
 }
 
-
-/* =========================================================
- * Execute One IK Test
- * ========================================================= */
+/* Execute One IK Test */
 
 static void run_ik_test(
     uint32_t sample_index,
@@ -532,10 +471,7 @@ static void run_ik_test(
     );
 }
 
-
-/* =========================================================
- * GDB Completion Breakpoint
- * ========================================================= */
+/* GDB Completion Breakpoint */
 
 /*
  * QEMU execution stops here.
@@ -552,10 +488,7 @@ void qemu_ik_batch_done(void)
     }
 }
 
-
-/* =========================================================
- * Main
- * ========================================================= */
+/* Main */
 
 int main(void)
 {

@@ -1,16 +1,6 @@
-
-/*
- * 文件：motor_test_main.c
- *
- * 用途：
- * 在 QEMU Cortex-M4 上执行 Motor Driver 边界测试。
- *
- * 本测试使用生产版 motor_driver.c，
- * 不使用 Host Mock 或 Unity。
- *
- * 注意：
- * 当前 Motor Driver 是关节状态管理抽象层，
- * 本测试不代表真实伺服电机硬件测试。
+/**
+ * @file motor_test_main.c
+ * @brief 回归测试或夹具：motor。
  */
 
 #include <stddef.h>
@@ -42,10 +32,7 @@ typedef struct
 /* GDB 读取此变量。 */
 volatile motor_test_report_t g_motor_test_report;
 
-
-/* =========================================================
- * Float Comparison
- * ========================================================= */
+/* Float Comparison */
 
 static uint32_t float_close(
     float actual,
@@ -60,10 +47,7 @@ static uint32_t float_close(
     ) ? 1U : 0U;
 }
 
-
-/* =========================================================
- * Test 0: Before Initialization
- * ========================================================= */
+/* Test 0: Before Initialization */
 
 static uint32_t test_before_init(void)
 {
@@ -84,10 +68,7 @@ static uint32_t test_before_init(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 1: Initialization
- * ========================================================= */
+/* Test 1: Initialization */
 
 static uint32_t test_initial_state(void)
 {
@@ -110,10 +91,7 @@ static uint32_t test_initial_state(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 2: Canonical Angle
- * ========================================================= */
+/* Test 2: Canonical Angle */
 
 static uint32_t test_target_normalization(void)
 {
@@ -155,10 +133,7 @@ static uint32_t test_target_normalization(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 3: int16_t Input Boundaries
- * ========================================================= */
+/* Test 3: int16_t Input Boundaries */
 
 static uint32_t test_integer_boundaries(void)
 {
@@ -194,10 +169,7 @@ static uint32_t test_integer_boundaries(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 4: NULL Pointer Contract
- * ========================================================= */
+/* Test 4: NULL Pointer Contract */
 
 static uint32_t test_null_pointers(void)
 {
@@ -236,10 +208,7 @@ static uint32_t test_null_pointers(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 5: No Feedback Yet
- * ========================================================= */
+/* Test 5: No Feedback Yet */
 
 static uint32_t test_feedback_not_ready(void)
 {
@@ -267,10 +236,7 @@ static uint32_t test_feedback_not_ready(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 6: First Feedback
- * ========================================================= */
+/* Test 6: First Feedback */
 
 static uint32_t test_first_feedback(void)
 {
@@ -319,10 +285,7 @@ static uint32_t test_first_feedback(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 7: Positive Wrap
- * ========================================================= */
+/* Test 7: Positive Wrap */
 
 static uint32_t test_forward_wrap(void)
 {
@@ -368,10 +331,7 @@ static uint32_t test_forward_wrap(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 8: Negative Wrap
- * ========================================================= */
+/* Test 8: Negative Wrap */
 
 static uint32_t test_backward_wrap(void)
 {
@@ -417,10 +377,7 @@ static uint32_t test_backward_wrap(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 9: Invalid Time Interval
- * ========================================================= */
+/* Test 9: Invalid Time Interval */
 
 static uint32_t test_nonpositive_delta_time(void)
 {
@@ -489,10 +446,7 @@ static uint32_t test_nonpositive_delta_time(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test 10: Multiple Continuous Updates
- * ========================================================= */
+/* Test 10: Multiple Continuous Updates */
 
 static uint32_t test_multiple_wrap_updates(void)
 {
@@ -564,10 +518,7 @@ static uint32_t test_multiple_wrap_updates(void)
     return 1U;
 }
 
-
-/* =========================================================
- * Test Runner
- * ========================================================= */
+/* Test Runner */
 
 static void record_result(
     uint32_t index,
@@ -585,7 +536,6 @@ static void record_result(
         g_motor_test_report.failed++;
     }
 }
-
 
 /*
  * 在此函数上设置 GDB 断点，
@@ -606,7 +556,6 @@ void qemu_motor_test_done(void)
 }
 
 #endif
-
 
 int main(void)
 {

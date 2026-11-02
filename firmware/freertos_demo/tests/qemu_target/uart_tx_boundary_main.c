@@ -1,15 +1,6 @@
-
-/*
- * 文件：uart_tx_boundary_main.c
- *
- * 用途：
- * Cortex-M4 UART TX 软件队列容量与原子性测试。
- *
- * 使用生产版 UART Driver 和 MMIO。
- * 暂时屏蔽 CPU 可屏蔽中断，避免 TX ISR
- * 在本测试执行过程中消费队列。
- *
- * 不修改生产驱动源码。
+/**
+ * @file uart_tx_boundary_main.c
+ * @brief 回归测试或夹具：uart tx boundary main。
  */
 
 #include <stdint.h>
