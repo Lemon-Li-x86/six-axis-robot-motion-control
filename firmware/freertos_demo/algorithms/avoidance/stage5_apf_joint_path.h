@@ -1,10 +1,6 @@
-/* Stage5: convert an already validated Cartesian APF point route into
- * continuous UR5 joints using existing production IK, selector, FK and
- * trapezoidal segment timing. No UART, FreeRTOS or motor commands.
- *
- * This is NOT an all-link collision check: the returned joint path must be
- * checked by the separate PyBullet all-link static obstacle gate BEFORE
- * any simulation-only motion request is allowed.
+/**
+ * @file stage5_apf_joint_path.h
+ * @brief 关节路线转换接口。
  */
 #ifndef STAGE5_APF_JOINT_PATH_H
 #define STAGE5_APF_JOINT_PATH_H

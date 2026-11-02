@@ -1,3 +1,8 @@
+/**
+ * @file joint_command_limiter.c
+ * @brief 位置/速度/加速度及量化门禁。
+ */
+
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>

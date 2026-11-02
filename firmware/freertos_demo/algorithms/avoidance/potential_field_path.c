@@ -1,3 +1,8 @@
+/**
+ * @file potential_field_path.c
+ * @brief 多步 APF 路线生成。
+ */
+
 #include <math.h>
 #include <stddef.h>
 #include "potential_field_path.h"
@@ -79,7 +84,6 @@ robot_status_t robot_apf_plan_path(
     *count=actual;
     return ROBOT_STATUS_OK;
 }
-
 
 /* Find bounded detours across a single axis-aligned obstacle. Candidate
  * screening is Cartesian only. It cannot license any robot motion.

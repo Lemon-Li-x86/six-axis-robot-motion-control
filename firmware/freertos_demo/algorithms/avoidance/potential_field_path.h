@@ -1,7 +1,6 @@
-/* Bounded multi-step Cartesian APF path. Pure C, never actuates motors.
- * Output contains intermediate end-effector points, NOT a robot-safe plan.
- * Each swept point segment is checked by robot_apf_step against AABBs.
- * ALL robot links, IK, timing and joint constraints remain caller gates.
+/**
+ * @file potential_field_path.h
+ * @brief APF 路线接口。
  */
 #ifndef ROBOT_POTENTIAL_FIELD_PATH_H
 #define ROBOT_POTENTIAL_FIELD_PATH_H

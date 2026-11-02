@@ -1,11 +1,6 @@
-/*
- * Stage5 experimental Cartesian potential-field step for static AABBs.
- *
- * Pure C11: no FreeRTOS, PyBullet, UART, globals or memory allocation.
- * All positions and AABB bounds are in the public base_link frame, mm.
- * This controls only the END-EFFECTOR POINT. It is not a full-link
- * collision checker and is never safe to drive a real robot without
- * full-robot collision checking, IK and trajectory rate validation.
+/**
+ * @file potential_field.h
+ * @brief APF 基础配置/障碍输入接口。
  */
 #ifndef ROBOT_POTENTIAL_FIELD_H
 #define ROBOT_POTENTIAL_FIELD_H
