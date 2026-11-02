@@ -1,6 +1,6 @@
-/* Single ownership of Stage 4 simulation defaults.
- * Values are provisional, NOT calibrated UR5 hardware limits/PID gains.
- * Never copy these literals into algorithm or task modules.
+/**
+ * @file stage4_motion_config.h
+ * @brief 默认运动配置的只读访问接口。
  */
 #ifndef ROBOT_STAGE4_MOTION_CONFIG_H
 #define ROBOT_STAGE4_MOTION_CONFIG_H

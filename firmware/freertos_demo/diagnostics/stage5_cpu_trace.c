@@ -1,3 +1,8 @@
+/**
+ * @file stage5_cpu_trace.c
+ * @brief Stage5 CPU/任务跟踪采样。
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 #include "FreeRTOS.h"

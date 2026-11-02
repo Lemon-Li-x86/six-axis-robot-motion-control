@@ -1,6 +1,6 @@
-/* Stage5 QEMU-only task CPU trace. FreeRTOS switch/tick hooks sample the
- * existing 25 MHz Timer0; a 1ms tick heartbeat avoids 32-bit wrap across
- * the required long simulation windows. Not a physical-MCU CPU benchmark.
+/**
+ * @file stage5_cpu_trace.h
+ * @brief CPU 跟踪接口。
  */
 #ifndef STAGE5_CPU_TRACE_H
 #define STAGE5_CPU_TRACE_H
