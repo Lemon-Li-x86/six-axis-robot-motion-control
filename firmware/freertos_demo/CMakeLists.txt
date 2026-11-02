@@ -294,6 +294,7 @@ add_executable(qemu_uart_tx_tests
 )
 
 target_include_directories(qemu_uart_tx_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/communications
