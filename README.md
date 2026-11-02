@@ -62,6 +62,7 @@ Linux CI 采用 `apt` 安装 QEMU/构建工具，并在各作业安装 NumPy/PyB
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_firmware_defaults.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_readme_links.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_repository_architecture.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_live_gui.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_gui_safe_jog.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tools/tests -p "test_stage5_embedded_apf_runtime.py" -v
@@ -441,7 +442,7 @@ Monitor Task -> performance diagnostics
 | `simulation/uart_bridge/uart_receiver.py` | 仿真脚本：uart receiver |
 | `simulation/uart_bridge/ur5_uart_bridge.py` | 通用 UART↔PyBullet 桥接 |
 
-### 测试/构建/诊断脚本（52 文件）
+### 测试/构建/诊断脚本（53 文件）
 
 | 相对路径 | 职责/测试内容 |
 |---|---|
@@ -477,6 +478,7 @@ Monitor Task -> performance diagnostics
 | `tools/tests/run_stage5_first_leg_native_bullet.py` | 首段原生 C/Bullet 对照测试 |
 | `tools/tests/test_firmware_defaults.py` | 回归测试或夹具：test firmware defaults |
 | `tools/tests/test_readme_links.py` | 回归测试或夹具：test readme links |
+| `tools/tests/test_repository_architecture.py` | 静态回归：算法层依赖方向、生成配置和 UART/FreeRTOS 共享 NVIC 优先级 |
 | `tools/tests/test_stage4_pid_gain_sweep.py` | 回归测试或夹具：test stage4 pid gain sweep |
 | `tools/tests/test_stage4_pid_study.py` | 回归测试或夹具：test stage4 pid study |
 | `tools/tests/test_stage4_timing.py` | 回归测试或夹具：test stage4 timing |
